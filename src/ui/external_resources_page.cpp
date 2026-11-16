@@ -168,6 +168,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
                         auto pending = model->externalResourcesRefreshing.Get();
                         std::erase(pending, key);
                         model->externalResourcesRefreshing = std::move(pending);
+                        if (result.second.empty()) { ++model->externalResourcesRevision; model->SyncRuleInputs(); }
                         coreModel->RequestRefresh();
                         toast.Show(result.second.empty() ? (result.first ? updated : cached) : result.second);
                         if (alive.Get()) refresh = refresh.Get() + 1;

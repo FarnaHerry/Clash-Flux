@@ -12,8 +12,11 @@
 import clashflux.config;
 import clashflux.model;
 import clashflux.core;
+import clashflux.singbox;
 import clashflux.data;
 import clashflux.store.core;
+#include "../src/ui/profiles_model.h"
+#include "../src/ui/profile_rules_snapshot.h"
 
 using namespace huxerui;
 using namespace std::chrono_literals;
@@ -21,6 +24,8 @@ namespace {
 std::string endpoint, failure;
 std::filesystem::path root;
 bool finished = false;
+TaskScope applicationTasks;
+std::shared_ptr<clashflux::ui::ProfilesModel> ruleViews;
 void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
 }
@@ -35,6 +40,146 @@ std::size_t Reuses() {
     while ((at = log.find(token, at)) != std::string::npos) { ++count; at += token.size(); }
     return count;
 }
+Task<void> AwaitRulePrewarm() {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (ruleViews->rulesPrewarm.running || !ruleViews->rulesPrewarm.pending.empty()) {
+        Require(std::chrono::steady_clock::now() < deadline, "rule prewarm did not finish");
+        co_await Delay(1ms);
+    }
+}
+Task<void> CheckRulePrewarm() {
+    namespace ui = clashflux::ui;
+    auto& data = clashflux::data::session();
+    Require(co_await data.open(cfg::databaseFile(), cfg::profilesDir()), "prewarm open");
+    auto& core = store::coreStore(); core.init(); core.ensureSecret();
+    const auto initialCore = core.snapshot();
+    const auto initialSettings = data.settingsRevision();
+    const auto write = [](const std::string& file, const std::string& domain) {
+        std::ofstream output(cfg::profilesDir()/file);
+        output << "rules: ['DOMAIN," << domain << ",DIRECT','MATCH,DIRECT']\n";
+        Require(bool(output), "cannot write rule prewarm fixture");
+    };
+    model::Profile first; first.id=1; first.name="seed"; first.type="local"; first.file="1.seed.yaml"; first.selected=true;
+    model::Profile second=first; second.id=2; second.name="other"; second.file="2.seed.yaml"; second.selected=false;
+    write(first.file, "seed.test"); write(second.file, "other.test");
+    Require(co_await data.commitProfile(first, 0), "seed first prewarm source");
+    Require(co_await data.commitProfile(second, 0), "seed second prewarm source");
+    ruleViews->list = data.listProfiles(); ruleViews->loaded = true;
+    ruleViews->ruleSources = std::vector<std::int64_t>{1,2}; ruleViews->ruleSourcesReady = true;
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    Require(ruleViews->rules->readsStarted == 1 && ruleViews->rulesPrewarm.running,
+        "startup must warm one eligible source, not every saved subscription");
+    ui::RequestPersonalRules(applicationTasks, ruleViews, 1, false, "read failed");
+    co_await AwaitRulePrewarm();
+    const auto warmed = ruleViews->rules->SnapshotOf(1);
+    Require(warmed && warmed->data->target && warmed->data->error.empty() && ruleViews->rules->readsStarted == 1 &&
+        !ruleViews->rules->entries.contains(2), "opening during prewarm must share its single real source read");
+    ui::RequestPersonalRules(applicationTasks, ruleViews, 1, false, "read failed");
+    Require(ruleViews->rules->SnapshotOf(1) == warmed && ruleViews->rules->readsStarted == 1,
+        "first page request after prewarm must reuse its exact ready snapshot without IO or conversion");
+
+    model::Profile imported=first; imported.id=3; imported.name="imported"; imported.file="3.import.yaml"; imported.selected=false;
+    write(imported.file, "imported.test");
+    Require(co_await data.commitProfile(imported, 0), "commit imported source");
+    const auto preparing = *ruleViews->BeginPreparation(3, imported.file);
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    ui::RequestPersonalRules(applicationTasks, ruleViews, 3, false, "read failed");
+    Require(ruleViews->rules->readsStarted == 1 && ruleViews->rulesPrewarm.pending.size() == 1,
+        "committed imports wait for resource preparation instead of converting its incomplete dependencies");
+    ruleViews->FinishPreparation(3, preparing.first, true, {});
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    Require(ruleViews->rules->Ready(3) && ruleViews->rules->readsStarted == 2,
+        "ready imported source prepares its target before a page opens");
+    const auto original = ruleViews->rules->SnapshotOf(3);
+    const auto refresh = *ruleViews->BeginRefresh(3);
+    imported.file="3.middle.yaml"; write(imported.file, "middle.test");
+    Require(co_await data.commitProfile(imported, data.profileRevision(3)), "commit intermediate refresh");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    imported.file="3.latest.yaml"; write(imported.file, "latest.test");
+    Require(co_await data.commitProfile(imported, data.profileRevision(3)), "commit latest refresh");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    ui::RequestPersonalRules(applicationTasks, ruleViews, 3, false, "read failed");
+    Require(ruleViews->rules->readsStarted == 2 && ruleViews->rulesPrewarm.pending.size() == 1 &&
+        ruleViews->rules->SnapshotOf(3) == original && !ruleViews->rules->Ready(3),
+        "busy refreshes retain the accepted view and coalesce repeated versions to one pending source");
+    ruleViews->FinishRefresh(3, refresh);
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    const auto latest = ruleViews->rules->SnapshotOf(3);
+    Require(latest->data->content.find("latest.test") != std::string::npos && ruleViews->rules->readsStarted == 3 &&
+        original->data->content.find("imported.test") != std::string::npos, "refresh prewarm reads only the latest accepted file and retains old caller data");
+    // Same body/file and even the same updatedAt can be a successful 304 whose
+    // providers were revalidated. The accepted record version still invalidates.
+    Require(co_await data.commitProfile(imported, data.profileRevision(3)), "commit same-file accepted refresh");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    const auto same = ruleViews->rules->SnapshotOf(3);
+    Require(ruleViews->rules->readsStarted == 4 && same != latest && same->data->target == latest->data->target,
+        "same-file accepted revisions regenerate the view but reuse a dependency-free converted baseline");
+    data.setSetting("core.mode", "global");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    Require(ruleViews->rules->readsStarted == 4, "runtime mode changes do not queue source parsing");
+    Require(data.setSelectedProfile(2), "selection fixture");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    Require(ruleViews->rules->readsStarted == 4 && ruleViews->rules->SnapshotOf(3) == same,
+        "the production all-row selection revision does not invalidate unrelated target artifacts");
+
+    // An idle over-budget artifact must be evicted once, never continually
+    // requeued just because no page currently pins it.
+    ruleViews->rules->budgetBytes = 512;
+    imported.id=4; imported.file="4.budget.yaml"; write(imported.file, "budget.test");
+    Require(co_await data.commitProfile(imported, 0), "commit budget fixture");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    Require(!ruleViews->rules->entries.contains(4) && ruleViews->rules->readsStarted == 5 &&
+        ruleViews->rules->RetainedBytes() <= 512, "idle prewarm shares the real cache budget without retaining an oversized result");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    Require(ruleViews->rules->readsStarted == 5 && ruleViews->rulesPrewarm.pending.empty(), "eviction must not cause a background rebuild loop");
+    ruleViews->rules->budgetBytes = 32*1024*1024;
+    imported.id=5; imported.file="5.missing.yaml";
+    Require(co_await data.commitProfile(imported, 0), "commit missing-file fixture");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    Require(ruleViews->rules->Ready(5) && !ruleViews->rules->SnapshotOf(5)->data->target &&
+        !ruleViews->rules->SnapshotOf(5)->data->error.empty(), "missing files cannot become a successful empty target configuration");
+    write(imported.file, "recovered.test"); ruleViews->rules->Retry(5); ruleViews->rulesPrewarm.Queue(5);
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    Require(ruleViews->rules->SnapshotOf(5)->data->target && ruleViews->rules->SnapshotOf(5)->data->error.empty(), "prewarm failures remain explicitly retryable");
+    imported.id=6; imported.file="6.empty.yaml"; std::ofstream(cfg::profilesDir()/imported.file).close();
+    Require(co_await data.commitProfile(imported, 0), "commit empty-file fixture");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    Require(!ruleViews->rules->SnapshotOf(6)->data->target && !ruleViews->rules->SnapshotOf(6)->data->error.empty(), "empty files remain errors with their record intact");
+
+    auto lifecycle = core.lockPlanLifecycle();
+    imported.id=7; imported.file="7.a.yaml"; write(imported.file, "aba.test");
+    Require(co_await data.commitProfile(imported, 0), "commit ABA source");
+    const auto beforeAba = ruleViews->rules->readsStarted;
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    const auto stale = ruleViews->rules->entries.at(7).generation;
+    imported.file="7.b.yaml"; write(imported.file, "temporary.test");
+    Require(co_await data.commitProfile(imported, data.profileRevision(7)), "commit ABA middle");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    imported.file="7.a.yaml";
+    Require(co_await data.commitProfile(imported, data.profileRevision(7)), "commit ABA return");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    lifecycle.unlock(); co_await AwaitRulePrewarm();
+    Require(ruleViews->rules->readsStarted == beforeAba+2 && ruleViews->rules->entries.at(7).published > stale &&
+        ruleViews->rules->SnapshotOf(7)->data->content.find("aba.test") != std::string::npos,
+        "real worker ABA rejects the first ticket and prepares only the latest accepted input");
+    imported.id=8; imported.file="8.deleted.yaml"; write(imported.file, "deleted.test");
+    Require(co_await data.commitProfile(imported, 0), "commit queued deletion source");
+    ruleViews->BeginPreparation(8, imported.file);
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    const auto beforeDelete = ruleViews->rules->readsStarted;
+    Require(data.deleteProfile(8, false), "remove queued source");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    Require(!ruleViews->rulesPrewarm.sources.contains(8) && ruleViews->rulesPrewarm.pending.empty() &&
+        ruleViews->rules->readsStarted == beforeDelete, "deleted queued IDs never start a stale conversion");
+    const auto after = core.snapshot();
+    Require(after.state == initialCore.state && after.planRevision == initialCore.planRevision &&
+        after.runtimeEpoch == initialCore.runtimeEpoch && std::filesystem::exists(cfg::profilesDir()/"1.seed.yaml") &&
+        std::filesystem::exists(cfg::profilesDir()/"3.import.yaml") && data.listProfiles().size() == 7 &&
+        data.settingsRevision() == initialSettings+1,
+        "prewarm preserves unrelated records, version files, settings and applied runtime");
+    co_await data.close();
+    std::puts("rules-prewarm: real files/commits, one read on first open, resource wait, coalescing, budgets, failures and ABA passed");
+}
 Task<void> CheckPreparation() {
     auto& data = clashflux::data::session();
     Require(co_await data.open(cfg::databaseFile(), cfg::profilesDir()), "preparation open");
@@ -44,6 +189,34 @@ Task<void> CheckPreparation() {
     const auto source = cfg::profilesDir() / profile.file;
     std::filesystem::copy_file(root / "source.yaml", source);
     auto& core = store::coreStore(); core.init(); core.ensureSecret();
+    {
+        // Exercise the exact source-view API used by the production rules page.
+        const std::string targetInput = "rules: ['DOMAIN,target-view.test,DIRECT','MATCH,DIRECT']\n";
+        const auto before = core.snapshot();
+        const auto settings = data.settingsRevision();
+        const auto original = Read(source);
+        const auto baseline = co_await RunWorker([&] { return core.profileTargetSource(101, targetInput, "target view", 0); });
+        Require(baseline.targetSource && !baseline.targetSourceReused && baseline.error.empty() && baseline.json.empty(), "source-view first capture");
+        const auto again = co_await RunWorker([&] { return core.profileTargetSource(101, targetInput, "target view", 0); });
+        Require(again.targetSource == baseline.targetSource && again.targetSourceReused, "source-view remount must reuse the exact artifact");
+        Require(data.settingsRevision() == settings, "source-view capture must not write settings");
+        const auto previousMode = data.setting("core.mode", "rule");
+        data.setSetting("core.mode", "direct");
+        const auto changedMode = co_await RunWorker([&] { return core.profileTargetSource(101, targetInput, "target view", 0); });
+        Require(changedMode.targetSource == baseline.targetSource && changedMode.targetSourceReused, "runtime settings must not rebuild the source-view baseline");
+        data.setSetting("core.mode", previousMode);
+        const auto afterSettings = data.settingsRevision();
+        const auto resource = co_await RunWorker([&] { return core.profileTargetSource(101, targetInput, "target view", 1); });
+        Require(resource.targetSource && !resource.targetSourceReused && resource.targetSource != baseline.targetSource, "source-view resource revision must invalidate");
+        const auto bad = co_await RunWorker([&] { return core.profileTargetSource(101, "rules: [unterminated", "target view", 0); });
+        Require(!bad.targetSource && !bad.error.empty(), "source-view failure must not publish an empty artifact");
+        const auto recovered = co_await RunWorker([&] { return core.profileTargetSource(101, targetInput, "target view", 0); });
+        Require(recovered.targetSource == baseline.targetSource && recovered.targetSourceReused, "source-view failure must preserve earlier valid artifact");
+        const auto after = core.snapshot();
+        Require(after.planRevision == before.planRevision && after.runtimeEpoch == before.runtimeEpoch &&
+            after.state == before.state && Read(source) == original && data.settingsRevision() == afterSettings,
+            "source-view reads must not mutate subscriptions, settings, active runtime or applied tracing");
+    }
     const auto first = co_await RunWorker([&] { return core.prepareProfileResources(1); });
     Require(first.ready, first.error.c_str());
     const auto reuses = Reuses();
@@ -113,6 +286,9 @@ Task<void> CheckPreparation() {
 
 Task<void> CheckLifetime() {
     try {
+        if (endpoint == "--rules-prewarm") {
+            co_await CheckRulePrewarm(); finished = true; co_return;
+        }
         if (endpoint == "--prepare-resources") {
             co_await CheckPreparation(); finished = true; co_return;
         }
@@ -180,6 +356,7 @@ Task<void> CheckLifetime() {
     finished = true;
 }
 View TestApp() {
+    applicationTasks = UseApplicationTaskScope();
     const auto tasks = UseTaskScope();
     Lifecycle([tasks] { tasks.Launch(CheckLifetime); return [] {}; });
     return Spacer();
@@ -188,7 +365,9 @@ View TestApp() {
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
     endpoint = argv[1]; root = argv[2];
-    testing::UiTest ui{Application{TestApp}};
+    testing::UiTest ui{Application{TestApp, {.application_hooks={[](ApplicationContext&) {
+        ruleViews = std::make_shared<clashflux::ui::ProfilesModel>();
+    }}}}};
     const auto deadline = std::chrono::steady_clock::now() + 15s;
     while (!finished && std::chrono::steady_clock::now() < deadline) {
         ui.Pump(5ms);

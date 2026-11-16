@@ -22,6 +22,7 @@ import std;
 import nlohmann.json;
 
 namespace singbox {
+#include "converter/target/model.inc"
 namespace {
 
 #include "singbox_yaml_openvpn.inc"
@@ -38,9 +39,11 @@ std::string httpProviderKey(std::string_view identity);
 #include "singbox_geodata.inc"
 std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string& id);
 #include "singbox_rules.inc"
+#include "converter/target/capture.inc"
 #include "singbox_filter.inc"
 #include "singbox_proxy_provider.inc"
 #include "singbox_profile_rules.inc"
+#include "converter/target/project.inc"
 #include "singbox_rule_projection.inc"
 #include "singbox_compile.inc"
 #include "singbox_sources.inc"
@@ -192,6 +195,10 @@ bool ValidateGlobalRuleSetReferences(const RuleSetLibrary& library, const std::v
         }
     }
     return true;
+}
+
+ProfileRules ProjectTargetSource(const TargetSourceModel& model, const ProfileRuleEdits& edits, const RuleSetLibrary& library) {
+    return projectTargetSource(model, edits, library);
 }
 
 ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEdits& edits, bool includeOriginal) {
@@ -376,6 +383,10 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
     ctx.result.planRevision = options.planRevision;
     if (!vpn::ValidatePolicyRules(options.globalRules, ctx.result.error)) return std::move(ctx.result);
     if (!ValidateProfileRuleEdits(options.profileRuleEdits, ctx.result.error)) return std::move(ctx.result);
+    if (options.captureTargetSource && !options.profileRuleEdits.rules.empty()) {
+        ctx.result.error = "目标基线捕获需要未叠加个人规则的来源";
+        return std::move(ctx.result);
+    }
     if (!ValidateRuleSetLibrary(options.ruleSetLibrary, ctx.result.error)) return std::move(ctx.result);
     if (options.network.advanced && options.network.advanced->override_route_sets)
         for (const auto* ids : {&options.network.advanced->route_sets, &options.network.advanced->exclude_sets})
@@ -389,6 +400,11 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
     if (original.starts_with("\xEF\xBB\xBF")) original.remove_prefix(3);
     const std::string trimmed = trimCopy(original);
     const auto format = DetectProfileFormat(trimmed);
+    if (options.captureTargetSource && format != ProfileFormat::OpenVpn) {
+        ctx.targetCapture = std::make_unique<TargetCapture>();
+        ctx.targetCapture->data->format = format;
+    }
+    std::shared_ptr<const TargetSourceModel> pendingTarget;
 
     if (format == ProfileFormat::SingBoxJson) {
         // 原生 sing-box JSON：直通，只合并托管设置。
@@ -400,7 +416,22 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
         ctx.config = std::move(parsed);
         if (ctx.cancelled()) return std::move(ctx.result);
         try {
+            if (ctx.targetCapture) {
+                const auto route = ctx.config.find("route");
+                ctx.targetCapture->explicitDefault = route != ctx.config.end() && route->is_object() &&
+                    route->contains("final") && (*route)["final"].is_string() && !(*route)["final"].get<std::string>().empty();
+                std::string originalDefault;
+                if (route != ctx.config.end() && route->is_object() && route->contains("final") && (*route)["final"].is_string())
+                    originalDefault = (*route)["final"].get<std::string>();
+                const auto outputs = ctx.config.find("outbounds");
+                if (originalDefault.empty() && outputs != ctx.config.end() && outputs->is_array() && !outputs->empty() &&
+                    (*outputs)[0].is_object() && (*outputs)[0].contains("tag") && (*outputs)[0]["tag"].is_string())
+                    originalDefault = (*outputs)[0]["tag"].get<std::string>();
+                ctx.targetCapture->nativeDefaultAnchor = "json:final:" + originalDefault;
+            }
             applyManagedSkeleton(ctx, options);
+            if (!ctx.result.error.empty()) return std::move(ctx.result);
+            captureNativeRules(ctx);
             if (!ctx.result.error.empty()) return std::move(ctx.result);
             ctx.outbounds = ctx.config.value("outbounds", nlohmann::json::array());
             for (const auto& item : ctx.outbounds) ctx.knownTags.push_back(item.value("tag", ""));
@@ -411,6 +442,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
                 ctx.result.sourceObjects.push_back({options.mainConnectionId, options.mainSourceName, vpn::TargetKind::Node, tag, tag});
             }
             if (!options.profileRuleEdits.rules.empty() && !compilePersonalNativeRules(ctx)) return std::move(ctx.result);
+            pendingTarget = finishTargetSource(ctx, format);
             if (!options.mainConnectionId.empty()) {
                 ctx.sourceDefaults[options.mainConnectionId] = {ctx.config["route"].value("final", ""),
                     ctx.finalTarget == "REJECT" || ctx.finalTarget == "REJECT-DROP", ctx.finalTarget == "REJECT-DROP"};
@@ -428,6 +460,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
         if (ctx.cancelled()) return std::move(ctx.result);
         ctx.result.json = ctx.config.dump();
         if (ctx.cancelled()) ctx.result.json.clear();
+        else ctx.result.targetSource = std::move(pendingTarget);
         return std::move(ctx.result);
     }
 
@@ -478,6 +511,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
         }
     }
     ctx.config["route"]["final"] = finalOutbound;
+    pendingTarget = finishTargetSource(ctx, format);
     if (!options.mainConnectionId.empty()) {
         if (format != ProfileFormat::OpenVpn)
             namespaceClashSource(ctx, options.mainConnectionId, options.mainSourceName);
@@ -497,6 +531,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
     if (ctx.cancelled()) return std::move(ctx.result);
     ctx.result.json = ctx.config.dump();
     if (ctx.cancelled()) ctx.result.json.clear();
+    else ctx.result.targetSource = std::move(pendingTarget);
     return std::move(ctx.result);
 }
 

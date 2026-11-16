@@ -1330,42 +1330,6 @@ void ProfilesModel::PublishCached() {
     SyncRuleInputs();
 }
 
-void ProfilesModel::SyncRuleInputs(std::int64_t requestedId) {
-    auto& data = clashflux::data::session();
-    if (!data.ready()) return;
-    const auto profilesRevision = data.profilesRevision();
-    const auto settingsRevision = data.settingsRevision();
-    if ((!requestedId || rules->entries.contains(requestedId)) &&
-        rulesInputsReady && rulesProfilesRevision == profilesRevision &&
-        rulesSettingsRevision == settingsRevision) return;
-    std::vector<std::int64_t> ids;
-    for (const auto& [id, entry] : rules->entries) ids.push_back(id);
-    if (requestedId && std::ranges::find(ids, requestedId) == ids.end()) ids.push_back(requestedId);
-    const bool readProfiles = !rulesInputsReady || rulesProfilesRevision != profilesRevision ||
-        (requestedId && !rules->entries.contains(requestedId));
-    const auto profiles = readProfiles && !ids.empty() ? data.listProfiles() : std::vector<model::Profile>{};
-    const auto library = ids.empty() ? std::string{} : data.setting("rules.resources");
-    for (const auto id : ids) {
-        ProfileRulesInput input;
-        if (readProfiles) {
-            const auto profile = std::ranges::find(profiles, id, &model::Profile::id);
-            if (profile == profiles.end() || profile->type == "pptp" || profile->file.empty()) {
-                rules->Forget(id); continue;
-            }
-            input.file = profile->file; input.type = profile->type; input.name = profile->name;
-        } else {
-            const auto& previous = rules->entries.at(id).input;
-            input.file = previous.file; input.type = previous.type; input.name = previous.name;
-        }
-        input.edits = data.setting("profile.rules." + std::to_string(id));
-        input.library = library;
-        rules->SetInput(id, std::move(input));
-    }
-    rulesProfilesRevision = profilesRevision;
-    rulesSettingsRevision = settingsRevision;
-    rulesInputsReady = true;
-}
-
 void StartProfilePreparation(huxerui::TaskScope tasks, std::shared_ptr<ProfilesModel> model,
                              std::int64_t id, FluxToastHandle toast) {
     const auto& profiles = model->list.Get();
@@ -1377,7 +1341,7 @@ void StartProfilePreparation(huxerui::TaskScope tasks, std::shared_ptr<ProfilesM
     const auto cancel = operation->second;
     const auto cancellation = model->preparationCancels.at(id);
     try {
-        tasks.Launch([model, id, ticket, cancel, cancellation, toast]() -> huxerui::Task<void> {
+        tasks.Launch([tasks, model, id, ticket, cancel, cancellation, toast]() -> huxerui::Task<void> {
             struct CancelOnExit {
                 std::stop_source source;
                 ~CancelOnExit() { source.request_stop(); }
@@ -1394,6 +1358,15 @@ void StartProfilePreparation(huxerui::TaskScope tasks, std::shared_ptr<ProfilesM
                 model->ForgetPreparation(id, ticket); co_return;
             }
             if (!model->FinishPreparation(id, ticket, result.ready, result.error)) co_return;
+            // A previously missing provider can now be available without a new
+            // source file. Retry this view; dependency-free artifacts still hit
+            // the weak source index, disk-dependent ones are captured afresh.
+            if (result.ready) {
+                model->SyncRuleInputs();
+                model->rules->Retry(id);
+                model->rulesPrewarm.Queue(id);
+                StartProfileRulesPrewarm(tasks, model);
+            }
             if (!result.ready) toast.Show(LocalizedFormat("资源准备失败：{}", result.error), huxerui::ToastOptions{6.0});
             else if (!result.summary.empty()) toast.Show(LocalizedFormat("资源已就绪 · {}", result.summary), huxerui::ToastOptions{6.0});
         });
@@ -1438,8 +1411,8 @@ ProfilesModel::TakeProfileRefreshFailures() {
 void DriveProfilesModel(huxerui::TaskScope tasks,
                         std::shared_ptr<ProfilesModel> model) {
     DriveProfileList(tasks, model,
-        [model] {
-            model->SyncRuleInputs();
+        [tasks, model] {
+            StartProfileRulesPrewarm(tasks, model);
             return clashflux::data::session().profilesRevision();
         },
         []() -> huxerui::Task<ProfileListSnapshot<model::Profile>> {

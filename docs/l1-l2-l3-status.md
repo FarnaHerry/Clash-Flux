@@ -1,5 +1,30 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-16：目标工作模型 R1 来源目标捕获
+
+- R1 在现有 singbox 模块增加拥有型不可变 TargetSourceModel，显式捕获未叠加个人修改的主来源规则、默认动作、目录、rule_set 和出处。管理信息与内核字段分开，原生 DOM 私有；目标 ID 仅在句柄内唯一，不当作跨刷新编辑 ID。实现与边界见 [R1 证据](evidence/2026-11-16-target-r1.md)。
+- 默认 captureTargetSource=false；个人修改、UI、共享缓存和提交契约保持。捕获在源转换/命名空间之前执行，不重解析原文或从最终运行 JSON 猜测来源；后续失败/取消不发布 pending 快照。R2/R3 尚未接入共享与目标编辑。
+- R0 42 份原预期未重录，独立旧/新消费者观察逐字节相同；R1 另测捕获开/关、真实发射/默认/省略/MATCH 后映射、合成策略、重复身份、原生数值/未知对象、后续失败与生命周期。基础构建、版本和定向检查通过；最新 Android native/Java 编译 38 秒通过，未重打 APK。最终完整必跑门禁 **37/37，215.77 秒**；成本 CSV 已记录，捕获额外占用载荷/元信息内存，R2 须共享产物并实施总预算。未做 Windows/macOS 本机、GUI/真机或发布验收，未提交、推送或发布。
+
+## 2026-11-16：目标工作模型 R0 基线与契约
+
+- 基线为 `f08cde6` 加现有 Android HTTP 配置/文档工作区，生产转换器未修改。新增 42 份冻结观察及独立手写契约，覆盖完整生成 JSON/投影/错误/账本/来源目录/运行追溯与旧修改边界；合入 singbox 默认回归，可用 `--target-baseline` 单独运行。
+- 建立当前调用图、目标基线与运行注入分界、版本内对象身份和刷新出处映射原则，列出五类旧 operation、一对多/无输出、隐式兜底和次来源的兼容要求。下一步 R1 在真实发射处捕获目标结果，不能从最终 route.rules 按数组位置猜测来源。
+- 三组规则各三轮独立 Debug 测量：公共入口每轮 1 次投影＋2 次编译；1,000 条来源缓存命中 0→1，10,000/100,000 条均 0→0，现有缓存只保留不超过 128 KiB 的两个线程内 YAML 输入。10 万条重复编译约 2.50 秒、进程峰值 RSS 中位数 184,632 KiB，作为现状观察，不是新模型/真机性能承诺。
+- 主目标/测试构建、版本 v0.3.111、diff 和四个定向入口通过；固定内核 check 36 份接受，保留 future_match 的未知原生对象按预期拒绝。完整必跑门禁 **37/37，215.21 秒**。源码/冻结指纹、CSV、命令和边界见 [R0 证据](evidence/2026-11-16-target-r0.md)。R1–R5 未实施，未提交、推送或发布。
+
+## 2026-11-16：sing-box 目标工作模型方向细化（仅规划）
+
+- 基线为 `f08cde6` 加现有 Android HTTP 修复与文档工作区。根据用户明确的 sing-box 优先方向，将[工作模型计划](rule-document-plan.md)修订为转换结果驱动交互，内容贴近目标，管理标记独立；不建设完整来源编辑树。原文/用户修改仍保持权威，来源映射用于刷新匹配，缓存不能替代候选批准。
+- R0–R5 依次为基线与旧修改兼容设计、目标对象、共享转换产物、目标编辑/运行贯通、旧路径收敛、重启加载/磁盘评估；全部尚未实施，下一步 R0。页面重进不重复来源转换是验收目标，首次转换/重启加载成本单独测量；不同时重构全部 DNS/组/provider，不新增编辑或平台能力。
+- 同步转换子项目、当前规则/性能文档、源码导航、README 中英文与编译器/测试技能入口。只更新文档；`cmake --build build --target clash-flux`、`./run.sh --version`（v0.3.111）、`git diff --check` 及本地链接/规范限额检查通过。未运行新模型或平台运行验收，未提交或发布。
+
+## 2026-11-16：v0.3.111 发布与 Android HTTP 刷新修复
+
+- v0.3.111 最终标签为 `f08cde6`，Android versionCode 189。[发布 CI](https://github.com/FarnaHerry/Clash-Flux/actions/runs/43730188857) 的 Windows、Linux 双架构、macOS、Android、Windows 安装器和汇总发布均通过；[Release](https://github.com/FarnaHerry/Clash-Flux/releases/tag/v0.3.111) 有 10 个非空资产，Android 正式签名核验通过。iOS 诊断失败，按既有配置非阻塞且无发布产物。未做真机覆盖安装或 VPN 验收。
+- 随后收到 Android HTTP 订阅立即失败反馈，系统错误为 Cleartext HTTP traffic not permitted。下载桥已接受 HTTP/HTTPS，但 manifest 缺少明文传输许可；工作区补充 usesCleartextTraffic=true，兼容动态主机/IP 和端口，HTTPS 默认验证与刷新事务保持。详见[平台说明](android-build.md#http-订阅兼容)。此修复尚未包含在已发布的 v0.3.111，未改动已发布标签或资产。
+- `f08cde6` 加本轮 manifest/文档改动：主目标构建、版本命令（v0.3.111）及 diff 检查通过。Android `:app:testProfileHttpPolicy :app:externalNativeBuildDebug :app:compileDebugJavaWithJavac :app:processDebugMainManifest` **48 秒通过**；解析合并 manifest 确认 usesCleartextTraffic=true，无 networkSecurityConfig 覆盖。尚未在手机上刷新该实际订阅，宿主策略测试和构建不代替系统网络/真机验收。
+
 ## 2026-11-15：转换层按同仓子项目发展
 
 - 将转换层作为可复用、可独立维护的项目持续发展，当前保留同仓、clashflux.singbox 模块及现有构建发布。方向、核心/配置编译/应用适配职责和后续接口、资源、外部消费步骤见[转换子项目规划](converter-project.md)。独立库目标、SDK 和拆仓发布均留待后续按实际需求推进。

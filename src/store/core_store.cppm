@@ -23,6 +23,7 @@ module;
 #include "runtime_plan_state.h"
 #include "connection_trace.h"
 #include "runtime_compile.h"
+#include "target_source_cache.h"
 #include "tun_settings.h"
 #include "pac_server.h"
 #include "rule_set_cache_ownership.h"
@@ -203,6 +204,7 @@ private:
     std::optional<clashflux::network::ProxySnapshot> releasedProxy_;
     std::unique_ptr<clashflux::network::PacServer> pacServer_;
     std::atomic_bool pacSessionResident_{false};
+    clashflux::target_source::Cache<singbox::CompileOptions, singbox::TargetSourceModel> targetSources_;
     std::optional<singbox::CompileOptions> preparedOptions_;
     std::optional<singbox::CompileOptions> lastAppliedOptions_;
     std::optional<singbox::CompileOptions> lastPreparedOptions_;

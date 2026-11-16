@@ -166,7 +166,58 @@ export struct ProfileSource {
     bool operator==(const ProfileSource&) const = default;
 };
 
+// IDs below are local to this immutable model, never persistent edit IDs.
+export enum class TargetRuleState { Emitted, Default, Omitted, AfterFinal };
+export struct TargetMatch {
+    std::string field;
+    std::vector<std::string> values;
+};
+export struct TargetRule {
+    std::uint64_t id = 0;
+    std::size_t origin = 0;
+    std::string action, outbound, rejectMethod;
+    std::vector<TargetMatch> matches;
+    bool opaque = false; // Additional/nested native content remains in the private payload.
+};
+export struct TargetRuleOrigin {
+    std::size_t sourceIndex = 0;
+    std::string anchor;
+    TargetRuleState state = TargetRuleState::Omitted;
+    std::vector<std::uint64_t> rules;
+    std::vector<std::size_t> diagnostics; // Indices into this model's diagnostics().
+    bool synthetic = false; // Generated node policy or inferred default, not a literal source rule.
+};
+export struct TargetDefaultAction {
+    std::string action, outbound, rejectMethod;
+    bool implicit = true;
+};
+struct TargetCapture;
+struct TargetProjection;
+export class TargetSourceModel {
+    struct Data;
+    std::shared_ptr<const Data> data_;
+    explicit TargetSourceModel(std::shared_ptr<const Data> data);
+    friend struct TargetCapture;
+    friend struct TargetProjection;
+public:
+    const std::string& sourceId() const noexcept;
+    ProfileFormat format() const noexcept;
+    const std::vector<TargetRule>& rules() const noexcept;
+    const std::vector<TargetRuleOrigin>& origins() const noexcept;
+    const TargetDefaultAction& defaultAction() const noexcept;
+    const std::vector<SourceObject>& objects() const noexcept; // Source-local tags.
+    const std::vector<FidelityNote>& diagnostics() const noexcept;
+    std::optional<std::string> ruleJson(std::uint64_t id) const;
+    std::string ruleSetsJson() const;
+    std::size_t retainedBytes() const noexcept;
+};
+
+export ProfileRules ProjectTargetSource(const TargetSourceModel& model,
+    const ProfileRuleEdits& edits = {}, const RuleSetLibrary& library = {});
+
 export struct CompileResult {
+    std::shared_ptr<const TargetSourceModel> targetSource; // Optional, not a runtime approval.
+    bool targetSourceReused = false; // Application artifact index hit, not a YAML parse hit.
     unsigned sourceParseCacheHits = 0;
     std::string json;                    // compileConfig 配置 JSON；失败或仅目录检查为空
     std::string error;                   // 致命错误（YAML 解析失败等）
@@ -210,6 +261,7 @@ export struct NativeConnection {
 };
 
 export struct CompileOptions {
+    bool captureTargetSource = false; // R1: unedited main source only; defaults to no extra capture.
     clashflux::network::Settings network;
     std::string profileYaml;                     // 订阅/手写配置原文（Clash YAML、
                                                  // 原生 sing-box JSON、OpenVPN .ovpn 或空）

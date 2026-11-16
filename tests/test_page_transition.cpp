@@ -4298,6 +4298,8 @@ void testGlobalRuleSharing() {
 }
 
 struct RulesCacheFixture {
+    std::shared_ptr<clashflux::ui::ProfileRulesModel<std::string>> bounded =
+        std::make_shared<clashflux::ui::ProfileRulesModel<std::string>>();
     std::shared_ptr<clashflux::ui::ProfileRulesModel<std::string>> cache =
         std::make_shared<clashflux::ui::ProfileRulesModel<std::string>>();
     huxerui::State<bool> visible{true};
@@ -4411,6 +4413,44 @@ void testSharedRulesCache() {
     cache->Forget(3); cache->SetInput(3, {.file = "ABA"});
     check(!cache->Publish(3, removed, std::make_shared<const std::string>("DELETED")) && !cache->SnapshotOf(3),
           "deletion and recreation cannot resurrect an old snapshot");
+
+    auto& bounded = *fixture->bounded;
+    bounded.budgetBytes = 512;
+    bounded.SetInput(1, {.file="pinned"}); bounded.Pin(1);
+    const auto held = std::make_shared<const std::string>(2048, 'x');
+    bounded.Publish(1, *bounded.Begin(1), held);
+    check(bounded.Ready(1) && bounded.RetainedBytes() > bounded.budgetBytes,
+          "active rules views pin their immutable snapshot even above the idle budget");
+    bounded.Unpin(1);
+    check(!bounded.entries.contains(1) && held->size() == 2048 && held->front() == 'x',
+          "unpinning evicts idle snapshots and owned inputs without revoking caller-held data");
+    bounded.budgetBytes = 1024*1024;
+    bounded.SetInput(1, {.file="one"});
+    bounded.Publish(1, *bounded.Begin(1), held);
+    bounded.budgetBytes = 2*bounded.RetainedBytes() + 32;
+    bounded.SetInput(2, {.file="two"}); bounded.Publish(2, *bounded.Begin(2), held);
+    bounded.SnapshotOf(1); // Make source 2 least recently used.
+    bounded.SetInput(3, {.file="three"}); bounded.Publish(3, *bounded.Begin(3), held);
+    check(bounded.Ready(1) && !bounded.entries.contains(2) && bounded.Ready(3) &&
+          bounded.RetainedBytes() <= bounded.budgetBytes,
+          "idle rules payloads and key bytes share one bounded least-recently-used budget");
+    bounded.SetInput(1, {.file="one", .resources=1});
+    check(!bounded.Ready(1) && bounded.SnapshotOf(1) == held,
+          "resource revisions invalidate ready state while preserving the last visible snapshot");
+    const auto refreshed = *bounded.Begin(1); bounded.Pin(1);
+    bounded.Publish(1, refreshed, held);
+    const auto upgrade = *bounded.Begin(1, true);
+    const auto upgraded = std::make_shared<const std::string>("editor upgrade");
+    bounded.PublishTargets(1, upgrade, {"DIRECT"}, {}, upgraded);
+    check(bounded.EditorReady(1) && bounded.SnapshotOf(1) == upgraded,
+          "lazy editor preparation atomically upgrades the same accepted snapshot version");
+    bounded.Unpin(1);
+    bounded.SetInput(4, {.file=std::string(20000, 'k')});
+    const auto reading = *bounded.Begin(4); bounded.Trim();
+    check(bounded.entries.contains(4), "in-flight cache inputs remain available until their versioned publication");
+    bounded.Publish(4, reading, std::make_shared<const std::string>("tiny"));
+    check(!bounded.entries.contains(4) && bounded.RetainedBytes() <= bounded.budgetBytes,
+          "large idle key metadata cannot escape the rules cache budget");
 }
 
 struct VpnHydrationFixture {
@@ -7927,6 +7967,9 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--rules-cache") {
+        testSharedRulesCache(); return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--qr-share") {
         testQrShareBounds(); return failures == 0 ? 0 : 1;
     }

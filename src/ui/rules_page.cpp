@@ -51,6 +51,7 @@ import clashflux.routing;
 #include "core_model.h"
 #include "profiles_cache.h"
 #include "profiles_model.h"
+#include "profile_rules_snapshot.h"
 #include "vpn_model.h"
 
 namespace clashflux::ui {
@@ -216,14 +217,6 @@ bool ValidateRuleInput(vpn::RouteRule& rule, std::string& error) {
 
 } // namespace
 
-struct ProfileRulesSnapshot {
-    std::int64_t id = 0;
-    std::string content, error;
-    singbox::ProfileRuleEdits edits;
-    singbox::RuleSetLibrary library;
-    singbox::ProfileRules effective;
-    bool supported = false;
-};
 struct PersonalRuleDraft {
     singbox::ProfileRuleEdit edit;
     huxerui::TextEditingValue pattern;
@@ -245,99 +238,6 @@ const std::vector<std::string> kPersonalMatchLabels{
     "域名后缀", "精确域名", "IP / CIDR", "域名关键词", "域名正则", "进程名称", "规则集"};
 const std::vector<std::string> kPersonalPositions{"订阅规则之前", "订阅兜底之前"};
 const std::vector<std::string> kPersonalViews{"修改后的规则", "订阅原规则", "个人修改记录"};
-
-ProfileRulesSnapshot LoadPersonalRules(std::int64_t id, const ProfileRulesInput& input) {
-    ProfileRulesSnapshot result{.id = id};
-    using Clock = std::chrono::steady_clock;
-    const auto started = Clock::now();
-    // Rule edits are staged in the settings cache while a candidate is checked.
-    // Wait for acceptance/rollback before allowing that input to be published.
-    auto lock = store::coreStore().lockPlanLifecycle();
-    const auto acquired = Clock::now();
-    // Consume the captured version, not mutable store state after waiting for a
-    // worker. Versioned files remain immutable throughout this read.
-    model::Profile profile;
-    profile.file = input.file;
-    result.content = store::profilesStore().yamlOf(profile);
-    result.supported = singbox::DetectProfileFormat(result.content) != singbox::ProfileFormat::OpenVpn;
-    if (!result.supported) return result;
-    result.edits = routing::DecodeProfileRules(input.edits);
-    result.library = routing::DecodeRuleSetLibrary(input.library);
-    const auto loaded = Clock::now();
-    result.effective = singbox::InspectProfileRules(result.content, result.edits, false);
-    result.error = result.effective.error;
-    const auto projected = Clock::now();
-    const auto micros = [](auto duration) {
-        return std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
-    };
-    stream::logApplication("debug", "rules-load wait_us=" + std::to_string(micros(acquired - started)) +
-        " read_us=" + std::to_string(micros(loaded - acquired)) +
-        " project_us=" + std::to_string(micros(projected - loaded)) +
-        " rows=" + std::to_string(result.effective.rules.size()));
-    return result;
-}
-
-std::vector<std::string> LoadPersonalRuleTargets(
-    const ProfileRulesSnapshot& source, const ProfileRulesInput& input) {
-    std::vector<std::string> targets{"DIRECT", "REJECT", "REJECT-DROP"};
-    singbox::CompileOptions options;
-    options.profileYaml = source.content;
-    options.mainConnectionId = store::ProfileConnectionId(source.id);
-    options.mainSourceName = input.name;
-    auto objects = singbox::DetectProfileFormat(source.content) == singbox::ProfileFormat::SingBoxJson
-        ? singbox::compileConfig(options) : singbox::inspectProfileSourceObjects(options);
-    for (const auto& object : objects.sourceObjects)
-        if (std::ranges::find(targets, object.objectId) == targets.end())
-            targets.push_back(object.objectId);
-    return targets;
-}
-
-void RequestPersonalRules(huxerui::TaskScope tasks,
-    std::shared_ptr<ProfilesModel> profiles, std::int64_t id, bool editor, std::string readError) {
-    profiles->SyncRuleInputs(id);
-    const auto model = profiles->rules;
-    const auto entry = model->entries.find(id);
-    if (entry == model->entries.end()) return;
-    if (model->Ready(id)) {
-        if (!editor || entry->second.targets || entry->second.targetsLoading ||
-            !entry->second.value->supported) return;
-    } else if (entry->second.loading) return;
-    const auto input = entry->second.input;
-    RequestProfileRulesSnapshot(tasks, model, id,
-        [id, input]() -> huxerui::Task<std::shared_ptr<const ProfileRulesSnapshot>> {
-            co_return co_await RunOnTaskThread([id, input] {
-                return std::make_shared<const ProfileRulesSnapshot>(LoadPersonalRules(id, input));
-            });
-        }, [profiles] { profiles->SyncRuleInputs(); },
-        [id, readError](std::exception_ptr error) {
-            ProfileRulesSnapshot failure{.id = id};
-            try { std::rethrow_exception(error); }
-            catch (const std::exception& exception) { failure.error = exception.what(); }
-            catch (...) { failure.error = readError; }
-            return std::make_shared<const ProfileRulesSnapshot>(std::move(failure));
-        });
-    if (!editor) return;
-    const auto ticket = model->Begin(id, true);
-    if (!ticket) return;
-    const auto source = model->SnapshotOf(id);
-    try {
-        tasks.Launch([=]() -> huxerui::Task<void> {
-            std::vector<std::string> targets;
-            std::string error;
-            try { targets = co_await RunOnTaskThread([source, input] {
-                return LoadPersonalRuleTargets(*source, input);
-            }); }
-            catch (const std::exception& exception) { error = exception.what(); }
-            catch (...) { error = readError; }
-            profiles->SyncRuleInputs();
-            model->PublishTargets(id, *ticket, std::move(targets), std::move(error));
-        });
-    } catch (const std::exception& exception) {
-        model->PublishTargets(id, *ticket, {}, exception.what());
-    } catch (...) {
-        model->PublishTargets(id, *ticket, {}, readError);
-    }
-}
 
 [[huxerui::composable]] huxerui::View PersonalRuleForm(
     huxerui::State<PersonalRuleDraft> draft, std::vector<std::string> targets,
@@ -975,8 +875,14 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
     const auto displayedId = profilesModel->ResolveRuleSource(profileId.Get());
     const bool sourcesReady = profilesModel->loaded.Get() && profilesModel->ruleSourcesReady.Get();
     const bool profileRefreshing = profilesModel->Refreshing(displayedId);
+    const auto preparation = profilesModel->Preparation(displayedId);
+    const bool profilePreparing = preparation && preparation->phase == ProfilePreparationPhase::Preparing;
     const auto profileRefreshVersion = profilesModel->RefreshVersion(displayedId);
     const auto rulesModel = profilesModel->rules;
+    huxerui::Lifecycle([rulesModel, displayedId] {
+        rulesModel->Pin(displayedId);
+        return [rulesModel, displayedId] { rulesModel->Unpin(displayedId); };
+    }, displayedId);
     const auto rulesRevision = rulesModel->revision.Get();
     const auto readError = huxerui::UseString(Localized("无法读取订阅配置"));
     auto busy = huxerui::UseState(false);
@@ -984,28 +890,28 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
     auto alive = huxerui::UseState(true);
     huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
     huxerui::Lifecycle([=] {
-        if (displayedId && sourcesReady && !profileRefreshing)
+        if (displayedId && sourcesReady && !profileRefreshing && !profilePreparing)
             RequestPersonalRules(tasks, profilesModel, displayedId, !readOnly, readError);
-    }, displayedId, sourcesReady, profileRefreshing, profileRefreshVersion,
-       profilesModel->list, rulesRevision, readOnly);
+    }, displayedId, sourcesReady, profileRefreshing, profilePreparing, profileRefreshVersion,
+       profilesModel->list, profilesModel->preparations, rulesRevision, readOnly);
     const auto cached = rulesModel->SnapshotOf(displayedId);
     const auto renderedSource = cached ? cached : std::make_shared<const ProfileRulesSnapshot>();
     // Keep the last accepted list during revalidation. Editors may mutate only
     // the current input version, and acquire their target catalog separately.
     const bool rulesLoading = !sourcesReady || (displayedId != 0 && !cached);
-    const bool editingBlocked = readOnly || !sourcesReady || profileRefreshing ||
+    const bool editingBlocked = readOnly || !sourcesReady || profileRefreshing || profilePreparing ||
         !rulesModel->EditorReady(displayedId);
     const auto persist = [=](singbox::ProfileRuleEdits edits, std::function<void()> done) {
         if (busy.Get() || editingBlocked || !rulesModel->EditorReady(displayedId)) return;
         const auto source = rulesModel->SnapshotOf(displayedId);
-        if (!source || source != renderedSource || source->id != profileId.Get() || !source->supported) return;
+        if (!source || source != renderedSource || source->id != profileId.Get() || !source->data->supported) return;
         busy = true;
         tasks.Launch([=]() -> huxerui::Task<void> {
             std::string error;
             try {
                 error = co_await RunOnTaskThread([source, edits] {
                     std::string failure;
-                    store::profilesStore().saveRuleEdits(source->id, edits, source->content, failure);
+                    store::profilesStore().saveRuleEdits(source->id, edits, source->data->content, failure);
                     return failure;
                 });
             } catch (const std::exception& exception) { error = exception.what(); }
@@ -1020,13 +926,13 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
         if (!alive.Get() || busy.Get() || editingBlocked || !rulesModel->EditorReady(displayedId)) return;
         if (rulesModel->SnapshotOf(displayedId) != renderedSource) return;
         const auto source = rulesModel->SnapshotOf(displayedId);
-        if (!source->supported || source->id != profileId.Get()) return;
+        if (!source->data->supported || source->id != profileId.Get()) return;
         const bool adding = row.editId.empty() && row.type.empty() &&
             row.pattern.empty() && row.anchor.empty() && row.target.empty();
         PersonalRuleDraft value;
         auto targets = *rulesModel->entries.at(displayedId).targets;
-        const auto existing = std::ranges::find(source->edits.rules, row.editId, &singbox::ProfileRuleEdit::id);
-        if (!row.editId.empty() && existing != source->edits.rules.end()) value.edit = *existing;
+        const auto existing = std::ranges::find(source->data->edits.rules, row.editId, &singbox::ProfileRuleEdit::id);
+        if (!row.editId.empty() && existing != source->data->edits.rules.end()) value.edit = *existing;
         else {
             value.edit.id = "rule-" + cfg::randomSecret();
             if (row.terminal) value.edit.operation = "final";
@@ -1043,8 +949,8 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
         const auto kind = std::ranges::find(kPersonalMatches, value.edit.match);
         value.match = kind == kPersonalMatches.end() ? 0 : static_cast<std::size_t>(kind - kPersonalMatches.begin());
         if (value.edit.match == "rule_set")
-            value.resource = static_cast<std::size_t>(std::ranges::find(source->library.resources, value.edit.pattern,
-                &singbox::PersonalRuleSet::id) - source->library.resources.begin());
+            value.resource = static_cast<std::size_t>(std::ranges::find(source->data->library.resources, value.edit.pattern,
+                &singbox::PersonalRuleSet::id) - source->data->library.resources.begin());
         value.position = value.edit.operation == "before_final" ? 1 : 0;
         value.unavailable = value.edit.unavailable == "direct" ? 1 : value.edit.unavailable == "main" ? 2 : 0;
         if (std::ranges::find(targets, value.edit.target) == targets.end()) targets.push_back(value.edit.target);
@@ -1058,33 +964,33 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
             auto edited = draft.Get().edit;
             edited.match = kPersonalMatches[draft.Get().match]; edited.pattern = draft.Get().pattern.text;
             if (edited.match == "rule_set" && edited.operation != "final") {
-                if (draft.Get().resource >= source->library.resources.size()) {
+                if (draft.Get().resource >= source->data->library.resources.size()) {
                     toast.Show(Localized("请选择有效规则集")); return;
                 }
-                edited.pattern = source->library.resources[draft.Get().resource].id;
+                edited.pattern = source->data->library.resources[draft.Get().resource].id;
             }
             edited.target = targets[draft.Get().target];
             edited.unavailable = draft.Get().unavailable == 1 ? "direct" : draft.Get().unavailable == 2 ? "main" : "reject";
             if (edited.operation == "prepend" || edited.operation == "before_final")
                 edited.operation = draft.Get().position == 0 ? "prepend" : "before_final";
-            auto edits = source->edits;
+            auto edits = source->data->edits;
             const auto found = std::ranges::find(edits.rules, edited.id, &singbox::ProfileRuleEdit::id);
             if (found == edits.rules.end()) edits.rules.push_back(std::move(edited)); else *found = std::move(edited);
             persist(std::move(edits), std::move(done));
         };
         if (compact) {
             OpenRuleEditor(navigation, desktopNavigation, [=] {
-                return PersonalRuleEditorPage(draft, targets, source->library, busy, save);
+                return PersonalRuleEditorPage(draft, targets, source->data->library, busy, save);
             });
             return;
         }
         ShowEditorDialog(dialog, [=](huxerui::DialogContext context) {
-            return PersonalRuleDialog(draft, targets, source->library, busy, adding,
+            return PersonalRuleDialog(draft, targets, source->data->library, busy, adding,
                 save, [context] { context.Dismiss(); });
         });
     };
     huxerui::Lifecycle([=] {
-        addAction = editingBlocked || !renderedSource->supported ? std::function<void()>{}
+        addAction = editingBlocked || !renderedSource->data->supported ? std::function<void()>{}
             : std::function<void()>{[openEditor] { openEditor({}); }};
     }, rulesModel->revision, profileId, busy, editingBlocked);
     const auto change = [=](singbox::ProfileRule row, std::string action) {
@@ -1103,7 +1009,7 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
                     DialogActions({DialogAction(Localized("关闭"), [context] { context.Dismiss(); }, false)}), DialogSize::Small);
             }); return;
         }
-        auto edits = source->edits;
+        auto edits = source->data->edits;
         auto found = std::ranges::find(edits.rules, row.editId, &singbox::ProfileRuleEdit::id);
         if (action == "disable") edits.rules.push_back({.id = "rule-" + cfg::randomSecret(),
             .operation = "disable", .anchor = row.anchor});
@@ -1123,8 +1029,10 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
         persist(std::move(edits), {});
     };
     const auto source = renderedSource;
-    const auto records = std::shared_ptr<const std::vector<singbox::ProfileRule>>(
-        source, &source->effective.rules);
+    const auto records = readOnly
+        ? std::shared_ptr<const std::vector<singbox::ProfileRule>>(source->data, &source->data->effective.rules)
+        : source->editor ? std::shared_ptr<const std::vector<singbox::ProfileRule>>(source->editor, &source->editor->rules)
+        : std::shared_ptr<const std::vector<singbox::ProfileRule>>(source->data, &source->data->effective.rules);
     const auto scroll = profilesModel->rulesScrolls.try_emplace(
         std::pair{displayedId, std::size_t{0}}).first->second;
     auto list = rulesLoading ? PageLoadingSkeleton(theme, true) :
@@ -1132,16 +1040,17 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
         records->empty() ? EmptyState(Localized("没有规则"), app::images::route) :
         huxerui::View{ScrollArea(PageVirtualList(records->size(), [=](std::size_t index) -> huxerui::View {
             const auto& row = (*records)[index];
-            return PersonalRuleRow(row, !readOnly && source->supported, busy.Get() || editingBlocked,
-                PersonalRulePattern(row, source->library), openEditor, change, index + 1 == records->size())
-                .Key(row.editId.empty() ? row.anchor + ":" + std::to_string(index) : row.editId);
+            return PersonalRuleRow(row, !readOnly && source->data->supported, busy.Get() || editingBlocked,
+                PersonalRulePattern(row, source->data->library), openEditor, change, index + 1 == records->size())
+                .Key(readOnly ? row.anchor : row.editId.empty() ? row.anchor + ":" + std::to_string(index) : row.editId);
         })
             .Controller(scroll).EstimatedItemExtent(kSubscriptionRuleEstimatedExtent),
             scroll, {}, {}, ScrollAreaInsets::Dense())
             .With(huxerui::Grow(1.0F))};
     std::vector<huxerui::View> content;
-    if (!source->error.empty())
-        content.push_back(PageBodyFrame(huxerui::Text(source->error).Style(
+    const auto& sourceError = readOnly ? source->data->error : source->editor ? source->editor->error : source->data->error;
+    if (!sourceError.empty())
+        content.push_back(PageBodyFrame(huxerui::Text(sourceError).Style(
             {huxerui::Font::System(font_size::kCaption), theme.colors.error})));
     if (!readOnly) {
         const auto entry = rulesModel->entries.find(displayedId);
@@ -1150,7 +1059,7 @@ std::string PersonalRulePattern(const singbox::ProfileRule& row, const singbox::
                 {huxerui::Font::System(font_size::kCaption), theme.colors.error})));
     }
     const auto entry = rulesModel->entries.find(displayedId);
-    if (!source->error.empty() || (!readOnly && entry != rulesModel->entries.end() &&
+    if (!sourceError.empty() || (!readOnly && entry != rulesModel->entries.end() &&
         !entry->second.targetError.empty())) {
         content.push_back(PageBodyFrame(huxerui::Button(Localized("重试"))
             .With(huxerui::Enabled(!busy.Get() && !profileRefreshing && rulesModel->Ready(displayedId)))

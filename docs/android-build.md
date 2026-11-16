@@ -119,6 +119,12 @@ SHA-256 指纹为 `a4a0bc09a3dc76d7ac37f92043d2be6e153bda1347ce344013828e1547241
 后台会话时钟及订阅 UA 兼容边界；独立执行命令与实机验收
 边界见[Android 生命周期](android-background-lifecycle.md)。
 
+## HTTP 订阅兼容
+
+应用 manifest 显式设置 `android:usesCleartextTraffic="true"`，允许用户配置的任意主机/IP、端口上的 HTTP 订阅及资源地址；不能在构建时硬编码某个订阅主机。否则 Android 会在 Java 下载桥发出请求前以 `Cleartext HTTP traffic ... not permitted` 拒绝，而桌面正常。此项只允许 HTTP 传输，不改变 HTTPS 的系统证书/主机名校验、下载限额、整份候选检查与失败留旧。
+
+修改后核对合并 manifest 中该值仍为 true，并构建 Android Java/native；宿主下载策略测试不等于 Android 系统网络策略或真机刷新验收。
+
 ## 发布版本号
 
 发布时 `platform/android/app/build.gradle` 的 `versionCode` 在上一发布基础上 +1，

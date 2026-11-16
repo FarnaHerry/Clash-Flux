@@ -8,6 +8,7 @@
 #include <cassert>
 #include "../src/runtime_plan_state.h"
 #include "../src/runtime_compile.h"
+#include "../src/target_source_cache.h"
 #include "../src/rule_set_cache_ownership.h"
 #include <cstdio>
 #include "../src/network_settings.h"
@@ -2844,6 +2845,9 @@ void testNodeSubscriptions() {
     check(rules.error.empty() && !rules.original.empty(), "generated MATCH is visible to personal-rule projection");
 }
 
+#include "target_rule_baseline_cases.inc"
+#include "target_source_cases.inc"
+#include "target_project_cases.inc"
 #include "protocol_entry_cases.inc"
 #include "node_uri_ss_cases.inc"
 #include "node_uri_v2ray_cases.inc"
@@ -3052,6 +3056,23 @@ int main(int argc, char** argv) {
     }
     if (argc == 4 && (std::string_view(argv[1]) == "--ss-uri-provider-config" || std::string_view(argv[1]) == "--uri-provider-config"))
         return node_uri_ss_tests::WriteProvider(argv[2], argv[3]);
+    if (argc == 2 && std::string_view(argv[1]) == "--target-project") {
+        target_project_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--target-workspace-benchmark")
+        return target_project_tests::Benchmark(std::stoi(argv[2]));
+    if (argc == 2 && std::string_view(argv[1]) == "--target-source") {
+        target_source_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--target-baseline") {
+        target_rule_baseline::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--observe-target-baseline")
+        return target_rule_baseline::ObserveFile(argv[2]);
+    if (argc == 3 && std::string_view(argv[1]) == "--target-source-benchmark")
+        return target_rule_baseline::Benchmark(std::stoi(argv[2]), true);
+    if (argc == 3 && std::string_view(argv[1]) == "--target-baseline-benchmark")
+        return target_rule_baseline::Benchmark(std::stoi(argv[2]));
     if (argc == 2 && std::string_view(argv[1]) == "--protocol-entries") {
         protocol_entry_tests::Run(); return failures ? 1 : 0;
     }
@@ -3061,7 +3082,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::string_view(argv[1]) == "--protocol-fixtures") {
         testProtocolBaseline(argv[2]); return failures ? 1 : 0;
     }
-    if (argc == 1) { testProtocolBaseline(); protocol_model_tests::Run(); protocol_entry_tests::Run(); node_uri_ss_tests::Run(); node_uri_v2ray_tests::Run(); node_uri_secure_tests::Run(); node_input_tests::LegacyRun(); node_input_tests::CatalogRun(); }
+    if (argc == 1) { target_rule_baseline::Run(); target_source_tests::Run(); target_project_tests::Run(); testProtocolBaseline(); protocol_model_tests::Run(); protocol_entry_tests::Run(); node_uri_ss_tests::Run(); node_uri_v2ray_tests::Run(); node_uri_secure_tests::Run(); node_input_tests::LegacyRun(); node_input_tests::CatalogRun(); }
     if (argc == 2 && std::string_view(argv[1]) == "--profile-rules") {
         testRuleProjection(); profileRuleProjection(); return failures ? 1 : 0;
     }

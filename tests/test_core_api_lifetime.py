@@ -116,5 +116,12 @@ if __name__ == "__main__":
     executable = str(Path(sys.argv[1]).resolve(strict=True))
     check(executable, False)
     check(executable, True)
+    with tempfile.TemporaryDirectory(prefix="clashflux-rule-prewarm-") as directory:
+        env = {**os.environ, "HOME": directory, "APPDATA": directory, "XDG_DATA_HOME": directory,
+               "XDG_CONFIG_HOME": directory, "XDG_CACHE_HOME": directory}
+        result = subprocess.run([executable, "--rules-prewarm", directory], env=env,
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+        print(result.stdout.strip())
 
     check_preparation(executable)

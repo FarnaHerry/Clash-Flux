@@ -1,0 +1,4978 @@
+{
+  "schema": 1,
+  "baseline_commit": "f08cde6",
+  "compiler_source_sha256": "a8a3264c0d43b7a147b37f16c6995b6799b4dd089c6c781fe9ad1d384bb8d578",
+  "cases": [
+    {
+      "name": "basic",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "original.test"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "post-match",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\", \"DOMAIN,unreachable.test,REJECT\"]\n",
+      "contract": {
+        "absent": [
+          "unreachable.test"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            },
+            {
+              "anchor": "clash:DOMAIN,unreachable.test,REJECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "unreachable.test",
+              "position": "",
+              "raw": "DOMAIN,unreachable.test,REJECT",
+              "target": "REJECT",
+              "terminal": false,
+              "type": "domain"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            },
+            {
+              "anchor": "clash:DOMAIN,unreachable.test,REJECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "unreachable.test",
+              "position": "",
+              "raw": "DOMAIN,unreachable.test,REJECT",
+              "target": "REJECT",
+              "terminal": false,
+              "type": "domain"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "unsupported",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"UNKNOWN-RULE,unsupported.test,DIRECT\", \"MATCH,DIRECT\"]\n",
+      "contract": {
+        "absent": [
+          "unsupported.test"
+        ],
+        "fidelity_min": 1
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "",
+            "detail": "规则 UNKNOWN-RULE,unsupported.test,DIRECT 无法转换：此匹配类型尚未接入，已跳过",
+            "level": 2,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "UNKNOWN-RULE,unsupported.test,DIRECT"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:UNKNOWN-RULE,unsupported.test,DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "unsupported.test",
+              "position": "",
+              "raw": "UNKNOWN-RULE,unsupported.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "UNKNOWN-RULE"
+            },
+            {
+              "anchor": "clash:MATCH,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,DIRECT",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:UNKNOWN-RULE,unsupported.test,DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "unsupported.test",
+              "position": "",
+              "raw": "UNKNOWN-RULE,unsupported.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "UNKNOWN-RULE"
+            },
+            {
+              "anchor": "clash:MATCH,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,DIRECT",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 6,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "规则 UNKNOWN-RULE,unsupported.test,DIRECT 无法转换：此匹配类型尚未接入，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "bad-modifier",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,modifier.test,DIRECT,future-option\", \"MATCH,DIRECT\"]\n",
+      "contract": {
+        "absent": [
+          "modifier.test"
+        ],
+        "fidelity_min": 1
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "未知修饰符可能改变匹配语义，不能删除后继续执行规则",
+            "detail": "规则 DOMAIN,modifier.test,DIRECT,future-option 的修饰符「future-option」尚未转换，已跳过",
+            "level": 2,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "DOMAIN,modifier.test,DIRECT,future-option"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,modifier.test,DIRECT,future-option",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "modifier.test",
+              "position": "",
+              "raw": "DOMAIN,modifier.test,DIRECT,future-option",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "DOMAIN"
+            },
+            {
+              "anchor": "clash:MATCH,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,DIRECT",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,modifier.test,DIRECT,future-option",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "modifier.test",
+              "position": "",
+              "raw": "DOMAIN,modifier.test,DIRECT,future-option",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "DOMAIN"
+            },
+            {
+              "anchor": "clash:MATCH,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,DIRECT",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 6,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "规则 DOMAIN,modifier.test,DIRECT,future-option 的修饰符「future-option」尚未转换，已跳过"
+        ]
+      }
+    },
+    {
+      "name": "logical",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"AND,((DOMAIN,logic.test),(DST-PORT,443)),DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "logic.test"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"mode\":\"and\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"domain\":[\"logic.test\"]},{\"port\":[443]}],\"type\":\"logical\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:AND,((DOMAIN,logic.test),(DST-PORT,443)),DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "((DOMAIN,logic.test),(DST-PORT,443))",
+              "position": "",
+              "raw": "AND,((DOMAIN,logic.test),(DST-PORT,443)),DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "AND"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:AND,((DOMAIN,logic.test),(DST-PORT,443)),DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "((DOMAIN,logic.test),(DST-PORT,443))",
+              "position": "",
+              "raw": "AND,((DOMAIN,logic.test),(DST-PORT,443)),DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "AND"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "bad-logical",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT\", \"MATCH,DIRECT\"]\n",
+      "contract": {
+        "absent": [
+          "logic.test"
+        ],
+        "fidelity_min": 1
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "逻辑条件按路由 schema 转换，不删除子条件后扩大匹配",
+            "detail": "逻辑规则 AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT 含无效或未接入的子条件：future: 此匹配类型尚未接入，整条跳过",
+            "level": 2,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "((DOMAIN,logic.test),(FUTURE,broken))",
+              "position": "",
+              "raw": "AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "AND"
+            },
+            {
+              "anchor": "clash:MATCH,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,DIRECT",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "((DOMAIN,logic.test),(FUTURE,broken))",
+              "position": "",
+              "raw": "AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "AND"
+            },
+            {
+              "anchor": "clash:MATCH,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,DIRECT",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 6,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "逻辑规则 AND,((DOMAIN,logic.test),(FUTURE,broken)),DIRECT 含无效或未接入的子条件：future: 此匹配类型尚未接入，整条跳过"
+        ]
+      }
+    },
+    {
+      "name": "resolve-expansion",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,one.test,DIRECT\", \"IP-CIDR,192.0.2.0/24,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "one.test",
+          "192.0.2.0/24"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"one.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"ip_cidr\":[\"192.0.2.0/24\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,one.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "one.test",
+              "position": "",
+              "raw": "DOMAIN,one.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:IP-CIDR,192.0.2.0/24,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "192.0.2.0/24",
+              "position": "",
+              "raw": "IP-CIDR,192.0.2.0/24,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "ip_cidr"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,one.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "one.test",
+              "position": "",
+              "raw": "DOMAIN,one.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:IP-CIDR,192.0.2.0/24,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "192.0.2.0/24",
+              "position": "",
+              "raw": "IP-CIDR,192.0.2.0/24,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "ip_cidr"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "no-resolve",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"IP-CIDR,192.0.2.0/24,DIRECT,no-resolve\", \"MATCH,Pick\"]\n",
+      "contract": {},
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "当前保留原匹配规则；no-resolve 不会写成内核不存在的字段",
+            "detail": "规则 IP-CIDR,192.0.2.0/24,DIRECT,no-resolve 的 no-resolve 尚未保真，托管路由仍会执行前置解析",
+            "level": 1,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "IP-CIDR,192.0.2.0/24,DIRECT,no-resolve"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"ip_cidr\":[\"192.0.2.0/24\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:IP-CIDR,192.0.2.0/24,DIRECT,no-resolve",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "192.0.2.0/24",
+              "position": "",
+              "raw": "IP-CIDR,192.0.2.0/24,DIRECT,no-resolve",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "IP-CIDR"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:IP-CIDR,192.0.2.0/24,DIRECT,no-resolve",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "192.0.2.0/24",
+              "position": "",
+              "raw": "IP-CIDR,192.0.2.0/24,DIRECT,no-resolve",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "IP-CIDR"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "规则 IP-CIDR,192.0.2.0/24,DIRECT,no-resolve 的 no-resolve 尚未保真，托管路由仍会执行前置解析"
+        ]
+      }
+    },
+    {
+      "name": "reject-final",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"MATCH,REJECT\"]\n",
+      "contract": {},
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"action\":\"reject\",\"clash_mode\":\"global\"},{\"action\":\"reject\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:MATCH,REJECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,REJECT",
+              "target": "REJECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:MATCH,REJECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,REJECT",
+              "target": "REJECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "drop-final",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"MATCH,REJECT-DROP\"]\n",
+      "contract": {},
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"action\":\"reject\",\"clash_mode\":\"global\",\"method\":\"drop\"},{\"action\":\"reject\",\"method\":\"drop\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:MATCH,REJECT-DROP",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,REJECT-DROP",
+              "target": "REJECT-DROP",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:MATCH,REJECT-DROP",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,REJECT-DROP",
+              "target": "REJECT-DROP",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "bad-final",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"MATCH,missing\"]\n",
+      "contract": {
+        "error_contains": "MATCH 目标"
+      },
+      "expected": {
+        "error": "MATCH 目标「missing」不可用，无法应用配置",
+        "fidelity": [
+          {
+            "action": "修正兜底目标；不会改成 DIRECT 或首个代理组",
+            "detail": "MATCH 目标「missing」不可用，无法应用配置",
+            "level": 2,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "MATCH"
+          }
+        ],
+        "json": "",
+        "objects": [],
+        "outbounds": null,
+        "participatingSources": [],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:MATCH,missing",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,missing",
+              "target": "missing",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:MATCH,missing",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,missing",
+              "target": "missing",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 0,
+          "labels": {},
+          "origins": []
+        },
+        "warnings": [
+          "MATCH 目标「missing」不可用，无法应用配置"
+        ]
+      }
+    },
+    {
+      "name": "implicit-selector",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,implicit.test,DIRECT\"]\n",
+      "contract": {
+        "present": [
+          "implicit.test"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"implicit.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,implicit.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "implicit.test",
+              "position": "",
+              "raw": "DOMAIN,implicit.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "implicit:final",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,implicit.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "implicit.test",
+              "position": "",
+              "raw": "DOMAIN,implicit.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "implicit:final",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "implicit-direct",
+      "source": "rules: []\n",
+      "contract": {},
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "implicit:final",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "implicit:final",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "DIRECT",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 6,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "yaml-alias",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules:\n  - &rule \"DOMAIN,alias.test,DIRECT\"\n  - *rule\n  - MATCH,Pick\n",
+      "contract": {
+        "present": [
+          "alias.test"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"alias.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"domain\":[\"alias.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,alias.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "alias.test",
+              "position": "",
+              "raw": "DOMAIN,alias.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:DOMAIN,alias.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "alias.test",
+              "position": "",
+              "raw": "DOMAIN,alias.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,alias.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "alias.test",
+              "position": "",
+              "raw": "DOMAIN,alias.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:DOMAIN,alias.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "alias.test",
+              "position": "",
+              "raw": "DOMAIN,alias.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "yaml-multiline",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules:\n  - >-\n    DOMAIN,multiline.test,DIRECT\n  - MATCH,Pick\n",
+      "contract": {
+        "present": [
+          "multiline.test"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"multiline.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,multiline.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "multiline.test",
+              "position": "",
+              "raw": "DOMAIN,multiline.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,multiline.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "multiline.test",
+              "position": "",
+              "raw": "DOMAIN,multiline.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "yaml-malformed",
+      "source": "rules: [\n",
+      "contract": {
+        "error_contains": "订阅 YAML 解析失败",
+        "projection_error_contains": ""
+      },
+      "expected": {
+        "error": "订阅 YAML 解析失败：yaml-cpp: error at line 1, column 1: end of sequence flow not found",
+        "fidelity": [],
+        "json": "",
+        "objects": [],
+        "outbounds": null,
+        "participatingSources": [],
+        "projection": {
+          "error": "yaml-cpp: error at line 2, column 1: end of sequence flow not found",
+          "original": [],
+          "rules": []
+        },
+        "rulePlan": {
+          "count": 0,
+          "labels": {},
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "edit-disable",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "absent": [
+          "original.test"
+        ]
+      },
+      "edits": [
+        {
+          "id": "user-disable",
+          "operation": "disable",
+          "anchor": "clash:DOMAIN,original.test,DIRECT",
+          "match": "domain",
+          "pattern": "changed.test",
+          "target": "DIRECT"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "user-disable",
+              "editable": true,
+              "enabled": false,
+              "implicit": false,
+              "origin": "disabled",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 6,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "edit-replace",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "absent": [
+          "original.test"
+        ],
+        "present": [
+          "changed.test"
+        ]
+      },
+      "edits": [
+        {
+          "id": "user-replace",
+          "operation": "replace",
+          "anchor": "clash:DOMAIN,original.test,DIRECT",
+          "match": "domain",
+          "pattern": "changed.test",
+          "target": "REJECT-DROP"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"action\":\"reject\",\"domain\":[\"changed.test\"],\"method\":\"drop\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "user-replace",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "replaced",
+              "pattern": "changed.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "REJECT-DROP",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "edit-prepend",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "changed.test"
+        ]
+      },
+      "edits": [
+        {
+          "id": "user-prepend",
+          "operation": "prepend",
+          "anchor": "",
+          "match": "domain",
+          "pattern": "changed.test",
+          "target": "DIRECT"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"changed.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "",
+              "editId": "user-prepend",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "added",
+              "pattern": "changed.test",
+              "position": "prepend",
+              "raw": "",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "edit-before_final",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "changed.test"
+        ]
+      },
+      "edits": [
+        {
+          "id": "user-before_final",
+          "operation": "before_final",
+          "anchor": "",
+          "match": "domain",
+          "pattern": "changed.test",
+          "target": "DIRECT"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"domain\":[\"changed.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "",
+              "editId": "user-before_final",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "added",
+              "pattern": "changed.test",
+              "position": "before_final",
+              "raw": "",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "edit-final",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {},
+      "edits": [
+        {
+          "id": "user-final",
+          "operation": "final",
+          "anchor": "",
+          "match": "domain",
+          "pattern": "changed.test",
+          "target": "REJECT-DROP"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_444952454354\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"action\":\"reject\",\"clash_mode\":\"global\",\"method\":\"drop\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"action\":\"reject\",\"method\":\"drop\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "user-final",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "replaced",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "REJECT-DROP",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "disabled-edit",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "original.test"
+        ]
+      },
+      "edits": [
+        {
+          "id": "disabled",
+          "operation": "disable",
+          "anchor": "clash:DOMAIN,original.test,DIRECT",
+          "enabled": false
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "missing-anchor",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "error_contains": "冲突",
+        "projection_error_contains": "冲突"
+      },
+      "edits": [
+        {
+          "id": "missing",
+          "operation": "disable",
+          "anchor": "clash:DOMAIN,gone.test,DIRECT"
+        }
+      ],
+      "expected": {
+        "error": "订阅规则修改冲突，原规则已变化、重复或消失：missing",
+        "fidelity": [],
+        "json": "",
+        "objects": [],
+        "outbounds": null,
+        "participatingSources": [],
+        "projection": {
+          "error": "订阅规则修改冲突，原规则已变化、重复或消失：missing",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": []
+        },
+        "rulePlan": {
+          "count": 0,
+          "labels": {},
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "duplicate-anchor",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "error_contains": "冲突",
+        "projection_error_contains": "冲突"
+      },
+      "edits": [
+        {
+          "id": "duplicate",
+          "operation": "disable",
+          "anchor": "clash:DOMAIN,original.test,DIRECT"
+        }
+      ],
+      "expected": {
+        "error": "订阅规则修改冲突，原规则已变化、重复或消失：duplicate",
+        "fidelity": [],
+        "json": "",
+        "objects": [],
+        "outbounds": null,
+        "participatingSources": [],
+        "projection": {
+          "error": "订阅规则修改冲突，原规则已变化、重复或消失：duplicate",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": []
+        },
+        "rulePlan": {
+          "count": 0,
+          "labels": {},
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "conflicting-operations",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "error_contains": "冲突",
+        "projection_error_contains": "冲突"
+      },
+      "edits": [
+        {
+          "id": "one",
+          "operation": "disable",
+          "anchor": "clash:DOMAIN,original.test,DIRECT"
+        },
+        {
+          "id": "two",
+          "operation": "disable",
+          "anchor": "clash:DOMAIN,original.test,DIRECT"
+        }
+      ],
+      "expected": {
+        "error": "订阅规则修改冲突，原规则已变化、重复或消失：two",
+        "fidelity": [],
+        "json": "",
+        "objects": [],
+        "outbounds": null,
+        "participatingSources": [],
+        "projection": {
+          "error": "订阅规则修改冲突，原规则已变化、重复或消失：two",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": []
+        },
+        "rulePlan": {
+          "count": 0,
+          "labels": {},
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "missing-target-reject",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "fallback.test"
+        ],
+        "fidelity_min": 1
+      },
+      "edits": [
+        {
+          "id": "missing-target",
+          "pattern": "fallback.test",
+          "target": "gone",
+          "unavailable": "reject"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "重新选择订阅中的目标对象，或恢复订阅原规则",
+            "detail": "个人规则目标不可用：gone；执行 reject",
+            "level": 1,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "missing-target"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"action\":\"reject\",\"domain_suffix\":[\"fallback.test\"]},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "",
+              "editId": "missing-target",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "added",
+              "pattern": "fallback.test",
+              "position": "prepend",
+              "raw": "",
+              "target": "gone",
+              "terminal": false,
+              "type": "domain_suffix"
+            },
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "个人规则目标不可用：gone；执行 reject"
+        ]
+      }
+    },
+    {
+      "name": "missing-target-direct",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "fallback.test"
+        ],
+        "fidelity_min": 1
+      },
+      "edits": [
+        {
+          "id": "missing-target",
+          "pattern": "fallback.test",
+          "target": "gone",
+          "unavailable": "direct"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "重新选择订阅中的目标对象，或恢复订阅原规则",
+            "detail": "个人规则目标不可用：gone；执行 direct",
+            "level": 1,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "missing-target"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain_suffix\":[\"fallback.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "",
+              "editId": "missing-target",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "added",
+              "pattern": "fallback.test",
+              "position": "prepend",
+              "raw": "",
+              "target": "gone",
+              "terminal": false,
+              "type": "domain_suffix"
+            },
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "个人规则目标不可用：gone；执行 direct"
+        ]
+      }
+    },
+    {
+      "name": "missing-target-main",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "fallback.test"
+        ],
+        "fidelity_min": 1
+      },
+      "edits": [
+        {
+          "id": "missing-target",
+          "pattern": "fallback.test",
+          "target": "gone",
+          "unavailable": "main"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "重新选择订阅中的目标对象，或恢复订阅原规则",
+            "detail": "个人规则目标不可用：gone；执行 main",
+            "level": 1,
+            "scope": 2,
+            "sourceId": "target-r0",
+            "subject": "missing-target"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain_suffix\":[\"fallback.test\"],\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "",
+              "editId": "missing-target",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "added",
+              "pattern": "fallback.test",
+              "position": "prepend",
+              "raw": "",
+              "target": "gone",
+              "terminal": false,
+              "type": "domain_suffix"
+            },
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "个人规则目标不可用：gone；执行 main"
+        ]
+      }
+    },
+    {
+      "name": "mode-global",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "original.test"
+        ]
+      },
+      "mode": "global",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"global\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "mode-direct",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "original.test"
+        ]
+      },
+      "mode": "direct",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"direct\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "standby",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "original.test"
+        ]
+      },
+      "listening": false,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "tun",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "original.test"
+        ]
+      },
+      "tun": true,
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"},{\"address\":[\"172.19.0.1/30\",\"fdfe:dcba:9876::1/126\"],\"auto_redirect\":false,\"auto_route\":true,\"iproute2_rule_index\":9000,\"mtu\":1400,\"route_exclude_address\":[\"127.0.0.0/8\"],\"strict_route\":true,\"tag\":\"tun-in\",\"type\":\"tun\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"auto_detect_interface\":true,\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      },
+      "platform": "linux"
+    },
+    {
+      "name": "unreferenced-secondary",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "absent": [
+          "secondary.test"
+        ]
+      },
+      "auxiliary": "rules: [\"DOMAIN,secondary.test,DIRECT\", \"MATCH,DIRECT\"]\n",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "native-basic",
+      "source": "{\"outbounds\":[{\"type\":\"direct\",\"tag\":\"plain\"}],\"route\":{\"rules\":[{\"domain\":[\"original.test\"],\"outbound\":\"plain\"},{\"type\":\"logical\",\"mode\":\"or\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"outbound\":\"plain\"}],\"final\":\"plain\"}}",
+      "contract": {
+        "present": [
+          "original.test",
+          "complex.test"
+        ]
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"local\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"local\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"plain\",\"type\":\"direct\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"local\"},\"final\":\"plain\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"plain\"},{\"clash_mode\":\"global\",\"outbound\":\"plain\"},{\"domain\":[\"original.test\"],\"outbound\":\"plain\"},{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"},{\"clash_mode\":\"rule\",\"outbound\":\"plain\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "plain",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "plain"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "plain",
+            "type": "direct"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "json:{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "json:{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "json:{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "json:{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "plain": "plain · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "native-disable",
+      "source": "{\"outbounds\":[{\"type\":\"direct\",\"tag\":\"plain\"}],\"route\":{\"rules\":[{\"domain\":[\"original.test\"],\"outbound\":\"plain\"},{\"type\":\"logical\",\"mode\":\"or\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"outbound\":\"plain\"}],\"final\":\"plain\"}}",
+      "contract": {
+        "present": [
+          "complex.test"
+        ],
+        "absent": [
+          "original.test"
+        ]
+      },
+      "edits": [
+        {
+          "id": "native-disable",
+          "operation": "disable",
+          "anchor": "json:{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"local\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"local\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"plain\",\"type\":\"direct\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"local\"},\"final\":\"plain\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"plain\"},{\"clash_mode\":\"global\",\"outbound\":\"plain\"},{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"},{\"clash_mode\":\"rule\",\"outbound\":\"plain\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "plain",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "plain"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "plain",
+            "type": "direct"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "json:{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "json:{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "json:{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "editId": "native-disable",
+              "editable": true,
+              "enabled": false,
+              "implicit": false,
+              "origin": "disabled",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "{\"domain\":[\"original.test\"],\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "json:{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "{\"mode\":\"or\",\"outbound\":\"plain\",\"rules\":[{\"domain\":[\"complex.test\"]}],\"type\":\"logical\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "plain": "plain · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "native-unknown-numbers",
+      "source": "{\"outbounds\":[{\"type\":\"direct\",\"tag\":\"plain\"}],\"route\":{\"rules\":[{\"future_match\":{\"unsigned\":18446744073709551615,\"signed\":-9223372036854775808,\"float\":1.25,\"null\":null,\"list\":[true,false]},\"outbound\":\"plain\"}],\"final\":\"plain\"}}",
+      "contract": {},
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"local\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"local\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"plain\",\"type\":\"direct\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"local\"},\"final\":\"plain\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"plain\"},{\"clash_mode\":\"global\",\"outbound\":\"plain\"},{\"future_match\":{\"float\":1.25,\"list\":[true,false],\"null\":null,\"signed\":-9223372036854775808,\"unsigned\":18446744073709551615},\"outbound\":\"plain\"},{\"clash_mode\":\"rule\",\"outbound\":\"plain\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "plain",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "plain"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "plain",
+            "type": "direct"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "json:{\"future_match\":{\"float\":1.25,\"list\":[true,false],\"null\":null,\"signed\":-9223372036854775808,\"unsigned\":18446744073709551615},\"outbound\":\"plain\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "{\"future_match\":{\"float\":1.25,\"list\":[true,false],\"null\":null,\"signed\":-9223372036854775808,\"unsigned\":18446744073709551615},\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "json:{\"future_match\":{\"float\":1.25,\"list\":[true,false],\"null\":null,\"signed\":-9223372036854775808,\"unsigned\":18446744073709551615},\"outbound\":\"plain\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "{\"future_match\":{\"float\":1.25,\"list\":[true,false],\"null\":null,\"signed\":-9223372036854775808,\"unsigned\":18446744073709551615},\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "plain": "plain · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "node-uri",
+      "source": "ss://aes-128-gcm:synthetic-secret@example.test:8388#Sample\n",
+      "contract": {
+        "fidelity_min": 1
+      },
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "可在个人规则或全局规则中配置分流",
+            "detail": "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "target-r0",
+            "subject": "node-subscription.policy"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"method\":\"aes-128-gcm\",\"password\":\"synthetic-secret\",\"server\":\"example.test\",\"server_port\":8388,\"tag\":\"cf_7461726765742d7230_o_53616d706c65\",\"type\":\"shadowsocks\"},{\"outbounds\":[\"cf_7461726765742d7230_o_53616d706c65\"],\"tag\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 2,
+            "objectId": "Sample",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_53616d706c65"
+          },
+          {
+            "kind": 1,
+            "objectId": "节点选择",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "method": "aes-128-gcm",
+            "password": "synthetic-secret",
+            "server": "example.test",
+            "server_port": 8388,
+            "tag": "cf_7461726765742d7230_o_53616d706c65",
+            "type": "shadowsocks"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_53616d706c65"
+            ],
+            "tag": "cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:MATCH,节点选择",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,节点选择",
+              "target": "节点选择",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:MATCH,节点选择",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,节点选择",
+              "target": "节点选择",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 6,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_53616d706c65": "Sample · Target R0",
+            "cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9": "节点选择 · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": [
+          "节点订阅不含路由规则；自动生成包含全部节点的手动选择组和 MATCH 默认出口"
+        ]
+      }
+    },
+    {
+      "name": "native-catch-all",
+      "source": "{\"outbounds\":[{\"type\":\"direct\",\"tag\":\"plain\"}],\"route\":{\"rules\":[{\"outbound\":\"plain\"}],\"final\":\"plain\"}}",
+      "contract": {
+        "present": [
+          "insert.test"
+        ]
+      },
+      "edits": [
+        {
+          "id": "insert",
+          "operation": "before_final",
+          "pattern": "insert.test",
+          "target": "plain"
+        }
+      ],
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"local\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"local\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"plain\",\"type\":\"direct\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"local\"},\"final\":\"plain\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"plain\"},{\"clash_mode\":\"global\",\"outbound\":\"plain\"},{\"domain_suffix\":[\"insert.test\"],\"outbound\":\"plain\"},{\"outbound\":\"plain\"},{\"clash_mode\":\"rule\",\"outbound\":\"plain\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "plain",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "plain"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "plain",
+            "type": "direct"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "json:{\"outbound\":\"plain\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "catch_all",
+              "raw": "{\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "",
+              "editId": "insert",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "added",
+              "pattern": "insert.test",
+              "position": "before_final",
+              "raw": "",
+              "target": "plain",
+              "terminal": false,
+              "type": "domain_suffix"
+            },
+            {
+              "anchor": "json:{\"outbound\":\"plain\"}",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "catch_all",
+              "raw": "{\"outbound\":\"plain\"}",
+              "target": "plain",
+              "terminal": false,
+              "type": "JSON"
+            },
+            {
+              "anchor": "json:final:plain",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": true,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "",
+              "target": "plain",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "plain": "plain · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "inline-provider",
+      "source": "rule-providers:\n  domains: {type: inline, behavior: domain, payload: [provider.test]}\nproxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"RULE-SET,domains,DIRECT\",\"MATCH,Pick\"]\n",
+      "contract": {},
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rule_set\":[{\"rules\":[{\"domain\":[\"provider.test\"]}],\"tag\":\"cf_7461726765742d7230_r_636c6173682d70726f76696465722d30\",\"type\":\"inline\"}],\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"outbound\":\"cf_7461726765742d7230_o_444952454354\",\"rule_set\":[\"cf_7461726765742d7230_r_636c6173682d70726f76696465722d30\"]},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:RULE-SET,domains,DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "domains",
+              "position": "",
+              "raw": "RULE-SET,domains,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "RULE-SET"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:RULE-SET,domains,DIRECT",
+              "editId": "",
+              "editable": false,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "domains",
+              "position": "",
+              "raw": "RULE-SET,domains,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "RULE-SET"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 7,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "global-override",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "global.test",
+          "original.test"
+        ]
+      },
+      "global_target": "target-r0",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"domain_suffix\":[\"global.test\"],\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": [
+            {
+              "index": 3,
+              "ruleId": "r0-global",
+              "sourceId": "target-r0",
+              "sourceName": "Target R0",
+              "tier": "user-override"
+            }
+          ]
+        },
+        "warnings": []
+      }
+    },
+    {
+      "name": "referenced-secondary",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "global.test"
+        ],
+        "absent": [
+          "secondary.test"
+        ]
+      },
+      "global_target": "target-r0-aux",
+      "global_tier": "source",
+      "auxiliary": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,secondary.test,DIRECT\",\"MATCH,Pick\"]\n",
+      "expected": {
+        "error": "",
+        "fidelity": [
+          {
+            "action": "请在编排规则中显式定义此来源的匹配范围",
+            "detail": "次来源不导入全局订阅规则或 rule-providers；MATCH 仅定义默认导出目标",
+            "level": 1,
+            "scope": 4,
+            "sourceId": "target-r0-aux",
+            "subject": "source.rules"
+          }
+        ],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"},{\"tag\":\"cf_7461726765742d72302d617578_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d72302d617578_o_444952454354\"],\"tag\":\"cf_7461726765742d72302d617578_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"domain_suffix\":[\"global.test\"],\"outbound\":\"cf_7461726765742d72302d617578_o_5069636b\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          },
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0-aux",
+            "sourceName": "Secondary",
+            "tag": "cf_7461726765742d72302d617578_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0-aux",
+            "sourceName": "Secondary",
+            "tag": "cf_7461726765742d72302d617578_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          },
+          {
+            "tag": "cf_7461726765742d72302d617578_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d72302d617578_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d72302d617578_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0",
+          "target-r0-aux"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d72302d617578_o_444952454354": "DIRECT · Secondary",
+            "cf_7461726765742d72302d617578_o_5069636b": "Pick · Secondary",
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": [
+            {
+              "index": 3,
+              "ruleId": "r0-global",
+              "sourceId": "target-r0-aux",
+              "sourceName": "Secondary",
+              "tier": "source-policy"
+            }
+          ]
+        },
+        "warnings": [
+          "次来源不导入全局订阅规则或 rule-providers；MATCH 仅定义默认导出目标"
+        ]
+      }
+    },
+    {
+      "name": "missing-global-target",
+      "source": "proxy-groups: [{name: Pick, type: select, proxies: [DIRECT]}]\nrules: [\"DOMAIN,original.test,DIRECT\", \"MATCH,Pick\"]\n",
+      "contract": {
+        "present": [
+          "global.test"
+        ],
+        "reject_domain": "global.test"
+      },
+      "global_target": "missing",
+      "expected": {
+        "error": "",
+        "fidelity": [],
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"action\":\"reject\",\"domain_suffix\":[\"global.test\"]},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"original.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "objects": [
+          {
+            "kind": 2,
+            "objectId": "DIRECT",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_444952454354"
+          },
+          {
+            "kind": 1,
+            "objectId": "Pick",
+            "sourceId": "target-r0",
+            "sourceName": "Target R0",
+            "tag": "cf_7461726765742d7230_o_5069636b"
+          }
+        ],
+        "outbounds": [
+          {
+            "tag": "cf_7461726765742d7230_o_444952454354",
+            "type": "direct"
+          },
+          {
+            "outbounds": [
+              "cf_7461726765742d7230_o_444952454354"
+            ],
+            "tag": "cf_7461726765742d7230_o_5069636b",
+            "type": "selector"
+          }
+        ],
+        "participatingSources": [
+          "target-r0"
+        ],
+        "projection": {
+          "error": "",
+          "original": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ],
+          "rules": [
+            {
+              "anchor": "clash:DOMAIN,original.test,DIRECT",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "original.test",
+              "position": "",
+              "raw": "DOMAIN,original.test,DIRECT",
+              "target": "DIRECT",
+              "terminal": false,
+              "type": "domain"
+            },
+            {
+              "anchor": "clash:MATCH,Pick",
+              "editId": "",
+              "editable": true,
+              "enabled": true,
+              "implicit": false,
+              "origin": "source",
+              "pattern": "",
+              "position": "",
+              "raw": "MATCH,Pick",
+              "target": "Pick",
+              "terminal": true,
+              "type": "MATCH"
+            }
+          ]
+        },
+        "rulePlan": {
+          "count": 8,
+          "labels": {
+            "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
+            "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
+          },
+          "origins": [
+            {
+              "index": 3,
+              "ruleId": "r0-global",
+              "sourceId": "",
+              "sourceName": "",
+              "tier": "user-override"
+            }
+          ]
+        },
+        "warnings": [
+          "目标「missing/Pick」不可用，执行 reject"
+        ]
+      }
+    }
+  ]
+}

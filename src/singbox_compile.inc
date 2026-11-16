@@ -600,9 +600,13 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         for (const YAML::Node& rule : rules) {
             if (ctx.cancelled()) return;
             if (!rule.IsScalar()) {
+                const auto firstNote = ctx.result.fidelity.size();
                 ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
                          "rules[" + std::to_string(index) + "]", "规则不是字符串，已跳过");
-            } else if (!convertRule(ctx, rule.Scalar())) {
+                if (ctx.targetCapture) ctx.targetCapture->Record("clash:" + YAML::Dump(rule), TargetRuleState::Omitted,
+                    nlohmann::json::array(), 0, firstNote, ctx.result.fidelity.size());
+            } else if (!convertCapturedRule(ctx, rule.Scalar())) {
+                recordAfterFinal(ctx, rules, index + 1);
                 break; // First valid MATCH terminates the source rule list.
             }
             ++index;

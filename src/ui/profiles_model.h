@@ -27,6 +27,7 @@
 #include "profile_list_model.h"
 #include "profile_preparation_model.h"
 #include "profile_rules_model.h"
+#include "profile_rules_prewarm.h"
 
 namespace clashflux::ui {
 
@@ -46,8 +47,9 @@ struct ProfilesModel : ProfileListModel<model::Profile>, ProfilePreparationModel
     void SyncRuleInputs(std::int64_t requestedId = 0);
     std::shared_ptr<ProfileRulesModel<ProfileRulesSnapshot>> rules =
         std::make_shared<ProfileRulesModel<ProfileRulesSnapshot>>();
-    std::uint64_t rulesProfilesRevision = 0, rulesSettingsRevision = 0;
+    std::uint64_t rulesProfilesRevision = 0, rulesSettingsRevision = 0, rulesResourcesRevision = 0;
     bool rulesInputsReady = false;
+    ProfileRulesPrewarm rulesPrewarm;
     void ReportProfileRefreshFailure(std::int64_t id, std::string name,
                                      std::string error,
                                      bool userInitiated = false);
@@ -75,6 +77,10 @@ struct ProfilesModel : ProfileListModel<model::Profile>, ProfilePreparationModel
 
 void StartProfilePreparation(huxerui::TaskScope tasks, std::shared_ptr<ProfilesModel> model,
                              std::int64_t id, FluxToastHandle toast);
+
+void RequestPersonalRules(huxerui::TaskScope tasks, std::shared_ptr<ProfilesModel> profiles,
+    std::int64_t id, bool editor, std::string readError, std::function<void()> finished = {});
+void StartProfileRulesPrewarm(huxerui::TaskScope tasks, std::shared_ptr<ProfilesModel> profiles);
 
 // 启动唯一的数据泵（组合期调用一次）：1s 做一次「修订号脏检查」，变了才
 // 拷贝列表；动作完成直接 PublishCached，syncTick 使在途旧快照失效。

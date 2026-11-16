@@ -15,6 +15,10 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 
 ## 不可突破的边界
 
+`captureTargetSource` 只捕获未叠加个人修改的主来源基线，普通编译默认关闭。R2 只读页/编辑目录共享目标快照，旧修改通过必要锚点重放；缓存身份、冷转换资源锁和预算遵守[个人规则契约](../../docs/subscription-personal-rules.md#规则页加载与缓存)。预览/运行仍独立批准，不能绕过旧修改或候选检查。
+
+目标工作模型改动先读[目标产物规划](../../docs/rule-document-plan.md)，按 R0–R5 推进；sing-box 转换结果作为交互基线，管理标记与内核字段分开，不另建完整来源编辑树。保留原文/旧修改兼容与必要来源映射，未生成条目按原契约记账/拒绝；复用不替代候选批准，持久化单独评估。
+
 - L1 紧贴真实 sing-box 能力、官方桌面内核与 libbox 同源码版本；不 fork 内核或造字段。Windows 数据面由服务启动，不能把“桌面内核”误解成 GUI 自行 spawn。
 - L2 统一编译 Clash YAML、原生 JSON、PPTP/OpenVPN；每个协议/组/规则/字段标 exact/approx/unsupported，不能静默丢弃或为跑通改测速 URL、证书校验等用户语义。L3 使用 Clash 词汇，只暴露真实能力。
 - 有原生等价用 exact；可表达但语义不同用 approx 并记账；无对应能力先降级记账。应用补齐须证明内核运行/未运行均有定义、失败能回滚且无第二真相源；做不到不做假 UI。

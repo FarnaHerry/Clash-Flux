@@ -1232,6 +1232,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         if (TARGET HuxerUI::testing)
             # Retain an early controller request across asynchronous hydration.
             add_executable(test_core_api_lifetime tests/test_core_api_lifetime.cpp
+                src/ui/profile_rules_snapshot.cpp
                 src/sqlite_schema.cpp src/data_session.cpp
                 src/health_history.cpp src/runtime_network_probe.cpp src/network_conflict.cpp
                 src/api.cpp src/core.cpp src/stream.cpp src/singbox.cpp src/profile_link.cpp

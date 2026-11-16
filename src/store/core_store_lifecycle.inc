@@ -899,6 +899,34 @@ public:
         } catch (const std::exception& exception) { error = exception.what(); return false; }
     }
 
+    // Source-only view preparation: no network fetch, candidate approval,
+    // running-plan mutation or runtime setting inheritance. Called on workers.
+    singbox::CompileResult profileTargetSource(std::int64_t id, const std::string& content,
+                                               const std::string& name, std::uint64_t resources) {
+        singbox::CompileOptions options;
+        options.captureTargetSource = true;
+        options.profileYaml = content;
+        options.mainConnectionId = routing::ConnectionId(id);
+        options.mainSourceName = name;
+        options.ruleSetDir = cfg::coreWorkDir().string();
+        options.ruleProviderDir = cfg::dataDir().string();
+        options.ruleProviderCacheDir = (cfg::coreWorkDir() / "rule-providers").string();
+        options.proxyProviderCacheDir = (cfg::coreWorkDir() / "proxy-providers").string();
+        auto captured = targetSources_.Get(options, resources, [&] {
+            // Cache misses can read provider files. Serialize with candidate
+            // publication/rollback so a view cannot retain temporary resources
+            // from an application that subsequently fails. Callers release the
+            // lifecycle lock before entering this API (index -> lifecycle order).
+            std::lock_guard lifecycle(lifecycleMutex_);
+            return singbox::compileConfig(options);
+        });
+        singbox::CompileResult result;
+        result.error = std::move(captured.error);
+        result.targetSource = std::move(captured.model);
+        result.targetSourceReused = captured.reused;
+        return result;
+    }
+
     singbox::CompileResult profileRulesPreview(std::int64_t id, const std::string& content) {
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();

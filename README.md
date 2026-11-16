@@ -268,8 +268,11 @@ YAML、sing-box 原生 JSON 与原生连接（PPTP、OpenVPN）统一由内置�
 exact / approx / unsupported 记入保真度账本，不静默降级，也不在界面里假装支持内核没有
 的能力。分层职责、决策流程、协议/端点/规则覆盖基线与已知边界见
 [内核分层与 Clash → sing-box 保真度契约](docs/singbox-layers-and-fidelity.md)。
+Android 支持用户显式配置的 HTTP 订阅地址；平台传输配置与验证边界见 [HTTP 订阅兼容](docs/android-build.md#http-订阅兼容)，HTTPS 仍使用系统证书校验。
 协议解析与生成的分层和验收条件见[协议中间模型重构计划](docs/protocol-refactor-plan.md)；P0–P6 本轮范围已完成本机 Linux/Android 验证，当前 12 类 Clash 协议共用类型化模型、校验和生成。七类节点 URI、历史 SS 和能力一致性门禁已接入，保留原文和完整候选边界；其它历史格式仍按样本独立评估。跨入口检查使用 `test_singbox --protocol-entries`，URI 检查使用 `--ss-uri` / `--v2ray-uri` / `--secure-uri` / `--node-inputs`；必跑 `node_input_catalog` 对照实际固定内核，支持子集与未覆盖平台见[节点订阅](docs/node-subscriptions.md)。
 转换层按可独立维护、可复用的项目发展，当前保留同仓、同模块和现有构建发布；协议核心与输入适配器归拢到 `src/converter/`。职责划分、当前耦合和后续接口/资源边界见[转换子项目规划](docs/converter-project.md)，源码导航见[转换目录](src/converter/README.md)。
+
+后续[目标工作模型规划](docs/rule-document-plan.md)以接近 sing-box 的转换产物作为交互基线，独立管理来源/启用/用户修改等标记，减少页面重复来源解析；先做内存复用，再评估磁盘产物；[R0 基线](docs/evidence/2026-11-16-target-r0.md)和 [R1 来源目标捕获](docs/evidence/2026-11-16-target-r1.md)已完成；[R2](docs/evidence/2026-11-16-target-r2.md)已接入共享目标快照、只读规则页和编辑目录；[导入/刷新后预生成](docs/evidence/2026-11-16-target-r2-prewarm.md)与页面共用应用服务、单飞和缓存预算，旧编辑/预览/运行路径继续保留。
 
 当前接入程度、字段边界与下一批能力见
 [sing-box 能力审查](docs/singbox-capability-audit.md)，稳定版版本与资产校验见

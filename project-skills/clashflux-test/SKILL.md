@@ -63,6 +63,7 @@ HY2/TUIC/AnyTLS URI 改动另跑 `test_singbox --secure-uri`（`--secure-uri-fix
 转换子项目的目录移动按[结构规划](../../docs/converter-project.md)保留历史指纹、核对片段内容与 include 顺序，复用现有冻结/入口回归；移动/新增片段同步 `cmake/AndroidLegacy.cmake` 并实际编译 Android，不通过重录样例证明等价。
 
 规则页首次加载另按[投影性能检查](../../docs/rule-page-performance.md)运行 `test_singbox --profile-rules`，区分锁等待、读取、投影与 UI 挂载；合成 Debug 耗时不当作真机或 CI 阈值。
+目标模型改动另跑 `test_singbox --target-baseline` / `--target-source` / `--target-project`，保留 R0 完整配置/投影/诊断/追溯预期；`--observe-target-baseline <输入JSON>` 只读导出观察，不重录预期。目标工作模型按[分阶段验收](../../docs/rule-document-plan.md#验收与证据)验证目标产物/诊断、旧修改兼容、刷新映射、来源转换次数、总内存与失败留旧；另跑 `test_page_transition --rules-cache` 和 `core_api_lifetime`，后者包含真实提交/版本文件的 `--rules-prewarm` 路径，检查预生成与首次打开读取次数、版本/ABA、资源等待、预算及运行隔离；页面命中不重复来源解析，不能用命中或耗时下降替代完整候选验收。
 
 DNS 定向回归：
 
