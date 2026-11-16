@@ -1,0 +1,276 @@
+--- a/cmake/AndroidLegacy.cmake
++++ b/cmake/AndroidLegacy.cmake
+@@ -197,6 +197,7 @@
+         "${_root}/src/converter/target/model.inc"
+         "${_root}/src/converter/target/capture.inc"
+         "${_root}/src/converter/target/project.inc"
++        "${_root}/src/converter/target/edit.inc"
+         "${_root}/src/converter/protocol/model.inc"
+         "${_root}/src/converter/protocol/clash.inc"
+         "${_root}/src/converter/protocol/validate.inc"
+--- /dev/null
++++ b/src/converter/target/edit.inc
+@@ -0,0 +1,66 @@
++// Compatibility belongs to the target model, not to a page's parser. Only
++// sufficient source anchors are retained; no source text/DOM is loaded here.
++std::string targetDefaultTarget(const auto& data) {
++    return data.defaultAction.action == "reject"
++        ? (data.defaultAction.rejectMethod == "drop" ? std::string("REJECT-DROP") : std::string("REJECT"))
++        : data.defaultAction.outbound;
++}
++
++std::vector<ProfileRule> targetSourceOriginals(const auto& data) {
++    if (data.format == ProfileFormat::SingBoxJson) {
++        auto final = data.origins.back().anchor;
++        final.erase(0, std::string("json:final:").size());
++        return nativeProfileRules({{"route", {{"rules", data.payload}, {"final", final}}}});
++    }
++    std::vector<ProfileRule> rows;
++    rows.reserve(data.origins.size());
++    for (const auto& origin : data.origins) {
++        if (origin.anchor.starts_with("clash:")) {
++            auto row = clashProfileRule(origin.anchor.substr(6)); row.anchor = origin.anchor;
++            rows.push_back(std::move(row));
++        } else rows.push_back({.anchor=origin.anchor, .type="MATCH", .target=targetDefaultTarget(data),
++            .editable=true, .terminal=true, .implicit=true});
++    }
++    return rows;
++}
++
++void prepareTargetEditBindings(TargetCapture& capture) {
++    auto& data = *capture.data;
++    std::unordered_map<std::string_view, std::size_t> counts;
++    counts.reserve(data.origins.size());
++    for (const auto& origin : data.origins) ++counts[origin.anchor];
++    for (auto& origin : data.origins) {
++        if (origin.synthetic || origin.rules.size() != 1 || counts[origin.anchor] != 1) continue;
++        try {
++            if (data.format == ProfileFormat::SingBoxJson) {
++                const auto rows = nativeProfileRules({{"route", {{"rules", nlohmann::json::array({data.payload[origin.rules[0]-1]})}}}});
++                origin.editable = !rows.empty() && rows.front().editable && !rows.front().terminal;
++            } else if (origin.anchor.starts_with("clash:")) {
++                const auto row = clashProfileRule(origin.anchor.substr(6));
++                origin.editable = row.editable && !row.terminal;
++            }
++        } catch (const std::exception&) {
++            // Unknown/invalid native fields remain opaque, never an editable
++            // capability or a reason to fail an otherwise valid capture.
++            origin.editable = false;
++        }
++    }
++}
++
++bool bindTargetSourceEdit(const TargetSourceModel& model, std::string_view targetId,
++                          ProfileRuleEdit& edit, std::string& error) {
++    error.clear();
++    const auto& data = TargetProjection::Read(model);
++    if (targetId == "target:final" && edit.operation == "final") { edit.anchor.clear(); return true; }
++    if ((edit.operation == "replace" || edit.operation == "disable") && targetId.starts_with("target:")) {
++        const auto digits = targetId.substr(7);
++        std::uint64_t id = 0;
++        const auto [end, result] = std::from_chars(digits.data(), digits.data()+digits.size(), id);
++        if (result == std::errc{} && end == digits.data()+digits.size() && id && id <= data.rules.size() && digits == std::to_string(id)) {
++            const auto& origin = data.origins[data.rules[id-1].origin];
++            if (origin.editable) { edit.anchor = origin.anchor; return true; }
++        }
++    }
++    error = "目标规则无法唯一映射到可编辑的来源；请重新打开规则列表";
++    return false;
++}
+--- a/src/converter/target/capture.inc
++++ b/src/converter/target/capture.inc
+@@ -34,6 +34,7 @@
+     }
+ }
+ 
++void prepareTargetEditBindings(TargetCapture& capture);
+ std::shared_ptr<const TargetSourceModel> finishTargetSource(Context& ctx, ProfileFormat format) {
+     if (!ctx.targetCapture) return {};
+     auto& capture = *ctx.targetCapture;
+@@ -63,5 +64,6 @@
+     data.ruleSets = format == ProfileFormat::SingBoxJson
+         ? ctx.config["route"].value("rule_set", nlohmann::json::array()) : ctx.ruleSets;
+     data.diagnostics = ctx.result.fidelity;
++    prepareTargetEditBindings(capture);
+     return capture.Finish();
+ }
+--- a/src/converter/target/project.inc
++++ b/src/converter/target/project.inc
+@@ -1,17 +1,16 @@
+ // A compatibility projection over the captured target, never a YAML/URI parse.
+-// Legacy source anchors only validate existing intent; the visible objects are
+-// actual target branches. The interactive editor still uses its old contract.
+-ProfileRules projectTargetSource(const TargetSourceModel& model, const ProfileRuleEdits& edits, const RuleSetLibrary& library) {
++// Legacy anchors validate persisted intent. Editing exposes only unique
++// legacy-supported bindings; native target identities never enter persistence.
++ProfileRules projectTargetSource(const TargetSourceModel& model, const ProfileRuleEdits& edits, const RuleSetLibrary& library, bool editor = false) {
+     ProfileRules output;
+     try {
+         if (!ValidateProfileRuleEdits(edits, output.error) || !ValidateRuleSetLibrary(library, output.error) || !ValidateRuleSetReferences(library, edits, output.error)) return output;
+         const auto& data = TargetProjection::Read(model);
+-        const auto defaultTarget = data.defaultAction.action == "reject"
+-            ? (data.defaultAction.rejectMethod == "drop" ? std::string("REJECT-DROP") : std::string("REJECT")) : data.defaultAction.outbound;
++        const auto defaultTarget = targetDefaultTarget(data);
+         const auto view = [](const nlohmann::json& native, std::string identity) {
+             // Reuse native projection semantics for complex/non-editable fields;
+             // no source text decoder is involved. Fast simple facets avoid dumps.
+-            ProfileRule row{.anchor = std::move(identity), .type = "JSON"};
++            ProfileRule row{.anchor = identity, .type = "JSON", .targetId = std::move(identity)};
+             if (!native.is_object()) { row.raw = native.dump(); return row; }
+             if (const auto target = native.find("outbound"); target != native.end() && target->is_string()) row.target = target->get<std::string>();
+             const bool knownAction = !native.contains("action") ||
+@@ -36,34 +35,31 @@
+             const auto& origin = data.origins[index];
+             for (const auto id : origin.rules) {
+                 auto row = view(data.payload[std::size_t(id-1)], "target:" + std::to_string(id));
+-                if (legacy) { row.enabled = legacy->enabled; row.editId = legacy->editId; row.origin = legacy->origin; }
++                if (legacy) {
++                    row.enabled = legacy->enabled; row.editId = legacy->editId; row.origin = legacy->origin;
++                    if (editor) {
++                        row.anchor = legacy->anchor;
++                        row.editable = origin.editable && row.type != "JSON" && row.type == legacy->type;
++                    }
++                }
+                 output.rules.push_back(std::move(row));
+             }
+         };
+         const auto appendDefault = [&](std::string target, std::string edit = {}) {
+             const bool modified = !edit.empty();
+-            output.rules.push_back({.anchor = "target:final", .type = "MATCH", .target = std::move(target),
+-                .editId = std::move(edit), .origin = modified ? "replaced" : "source", .terminal = true, .implicit = data.defaultAction.implicit});
++            const auto sourceDefault = std::ranges::find_if(data.origins, [](const auto& origin) {
++                return origin.state == TargetRuleState::Default;
++            });
++            output.rules.push_back({.anchor = editor && sourceDefault != data.origins.end() ? sourceDefault->anchor : "target:final",
++                .type = "MATCH", .target = std::move(target), .editId = std::move(edit), .origin = modified ? "replaced" : "source",
++                .editable = editor, .terminal = true, .implicit = data.defaultAction.implicit, .targetId = "target:final"});
+         };
+-        if (edits.rules.empty()) {
++        if (edits.rules.empty() && !editor) {
+             for (std::size_t index = 0; index < data.origins.size(); ++index) appendOrigin(index);
+             appendDefault(defaultTarget);
+             return output;
+         }
+-        std::vector<ProfileRule> originals;
+-        if (data.format == ProfileFormat::SingBoxJson) {
+-            auto final = data.origins.back().anchor;
+-            final.erase(0, std::string("json:final:").size());
+-            originals = nativeProfileRules({{"route", {{"rules", data.payload}, {"final", final}}}});
+-        } else {
+-            for (const auto& origin : data.origins) {
+-                if (origin.anchor.starts_with("clash:")) {
+-                    auto row = clashProfileRule(origin.anchor.substr(6)); row.anchor = origin.anchor;
+-                    originals.push_back(std::move(row));
+-                } else originals.push_back({.anchor = origin.anchor, .type = "MATCH", .target = defaultTarget,
+-                    .editable = true, .terminal = true, .implicit = true});
+-            }
+-        }
++        auto originals = targetSourceOriginals(data);
+         auto plan = personalRulePlan(std::move(originals), edits);
+         if (!plan.error.empty()) { output.error = std::move(plan.error); return output; }
+         std::map<std::string, std::vector<std::size_t>> indices;
+@@ -100,12 +96,26 @@
+             const auto begin = ctx.config["route"]["rules"].size();
+             if (!emitPersonalRule(ctx, row)) { output.rules.clear(); output.error = ctx.result.error; return output; }
+             for (auto index = begin; index < ctx.config["route"]["rules"].size(); ++index) {
+-                auto projected = view(ctx.config["route"]["rules"][index], "edit:" + row.editId + ":" + std::to_string(index-begin));
++                const auto identity = editor && origin && data.origins[*origin].rules.size() == 1
++                    ? "target:" + std::to_string(data.origins[*origin].rules.front())
++                    : "edit:" + row.editId + ":" + std::to_string(index-begin);
++                auto projected = view(ctx.config["route"]["rules"][index], identity);
++                if (editor) { projected.anchor = row.anchor; projected.editable = row.editable && projected.type != "JSON"; }
+                 projected.editId = row.editId; projected.origin = row.origin; projected.position = row.position;
+                 if (row.type == "rule_set") projected.pattern = row.pattern; // Keep the user's resource label identity.
+                 output.rules.push_back(std::move(projected));
+             }
+         }
++        if (editor) for (const auto& edit : edits.rules) {
++            if (edit.enabled) continue;
++            // A disabled operation is management intent, not a generated active
++            // rule. Keep it separately visible so it can be enabled or removed.
++            output.rules.push_back({.anchor=edit.anchor, .raw=edit.operation == "disable" ? edit.anchor : "",
++                .type=edit.operation == "final" ? "MATCH" : edit.operation == "disable" ? "JSON" : edit.match,
++                .pattern=edit.pattern, .target=edit.target, .editId=edit.id, .origin="inactive", .position=edit.operation,
++                .editable=edit.operation != "disable", .enabled=false, .terminal=edit.operation == "final",
++                .targetId="edit:" + edit.id + ":inactive"});
++        }
+     } catch (const std::exception& error) { output.rules.clear(); output.error = error.what(); }
+     return output;
+ }
+--- a/src/singbox.cpp
++++ b/src/singbox.cpp
+@@ -43,6 +43,7 @@
+ #include "singbox_filter.inc"
+ #include "singbox_proxy_provider.inc"
+ #include "singbox_profile_rules.inc"
++#include "converter/target/edit.inc"
+ #include "converter/target/project.inc"
+ #include "singbox_rule_projection.inc"
+ #include "singbox_compile.inc"
+@@ -199,6 +200,14 @@
+ 
+ ProfileRules ProjectTargetSource(const TargetSourceModel& model, const ProfileRuleEdits& edits, const RuleSetLibrary& library) {
+     return projectTargetSource(model, edits, library);
++}
++
++ProfileRules InspectTargetSource(const TargetSourceModel& model, const ProfileRuleEdits& edits, const RuleSetLibrary& library) {
++    return projectTargetSource(model, edits, library, true);
++}
++
++bool BindTargetSourceEdit(const TargetSourceModel& model, std::string_view targetId, ProfileRuleEdit& edit, std::string& error) {
++    return bindTargetSourceEdit(model, targetId, edit, error);
+ }
+ 
+ ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEdits& edits, bool includeOriginal) {
+--- a/src/singbox.cppm
++++ b/src/singbox.cppm
+@@ -30,6 +30,7 @@
+     std::string anchor, raw, type, pattern, target;
+     std::string editId, origin = "source", position;
+     bool editable = false, enabled = true, terminal = false, implicit = false;
++    std::string targetId; // Model-local view identity; never a persisted source anchor.
+     bool operator==(const ProfileRule&) const = default;
+ };
+ export struct ProfileRules {
+@@ -186,6 +187,7 @@
+     std::vector<std::uint64_t> rules;
+     std::vector<std::size_t> diagnostics; // Indices into this model's diagnostics().
+     bool synthetic = false; // Generated node policy or inferred default, not a literal source rule.
++    bool editable = false; // Unique, one-to-one, legacy-supported source binding only.
+ };
+ export struct TargetDefaultAction {
+     std::string action, outbound, rejectMethod;
+@@ -214,6 +216,11 @@
+ 
+ export ProfileRules ProjectTargetSource(const TargetSourceModel& model,
+     const ProfileRuleEdits& edits = {}, const RuleSetLibrary& library = {});
++export ProfileRules InspectTargetSource(const TargetSourceModel& model,
++    const ProfileRuleEdits& edits = {}, const RuleSetLibrary& library = {});
++// Binds a new replace/disable/final intent to this model. Does not save/check.
++export bool BindTargetSourceEdit(const TargetSourceModel& model, std::string_view targetId,
++    ProfileRuleEdit& edit, std::string& error);
+ 
+ export struct CompileResult {
+     std::shared_ptr<const TargetSourceModel> targetSource; // Optional, not a runtime approval.
+--- a/src/ui/profile_rules_snapshot.cpp
++++ b/src/ui/profile_rules_snapshot.cpp
+@@ -30,7 +30,7 @@
+     for (const auto* rows : {&value.rules, &value.original}) {
+         bytes += rows->capacity()*sizeof(singbox::ProfileRule);
+         for (const auto& row : *rows) bytes += row.anchor.capacity() + row.raw.capacity() + row.type.capacity() +
+-            row.pattern.capacity() + row.target.capacity() + row.editId.capacity() + row.origin.capacity() + row.position.capacity();
++            row.pattern.capacity() + row.target.capacity() + row.editId.capacity() + row.origin.capacity() + row.position.capacity() + row.targetId.capacity();
+     }
+     return bytes;
+ }
+@@ -198,7 +198,9 @@
+             try {
+                 auto prepared = co_await RunOnTaskThread([source, input] {
+                     auto next = std::make_shared<ProfileRulesSnapshot>(*source);
+-                    next->editor = std::make_shared<const singbox::ProfileRules>(singbox::InspectProfileRules(source->data->content, source->data->edits, false));
++                    next->editor = std::make_shared<const singbox::ProfileRules>(source->data->target
++                        ? singbox::InspectTargetSource(*source->data->target, source->data->edits, source->data->library)
++                        : singbox::InspectProfileRules(source->data->content, source->data->edits, false));
+                     next->editorBytes = ProfileRowsBytes(*next->editor);
+                     return std::pair{std::move(next), LoadPersonalRuleTargets(*source, input)};
+                 });
