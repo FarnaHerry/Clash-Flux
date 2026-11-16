@@ -4891,9 +4891,9 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
     static_cast<void>(fixture->model->generation.Get());
     const auto entry = fixture->model->Get(tag, initialDelay, false, 0);
     const auto value = entry->value.Get();
-    const auto text = value.timeout ? "TIMEOUT" : value.delay > 0 ? std::to_string(value.delay) + " ms" : "";
+    const auto text = value.timeout ? "TIMEOUT" : value.delay > 0 ? std::to_string(value.delay) : "";
     huxerui::View delay = text.empty()
-        ? huxerui::View{huxerui::Row{}.With(huxerui::Frame{.width = kProxyDelaySlotWidth})}
+        ? huxerui::View{}
         : huxerui::View{huxerui::Text(text)};
     return ProxyNodeTile(huxerui::Text(tag), huxerui::Text("TLS"), std::move(delay), false,
         tag, [fixture] { fixture->selected += 1; }, SelectableTileInteraction::Selectable,
@@ -4918,9 +4918,10 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
 huxerui::View SingleProbeFixtureRoot() { return huxerui::FlatTheme{SingleProbeFixtureContent()}; }
 const huxerui::Application kSingleProbeFixtureApplication{SingleProbeFixtureRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallProxyProbeFixture}}};
-void testSingleProxyProbeHover() {
+void testSingleProxyProbeCard() {
     huxerui::testing::UiTest ui(kSingleProbeFixtureApplication, {.viewport = {600.0F, 700.0F},
         .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
     ui.PumpAndSettle();
     const auto fixture = proxyProbeFixture;
     const auto tile = [&](const char* tag) { return ui.Find(UiSelector::Key(tag)); };
@@ -4941,28 +4942,48 @@ void testSingleProxyProbeHover() {
     const auto toggle = [&] { ui.Find(UiSelector::Text("Toggle single page")).Tap(); ui.Pump(); };
     const auto advance = [&] { for (int step = 0; step < 25; ++step) ui.Pump(std::chrono::milliseconds(20)); };
     const auto before = action("single-a").One().bounds;
+    const auto rotates = [&](const char* tag) {
+        for (int step = 0; step < 6; ++step) {
+            ui.Pump(std::chrono::milliseconds(56));
+            const auto frame = action(tag).One();
+            if (frame.bounds.width > frame.size.width * 1.2F) return true;
+        }
+        return false;
+    };
     check(tile("single-a").Find(UiSelector::Type<huxerui::Text>()).Count() == 2 &&
-          !ui.Find(UiSelector::Key("node-probe-icon")).Exists(), "untested node leaves its delay slot empty without hiding the action target");
-    hover("single-a");
-    const auto after = action("single-a").One().bounds;
-    check(tile("single-a").Find(UiSelector::Type<huxerui::IconButton>()).Exists() &&
-          ui.Find(UiSelector::Text("234 ms")).Exists(),
-          "hover reveals the speed action in an empty slot without changing other nodes");
-    check(std::abs(before.x - after.x) < 0.1F && std::abs(before.y - after.y) < 0.1F &&
-          before.width == after.width && before.height == after.height,
-          "hover action occupies the unchanged delay slot");
+          action("single-a").Exists(),
+          "untested node exposes the speed button in the shared slot");
+    const auto measured = tile("single-b");
+    const auto number = measured.Find(UiSelector::Text("234")).One().bounds;
+    const auto measuredAction = action("single-b").One().bounds;
+    const auto measuredTile = measured.One().bounds;
+    const auto title = measured.Find(UiSelector::Text("single-b")).One().bounds;
+    const auto detail = measured.Find(UiSelector::Text("TLS")).One().bounds;
+    check(std::abs(number.y + number.height / 2 - measuredAction.y - measuredAction.height / 2) < 0.1F &&
+          std::abs(number.y + number.height / 2 - measuredTile.y - measuredTile.height / 2) < 0.1F &&
+          std::abs(number.x + number.width - measuredAction.x - measuredAction.width) < 0.1F &&
+          std::abs(title.x - detail.x) < 0.1F && title.y < detail.y,
+          "delay and speed button share the vertically centered right-aligned slot");
+    hover("single-b");
+    check(!measured.Find(UiSelector::Text("234")).Exists() && action("single-b").One().bounds == measuredAction,
+          "hover replaces the number with the button without shifting the slot");
+    move({500.0F, 650.0F});
+    check(measured.Find(UiSelector::Text("234")).Exists(), "leaving the card restores the delay");
+    for (int step = 0; step < 8 && !action("single-b").One().focused; ++step)
+        ui.PressKey(huxerui::Key::Tab);
+    check(action("single-b").One().focused && !measured.Find(UiSelector::Text("234")).Exists(),
+          "keyboard focus also reveals the speed button");
+    ui.PressKey(huxerui::Key::Tab);
+    check(measured.Find(UiSelector::Text("234")).Exists(), "losing keyboard focus restores the delay");
     const auto slot = tile("single-a").Find(UiSelector::Key("node-probe-slot")).One().bounds;
-    check(after.width == clashflux::ui::kProxyProbeActionSize && after.height == after.width &&
-          std::abs(after.x + after.width - slot.x - slot.width) < 0.1F &&
-          std::abs(after.y + after.height / 2 - slot.y - slot.height / 2) < 0.1F,
-          "refresh icon, round feedback and hit target share one square at the right end of the delay slot");
+    check(before.width == clashflux::ui::kProxyProbeActionSize && before.height == before.width &&
+          std::abs(before.x + before.width - slot.x - slot.width) < 0.1F &&
+          std::abs(before.y + before.height / 2 - slot.y - slot.height / 2) < 0.1F,
+          "refresh icon, round feedback and hit target share one square at the right end of the slot");
     ui.TapAt({slot.x + 4.0F, slot.y + slot.height / 2}); ui.Pump();
     check(fixture->selected.Get() == 1 && fixture->singleTags.empty(),
           "empty space to the left of the round button remains a card selection target");
     fixture->selected = 0;
-    move({after.x + after.width - 8.0F, after.y + after.height / 2});
-    check(tile("single-a").Find(UiSelector::Type<huxerui::IconButton>()).Exists(),
-          "moving from the card onto its action preserves hover");
     action("single-a").Tap(); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a"} && fixture->selected.Get() == 0 &&
           probing("single-a"),
@@ -4970,26 +4991,23 @@ void testSingleProxyProbeHover() {
     const auto busy = action("single-a").One().bounds;
     check(busy.width == before.width && busy.height == before.height && fixture->model->Begin() == 0,
           "single loading preserves geometry and excludes a simultaneous group sweep");
-    ui.Pump(std::chrono::milliseconds(112));
-    check(action("single-a").One().bounds.width > before.width * 1.2F,
+    check(rotates("single-a"),
           "pending measurement rotates the retained refresh button using the shared refresh animation");
     hover("single-b"); action("single-b").Tap(); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a", "single-b"} &&
           fixture->model->singlePending.Get() == 2, "different nodes can run independent single probes");
     toggle(); fixture->releases.at(0) = true; advance(); toggle(); move({500.0F, 650.0F});
-    check(tile("single-a").Find(UiSelector::Text("81 ms")).Exists() &&
+    check(tile("single-a").Find(UiSelector::Text("81")).Exists() &&
           probing("single-b"),
           "single result and another node's pending state survive real page retirement");
-    ui.Pump(std::chrono::milliseconds(112));
-    check(action("single-b").One().bounds.width > before.width * 1.2F,
+    check(rotates("single-b"),
           "returning to a pending measurement restarts the retained refresh rotation");
     fixture->releases.at(1) = true; advance();
     check(fixture->model->singlePending.Get() == 0, "all single completions release their busy counts");
     tile("single-a").Find(UiSelector::Text("single-a")).Tap(); ui.Pump();
     check(fixture->selected.Get() == 1 && fixture->singleTags.size() == 2, "card body still selects without probing");
     hover("group");
-    check(!tile("group").Find(UiSelector::Key("node-probe-action")).Exists() &&
-          !tile("group").Find(UiSelector::Key("node-probe-icon")).Exists(), "group entries expose no individual node action");
+    check(!action("group").Exists(), "group entries expose no individual node action");
     fixture->singleFail = true; hover("single-a"); action("single-a").Tap(); ui.Pump();
     fixture->releases.at(2) = true; advance(); move({500.0F, 650.0F});
     check(tile("single-a").Find(UiSelector::Text("TIMEOUT")).Exists() && fixture->model->singlePending.Get() == 0,
@@ -5003,7 +5021,7 @@ void testSingleProxyProbeHover() {
     check(probing("single-a") &&
           fixture->model->singlePending.Get() == 1, "old individual result cannot overwrite a new plan's request");
     fixture->releases.at(4) = true; advance(); move({500.0F, 650.0F});
-    check(tile("single-a").Find(UiSelector::Text("81 ms")).Exists() && fixture->model->singlePending.Get() == 0,
+    check(tile("single-a").Find(UiSelector::Text("81")).Exists() && fixture->model->singlePending.Get() == 0,
           "retry after a plan change publishes only the new request");
 }
 
@@ -7967,6 +7985,9 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--proxy-node-card") {
+        testSingleProxyProbeCard(); return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--rules-cache") {
         testSharedRulesCache(); return failures == 0 ? 0 : 1;
     }
@@ -8304,7 +8325,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
         ++failures;
     }
-    try { testSingleProxyProbeHover(); }
+    try { testSingleProxyProbeCard(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: single proxy probe: %s\n", error.what());
         ++failures;

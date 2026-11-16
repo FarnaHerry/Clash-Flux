@@ -2762,13 +2762,15 @@ void testNodeSubscriptions() {
     const auto config = json::parse(baseline.json);
     const auto outputs = config["outbounds"];
     check(outputs.size() == 4 && outputs[1]["uuid"] == original["id"] && outputs[1]["server_port"] == 443 &&
-        outputs[1]["alter_id"] == 2 && outputs[1]["security"] == "auto", "VMess identity, numbers and default cipher retained");
+        outputs[1]["alter_id"] == 2 && outputs[1]["security"] == "aes-128-gcm",
+        "legacy VMess TLS retains alterId and explicitly requests encrypted payloads");
     check(outputs[1]["transport"]["path"] == original["path"] &&
         outputs[1]["transport"]["headers"]["Host"] == original["host"] &&
         outputs[1]["tls"]["server_name"] == original["host"] &&
         !outputs[1]["tls"].contains("insecure") && outputs[1]["tls"]["utls"]["fingerprint"] == "firefox" &&
         outputs[1]["tls"]["alpn"] == json::array({"h2", "http/1.1"}), "WS, Host/SNI, ALPN and verified TLS retained");
     check(!outputs[2].contains("transport") && outputs[2]["tls"]["enabled"] == true &&
+        outputs[2]["security"] == "aes-128-gcm" &&
         outputs[3]["type"] == "selector" && outputs[3]["outbounds"].size() == 2 &&
         config["route"]["final"] == outputs[3]["tag"], "net=tls alias and selectable default preserve every node");
     check(std::ranges::any_of(baseline.fidelity, [](const auto& note) {
@@ -2776,6 +2778,24 @@ void testNodeSubscriptions() {
     }) && std::ranges::any_of(baseline.fidelity, [](const auto& note) {
         return note.subject == "TLS alias" && note.level == singbox::Fidelity::Approx;
     }), "generated routing policy and nonstandard TLS alias are accounted for");
+    for (const auto& [fields, expected] : std::initializer_list<std::pair<json, std::string>>{
+            {{{"scy", "auto"}}, "aes-128-gcm"},
+            {{{"scy", "chacha20-poly1305"}}, "chacha20-poly1305"},
+            {{{"scy", "zero"}}, "zero"},
+            {{{"aid", "0"}}, "auto"},
+            {{{"tls", ""}, {"alpn", ""}, {"fp", ""}}, "auto"}}) {
+        auto node = original;
+        node.update(fields);
+        const auto result = compile(uri(node));
+        check(result.error.empty() && !result.json.empty() &&
+              json::parse(result.json)["outbounds"][1]["security"] == expected,
+            "VMess TLS legacy compatibility only changes the auto cipher");
+        const auto mappings = std::ranges::count_if(result.fidelity, [](const auto& note) {
+            return note.scope == singbox::FidelityScope::Node && note.level == singbox::Fidelity::Approx &&
+                note.detail.find("aes-128-gcm") != std::string::npos;
+        });
+        check(mappings == (expected == "aes-128-gcm" ? 1 : 0), "legacy auto cipher compatibility is accounted for");
+    }
     for (const auto& text : {encodeNodeFixture(raw), encodeNodeFixture(raw, true),
             std::string("\xEF\xBB\xBF# comment\r\n") + raw,
             encodeNodeFixture(raw).insert(12, " \r\n\t")}) {
@@ -3061,6 +3081,10 @@ int main(int argc, char** argv) {
     }
     if (argc == 3 && std::string_view(argv[1]) == "--target-workspace-benchmark")
         return target_project_tests::Benchmark(std::stoi(argv[2]));
+#if defined(CLASHFLUX_TEST_TARGET_RESTART)
+    if (argc == 5 && std::string_view(argv[1]) == "--target-restart-probe")
+        return singbox::RunTargetRestartProbe(argv[2], argv[3], argv[4]);
+#endif
     if (argc == 2 && std::string_view(argv[1]) == "--target-source") {
         target_source_tests::Run(); return failures ? 1 : 0;
     }

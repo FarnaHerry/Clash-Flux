@@ -1,6 +1,6 @@
 // Private native payload. The public module only exports owning descriptors.
 struct TargetSourceModel::Data {
-    std::string sourceId, nativeDirect;
+    std::string sourceId, nativeDirect, sourceText, legacyClashDefault;
     std::size_t retained = 0;
     ProfileFormat format = ProfileFormat::ClashYaml;
     std::vector<TargetRule> rules;
@@ -14,6 +14,7 @@ struct TargetSourceModel::Data {
 
 TargetSourceModel::TargetSourceModel(std::shared_ptr<const Data> data) : data_(std::move(data)) {}
 const std::string& TargetSourceModel::sourceId() const noexcept { return data_->sourceId; }
+const std::string& TargetSourceModel::sourceText() const noexcept { return data_->sourceText; }
 ProfileFormat TargetSourceModel::format() const noexcept { return data_->format; }
 const std::vector<TargetRule>& TargetSourceModel::rules() const noexcept { return data_->rules; }
 const std::vector<TargetRuleOrigin>& TargetSourceModel::origins() const noexcept { return data_->origins; }
@@ -52,9 +53,10 @@ struct TargetCapture {
 
     void Record(std::string anchor, TargetRuleState state,
                 const nlohmann::json& emitted, std::size_t begin,
-                std::size_t firstNote, std::size_t endNote) {
+                std::size_t firstNote, std::size_t endNote, bool clashNonScalar = false) {
         const auto originIndex = data->origins.size();
         TargetRuleOrigin origin{nextSourceIndex++, std::move(anchor), state, {}, {}};
+        origin.clashNonScalar = clashNonScalar;
         origin.synthetic = data->format == ProfileFormat::NodeSubscription || origin.anchor.starts_with("implicit:") ||
             (data->format == ProfileFormat::SingBoxJson && state == TargetRuleState::Default && !explicitDefault);
         if (state == TargetRuleState::Default) explicitDefault = true;
@@ -96,6 +98,7 @@ struct TargetCapture {
 
     std::shared_ptr<const TargetSourceModel> Finish() {
         auto bytes = sizeof(*data) + sizeof(TargetSourceModel) + data->sourceId.capacity() + data->nativeDirect.capacity() +
+            data->sourceText.capacity() + data->legacyClashDefault.capacity() +
             data->defaultAction.action.capacity() + data->defaultAction.outbound.capacity() + data->defaultAction.rejectMethod.capacity() +
             targetJsonBytes(data->payload) + targetJsonBytes(data->ruleSets) +
             data->rules.capacity()*sizeof(TargetRule) + data->origins.capacity()*sizeof(TargetRuleOrigin) +

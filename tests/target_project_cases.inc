@@ -9,8 +9,117 @@ singbox::ProfileRules Project(const std::string& source, const singbox::ProfileR
     return compiled.targetSource ? singbox::ProjectTargetSource(*compiled.targetSource, edits, library) : singbox::ProfileRules{};
 }
 
+void CheckEditor() {
+    singbox::CompileOptions options;
+    options.mainConnectionId = "rules-r3";
+    options.profileYaml = "rules: ['DOMAIN,unique.test,DIRECT','DOMAIN,repeat.test,DIRECT','DOMAIN,repeat.test,DIRECT',"
+        "'IP-CIDR,192.0.2.0/24,DIRECT,no-resolve','DOMAIN,omitted.test,PASS','MATCH,DIRECT','DOMAIN,late.test,DIRECT']";
+    const auto capture = [&] {
+        auto input = options;
+        input.captureTargetSource = true;
+        input.profileRuleEdits = {};
+        return singbox::compileConfig(input).targetSource;
+    };
+    auto model = capture();
+    check(bool(model), "R3 captures editable and opaque Clash rule branches");
+    if (!model) return;
+    const auto editor = [&](const singbox::ProfileRuleEdits& edits = singbox::ProfileRuleEdits{}) {
+        const auto projected = singbox::ProjectTargetSource(*model, edits);
+        return singbox::InspectTargetSource(model.get(), projected, edits);
+    };
+    auto view = editor();
+    check(view.error.empty() && view.rules.size() == 5 &&
+        view.rules.front().editable && !view.rules[1].editable && !view.rules[2].editable &&
+        !view.rules[3].editable && view.rules.back().terminal && view.rules.back().editable,
+        "R3 only a unique, simple and emitted Clash rule and the default permit new edits");
+    std::string error;
+    singbox::ProfileRuleEdit replace{.id="replace", .operation="replace", .match="domain", .pattern="new.test", .target="DIRECT"};
+    check(singbox::BindTargetSourceEdit(*model, "target:1", replace, error) &&
+        replace.anchor == "clash:DOMAIN,unique.test,DIRECT", "R3 persists the legacy anchor rather than the target identity");
+    check(!singbox::BindTargetSourceEdit(*model, "target:2", replace, error) &&
+        !singbox::BindTargetSourceEdit(*model, "target:4", replace, error) &&
+        !singbox::BindTargetSourceEdit(*model, "target:01", replace, error) &&
+        !singbox::BindTargetSourceEdit(*model, "target:final", replace, error) &&
+        replace.anchor == "clash:DOMAIN,unique.test,DIRECT",
+        "R3 rejects ambiguous, read-only and invalid identities without changing the draft binding");
+    singbox::ProfileRuleEdit final{.id="final", .operation="final", .target="REJECT"};
+    check(singbox::BindTargetSourceEdit(*model, "target:final", final, error) && final.anchor.empty(),
+        "R3 implicit and explicit defaults do not store a source index or anchor");
+    auto disabled = replace;
+    disabled.id = "parked";
+    disabled.enabled = false;
+    auto late = replace;
+    late.id = "late";
+    late.anchor = "clash:DOMAIN,late.test,DIRECT";
+    options.profileRuleEdits.rules = {replace, final, disabled, late};
+    view = editor(options.profileRuleEdits);
+    check(view.error.empty() && view.rules.size() == 7 && view.rules.front().targetId == "target:1" &&
+        view.rules[5].origin == "inactive" && !view.rules[5].enabled &&
+        view.rules[6].origin == "unapplied" && view.rules[6].enabled,
+        "R3 replacement retains the target ID and inactive/unreachable modifications remain manageable");
+    options.profileRuleEdits.rules.back().anchor = "clash:DOMAIN,missing.test,DIRECT";
+    view = editor(options.profileRuleEdits);
+    check(!view.error.empty() && view.rules.size() == 4 && view.rules.back().editId == "late" && view.rules.back().enabled,
+        "R3 recovery records survive a conflict that prevents calculating the active view");
+    options.profileRuleEdits.rules = {final};
+    const auto cold = singbox::compileConfig(options);
+    const auto warm = singbox::compileConfig(options, {}, model.get());
+    check(cold.error.empty() && warm.json == cold.json && warm.warnings == cold.warnings &&
+        warm.rulePlan.origins == cold.rulePlan.origins && warm.targetRulesReused == 1,
+        "R3 composed Clash JSON and diagnostics match cold compilation; resource/modifier branches recompile");
+    options.profileYaml += "\n# different source version\n";
+    check(singbox::compileConfig(options, {}, model.get()).targetRulesReused == 0,
+        "R3 source identity includes exact content");
+    options.profileYaml = R"({"outbounds":[{"type":"direct","tag":"d"}],"route":{"rules":[{"domain":["only.test"],"outbound":"d"},{"domain":["one.test","two.test"],"outbound":"d"}],"final":"d"}})";
+    model = capture();
+    check(bool(model), "R3 captures native routes");
+    if (!model) return;
+    view = editor();
+    check(view.rules.size() == 3 && view.rules.front().editable && !view.rules[1].editable &&
+        singbox::BindTargetSourceEdit(*model, "target:1", replace, error) && replace.anchor.starts_with("json:{"),
+        "R3 native bindings preserve canonical JSON anchors and reject multi-condition editing");
+    options.profileRuleEdits.rules = {replace, final};
+    const auto nativeCold = singbox::compileConfig(options);
+    const auto nativeWarm = singbox::compileConfig(options, {}, model.get());
+    check(nativeCold.error.empty() && nativeWarm.json == nativeCold.json &&
+        nativeWarm.warnings == nativeCold.warnings && nativeWarm.targetRulesReused == 1,
+        "R3 native edit composition preserves the opaque source branch");
+}
+
+void CheckCompatibilityDefaults() {
+    singbox::CompileOptions input;
+    input.mainConnectionId = "rules-r4";
+    for (const auto* source : {
+             "proxy-groups: [{name: 'Pick)', type: select, proxies: [DIRECT]}]\n"
+             "rules: [[DOMAIN, invalid.test, DIRECT], 'DOMAIN,first.test,DIRECT','MATCH,Pick)','DOMAIN,after.test,DIRECT']\n",
+             "rules: ['MATCH,Pick(a,b)','DOMAIN,after.test,DIRECT','MATCH,DIRECT']\n"
+         }) {
+        input.profileYaml = source;
+        input.captureTargetSource = true;
+        input.profileRuleEdits = {};
+        const auto baseline = singbox::compileConfig(input);
+        check(bool(baseline.targetSource), "R4 captures non-scalar rules and edge cases around MATCH");
+        if (!baseline.targetSource) continue;
+        input.captureTargetSource = false;
+        input.profileRuleEdits.rules = {{.id="extra", .operation="prepend",
+            .match="domain", .pattern="extra.test", .target="DIRECT"}};
+        const auto cold = singbox::compileConfig(input);
+        const auto warm = singbox::compileConfig(input, {}, baseline.targetSource.get());
+        check(cold.error.empty() && warm.error == cold.error && warm.json == cold.json &&
+            warm.warnings == cold.warnings && warm.rulePlan.origins == cold.rulePlan.origins,
+            "R4 shared origins retain legacy MATCH/default compatibility and non-scalar diagnostics");
+        const auto projected = singbox::ProjectTargetSource(*baseline.targetSource, input.profileRuleEdits);
+        const bool reachesAfter = cold.json.find("after.test") != std::string::npos;
+        check(projected.error.empty() && !projected.rules.empty() && projected.rules.back().terminal &&
+            std::ranges::any_of(projected.rules, [](const auto& row) { return row.pattern == "after.test"; }) == reachesAfter,
+            "R4 the target view terminates at the actual emitted MATCH");
+    }
+}
+
 void Run() {
     const auto before = failures;
+    CheckEditor();
+    CheckCompatibilityDefaults();
     const std::string source = "rules: ['DOMAIN,original.test,DIRECT','UNKNOWN,omitted.test,DIRECT','MATCH,REJECT-DROP','DOMAIN,after.test,DIRECT']\n";
     auto projected = Project(source);
     check(projected.error.empty() && projected.rules.size() == 2 && projected.original.empty(),
@@ -89,11 +198,24 @@ void Run() {
 #endif
         auto options = target_rule_baseline::Options(sample);
         const auto saved = options.profileRuleEdits; options.profileRuleEdits = {}; options.captureTargetSource = true;
+        const auto expected = sample.at("expected").at("projection").at("error").get<std::string>();
+        if (!saved.rules.empty()) {
+            std::string refreshError;
+            const bool valid = singbox::ValidateProfileUpdate(options.profileYaml, saved, refreshError, false);
+            check(valid == expected.empty() && refreshError == expected,
+                "R4 production refresh preserves the frozen binding result: " + sample.at("name").get<std::string>());
+        }
         const auto baseline = singbox::compileConfig(options);
         if (!baseline.targetSource) continue;
         const auto view = singbox::ProjectTargetSource(*baseline.targetSource, saved);
-        const auto expected = sample.at("expected").at("projection").at("error").get<std::string>();
         check(view.error == expected, "R2 replay preserves frozen legacy conflict contracts: " + sample.at("name").get<std::string>());
+        options.captureTargetSource = false;
+        options.profileRuleEdits = saved;
+        const auto cold = singbox::compileConfig(options);
+        const auto warm = singbox::compileConfig(options, {}, baseline.targetSource.get());
+        check(warm.json == cold.json && warm.error == cold.error && warm.warnings == cold.warnings &&
+            warm.rulePlan.origins == cold.rulePlan.origins && warm.rulePlan.ruleCount == cold.rulePlan.ruleCount,
+            "R3 cached composition matches cold output and trace: " + sample.at("name").get<std::string>());
         std::set<std::string> keys;
         for (const auto& row : view.rules) check(!row.anchor.empty() && keys.insert(row.anchor).second && !row.editable,
             "R2 actual target branches have unique read-only view identities");

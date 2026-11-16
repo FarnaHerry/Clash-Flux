@@ -45,8 +45,12 @@ method/非空密码与现有 SS 子集共用校验，但旧格式不接受 SS 20
 
 - VMess 分支只转换 JSON 分享格式，版本缺省/显式 2；其它尚未开放的协议、VMess URI authority 格式、
   旧版 JSON 1、未知字段或重复 JSON 字段明确拒绝，不只导入列表中的合法部分。
-- 保留节点名称/顺序、服务器、端口、UUID、alterId、cipher（缺省 auto）；数字字段允许整数或
+- 保留节点名称/顺序、服务器、端口、UUID、alterId 与显式加密算法；数字字段允许整数或
   十进制整数字符串。名称缺省生成 VMess 序号，重复名称及内置出口重名拒绝，避免节点消失或引用改向。
+- `scy` 缺省或为 `auto` 时通常保留 `auto`。旧版 VMess 分享（`aid > 0`）启用 TLS 时显式输出
+  `aes-128-gcm` 并记节点近似，避免 sing-box 1.14.4 把 TLS 下的 `auto` 解释成 `zero`。
+  旧版握手仍使用原 `aid`，TLS 仍按用户配置校验。该兼容规则也用于 file/HTTP 节点链接集合。
+  内核行为见 [固定版本的 VMess 出站](https://github.com/SagerNet/sing-box/blob/c005f35300ce76427dc285481ec5695f5b179cd2/protocol/vmess/outbound.go)。
 - 支持 TCP、WebSocket、HTTP/2（h2/http）、gRPC 的现有映射；保留 WS Host/path、HTTP host/path、
   gRPC serviceName（path）。gRPC authority、KCP/QUIC、TCP HTTP 伪装及其它模式不能等价表达时拒绝。
 - TLS 必须显式 `tls=tls`；默认验证证书。仅显式 insecure/allowInsecure 才跳过验证，两者冲突拒绝。

@@ -18,6 +18,7 @@
 // （网络下载 / 内核重启），全部经 RunOnTaskThread。
 #include <huxerui/huxerui.h>
 #include "share_qr.h"
+#include "text_document.h"
 
 #include <algorithm>
 #include <charconv>

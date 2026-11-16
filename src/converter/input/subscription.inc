@@ -247,6 +247,7 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
         options.alterId = alterId;
         options.security = lowerCopy(trimCopy(string("scy")));
         if (options.security.empty()) options.security = "auto";
+        options.legacyShareTlsAutoCipher = tlsEnabled && alterId > 0 && options.security == "auto";
         node.options = std::move(options);
         node.tls.declaredEnabled = tlsEnabled;
         node.tls.enabled = tlsEnabled;

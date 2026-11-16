@@ -113,7 +113,18 @@ void testProtocolUriBaseline(const std::filesystem::path& fixtures) {
         options.mainConnectionId = "protocol-baseline";
         options.profileYaml = fixture.at("yaml").get<std::string>();
         const auto result = singbox::compileConfig(options);
-        check(protocolObservation(result).dump() == fixture.at("expected").dump(),
+        auto expected = fixture.at("expected");
+        if (name == "uri-aid-10") {
+            // Keep the historical fixture and account for the one intentional cipher mapping change.
+            expected["outbounds"][1]["security"] = "aes-128-gcm";
+            constexpr auto detail = "旧版 VMess TLS 分享的自动加密映射为 aes-128-gcm，以保留 VMess 载荷加密";
+            expected["fidelity"].push_back({{"scope", int(singbox::FidelityScope::Node)},
+                {"level", int(singbox::Fidelity::Approx)}, {"subject", "URI fixture"},
+                {"detail", detail}, {"action", "可在分享链接中为节点明确指定服务端支持的 scy"},
+                {"sourceId", options.mainConnectionId}});
+            expected["warnings"].push_back(detail);
+        }
+        check(protocolObservation(result).dump() == expected.dump(),
             "VMess URI frozen baseline: " + name);
         if (!result.json.empty()) {
             std::string error;

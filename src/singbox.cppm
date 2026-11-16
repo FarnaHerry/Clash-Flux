@@ -30,6 +30,7 @@ export struct ProfileRule {
     std::string anchor, raw, type, pattern, target;
     std::string editId, origin = "source", position;
     bool editable = false, enabled = true, terminal = false, implicit = false;
+    std::string targetId; // Model-local view identity; never a persisted source anchor.
     bool operator==(const ProfileRule&) const = default;
 };
 export struct ProfileRules {
@@ -38,14 +39,20 @@ export struct ProfileRules {
     std::vector<ProfileRule> original;
 };
 export bool ValidateProfileRuleEdits(const ProfileRuleEdits& edits, std::string& error);
+#if defined(CLASHFLUX_TEST_LEGACY_RULE_PROJECTION)
 export ProfileRules InspectProfileRules(const std::string& content,
     const ProfileRuleEdits& edits = {}, bool includeOriginal = true);
+#endif
 
 // Source transport (remote/local) is independent of the document format.
 export enum class ProfileFormat { ClashYaml, SingBoxJson, OpenVpn, NodeSubscription };
 export ProfileFormat DetectProfileFormat(std::string_view content);
 // Parse the complete source document without fetching dependencies or approving a runtime plan.
 export bool ValidateProfileDocument(const std::string& content, std::string& error);
+// Check saved anchors before any provider preparation. Local writes also check
+// the document shape in this pass; downloads retain their candidate checks.
+export bool ValidateProfileUpdate(const std::string& content, const ProfileRuleEdits& edits,
+    std::string& error, bool validateDocument);
 
 // Audited input formats, not a promise that every field of another client is supported.
 // Owned values keep this inspection independent of private parser storage or JSON codecs.
@@ -186,6 +193,8 @@ export struct TargetRuleOrigin {
     std::vector<std::uint64_t> rules;
     std::vector<std::size_t> diagnostics; // Indices into this model's diagnostics().
     bool synthetic = false; // Generated node policy or inferred default, not a literal source rule.
+    bool editable = false; // Unique, one-to-one, legacy-supported source binding only.
+    bool clashNonScalar = false; // Retain the legacy read-only classification of YAML nodes.
 };
 export struct TargetDefaultAction {
     std::string action, outbound, rejectMethod;
@@ -201,6 +210,7 @@ export class TargetSourceModel {
     friend struct TargetProjection;
 public:
     const std::string& sourceId() const noexcept;
+    const std::string& sourceText() const noexcept;
     ProfileFormat format() const noexcept;
     const std::vector<TargetRule>& rules() const noexcept;
     const std::vector<TargetRuleOrigin>& origins() const noexcept;
@@ -214,10 +224,20 @@ public:
 
 export ProfileRules ProjectTargetSource(const TargetSourceModel& model,
     const ProfileRuleEdits& edits = {}, const RuleSetLibrary& library = {});
+export ProfileRules InspectTargetSource(const TargetSourceModel* model,
+    const ProfileRules& effective, const ProfileRuleEdits& edits = {});
+// Binds a new replace/disable/final intent to this model. Does not save/check.
+export bool BindTargetSourceEdit(const TargetSourceModel& model, std::string_view targetId,
+    ProfileRuleEdit& edit, std::string& error);
+#if defined(CLASHFLUX_TEST_TARGET_RESTART)
+export int RunTargetRestartProbe(std::string_view mode, const std::filesystem::path& source,
+    const std::filesystem::path& artifact);
+#endif
 
 export struct CompileResult {
     std::shared_ptr<const TargetSourceModel> targetSource; // Optional, not a runtime approval.
     bool targetSourceReused = false; // Application artifact index hit, not a YAML parse hit.
+    std::size_t targetRulesReused = 0; // Source branches consumed during ordinary composition.
     unsigned sourceParseCacheHits = 0;
     std::string json;                    // compileConfig 配置 JSON；失败或仅目录检查为空
     std::string error;                   // 致命错误（YAML 解析失败等）
@@ -314,7 +334,8 @@ export struct CompileOptions {
 
 // 编译 options.profileYaml 为 sing-box 配置 JSON。可为空（最小可用配置）、
 // Clash YAML，或以 "{" 开头的原生 sing-box JSON（直通并合并托管设置）。
-export CompileResult compileConfig(const CompileOptions& options, std::stop_token cancel = {});
+export CompileResult compileConfig(const CompileOptions& options, std::stop_token cancel = {},
+    const TargetSourceModel* ruleSource = nullptr);
 // Read-only Clash/.ovpn object directory, including sources not yet referenced by a
 // plan. Uses the same export compiler as secondary sources; no download/check,
 // persistence mutation or running/preview mapping publication.

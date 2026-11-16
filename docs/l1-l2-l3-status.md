@@ -1,5 +1,45 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-16 R5 预生成预算
+
+- 源码为 `6b00957` 加 R3–R5 和预生成预算改动。工作线程查询原文大小，超出经验门槛时等规则页请求。生产路径继续按实际快照计费，按来源版本拒绝过期结果。
+- Linux Release 的 60 次窗口测量覆盖改动前后。5 万条样本等 1 秒再打开时，完整读取由两次降为一次，峰值 RSS 中位数约由 415 MiB 降至 330 MiB。250 ms 打开时的完整转换等待移到点击后。样本、命令和验证边界见 [预生成预算复测](evidence/2026-11-16-target-r5-prewarm-budget.md)。
+
+## 2026-11-16 旧版 VMess TLS 分享兼容
+
+- 源码基于 `6b00957` 加当前工作区，固定内核仍为 sing-box 1.14.4。实际订阅含 50 个 `aid=2` 且省略 `scy` 的 TLS VMess 节点。31 个用 WebSocket，19 个使用已有的 `net=tls` 别名。发布源码核对确认内核将 TLS 下的 `security=auto` 转成 `zero`。
+- 在 WSL 用同一批 8 个节点比较，V2Fly 5.40.0 保留 `aid=2` 可以转发，sing-box 的原 `auto` 配置失败。临时配置显式使用 `aes-128-gcm` 或 `chacha20-poly1305` 时，抽测的两种传输均恢复。将 `aid` 改成 0 的对照失败。
+- 兼容处理限于 VMess 分享的 TLS、`aid > 0` 和自动加密条件。主订阅与选入的集合节点显式使用 `aes-128-gcm` 并记节点近似，握手 ID 和 TLS 校验按原参数处理。字段边界见 [节点订阅](node-subscriptions.md#vmess-json-既有子集)。
+- Windows MSVC Debug 使用 `test_singbox --compile-config` 重新编译实际订阅，固定内核 `check` 通过。原配置 0/8，新配置 8/8 成功转发 HTTPS。其中 7 个默认测速地址返回 204，另外 1 个备用地址返回 200。订阅内容未纳入仓库，真机部署与其它来源服务器未覆盖。
+
+## 2026-11-16 R5 后续首次打开
+
+- Linux Release 应用在隔离 Xvfb 中导入合成 Clash 订阅，重新启动并点击实际规则页。1 万条样本在首页出现 250 ms 后打开，消费一份已准备快照。5 万条样本等待 1 秒后打开，预生成结果超出闲置预算被淘汰，页面再次读取和转换。分段、重复测量和适用范围见 [首次打开证据](evidence/2026-11-16-target-r5-first-open.md)。
+
+## 2026-11-16 目标工作模型 R5
+
+- 源码快照为 `6b00957` 加 R3–R5 工作区。Linux WSL Release 分别运行原文重建、JSON 与 CBOR 读取、身份和内容校验、恢复目标对象及规则投影。每种来源、规模和路径 7 次独立进程测量。5 万条 Clash 规则就绪中位数为 302.91 / 104.10 / 124.08 ms，原生配置为 166.58 / 137.91 / 159.27 ms。
+- 应用继续从原文重建。后续试点优先以大型自包含 Clash YAML 的 JSON 缓存验证首次打开收益。测量、计划、验证与未覆盖范围见 [R5 证据](evidence/2026-11-16-target-r5.md)。
+
+## 2026-11-16 目标工作模型 R4
+
+- 源码快照为 `6b00957` 加 R3/R4 工作区。编辑器从现有目标投影补充操作权限和修改记录。锚点校验采用编译器的 Clash/原生适配器，并覆盖刷新中的次来源。运行编排命中同一来源快照时复用出处数据及可直接生成的规则分支。带资源和诊断的规则仍依据当前编译上下文处理。
+- 旧的规则投影仅由 `test_singbox` 编译。迁移后的见证文件 Git 对象仍为 `a7c846a6dddb4fea3f9bd124cb90ac0d0156dc0a`。保留独立 R3 二进制，与 R4 的 `--observe-target-baseline` 对比 42 份完整输出，`cmp` 逐字节一致，SHA-256 为 `0ebd1234038046ea11979ea2dabf1c4b22df8c71822952299f72bccf2efec6cb`。冻结预期保留原件。
+- 定向回归覆盖 YAML 非标量、带括号或逗号的 MATCH、热冷编排的 JSON/诊断/追溯一致性、编辑器复用已预热数据、次来源锚点冲突保留旧文件和本地重复顶层键拒绝。合成 12,000 条规则的 `--target-workspace-benchmark` 仍只有一次来源捕获，目标模型记账 11,202,961 B，弱索引键 788,123 B。
+- Linux WSL / Clang 21 / libc++ / CMake 4.4.2 主目标和全目标构建通过。`run.sh --version` 通过，Windows 工作区换行在调用前转换为 LF。`test_singbox --target-baseline`、`--target-source`、`--target-project`、`--profile-rules` 与 `test_page_transition --rules-cache` 通过。`ctest --output-on-failure --no-tests=error -L clashflux-required` 为 **37/37，388.47 秒**，含固定 sing-box 1.14.4 规则集、规则追溯和转发回归。
+- Windows MSVC 14.51 / Debug 主目标、`./run.ps1 --version`、`test_singbox --target-project` 和 `core_api_lifetime` 通过。Android NDK 29 arm64-v8a 的 `:app:externalNativeBuildDebug :app:compileDebugJavaWithJavac` 通过，native 重新编译，Java 为最新。`git diff --check` 通过。
+- 本轮范围为自动回归和本机构建。macOS 本机、手工界面、真机 VPN 和发布验收仍待执行。磁盘缓存与重启加载评估进入 R5。
+
+## 2026-11-16 目标工作模型 R3
+
+- 源码快照为 `6b00957` 加本轮 R3 工作区，HuxerUI 固定 `89359f43`，sing-box 固定 1.14.4。目标规则列表、详情和操作消费同一快照。新增替换与禁用只有在来源锚点唯一时开放，已保存的关闭或未应用修改仍可管理。保存沿用个人规则 format_version=1。
+- 预览和候选从共享弱索引借用匹配完整来源字节的可复用分支。Clash 的资源、诊断与上下文相关转换保持现有路径。原生 JSON 保留不透明字段。保存先检查候选，再写设置，刷新失败保留文件。实测覆盖过期来源、内核拒绝无设置写入、预览凭据脱敏、旧锚点刷新冲突及两份订阅重开。
+- Linux WSL / Clang 21 / libc++ / CMake 4.4.2。主目标及全目标构建、`run.sh --version`（从 Windows 工作区转发 LF 脚本）、`git diff --check`、`test_singbox --target-baseline/--target-source/--target-project`、`test_page_transition --rules-cache` 通过。完整 `ctest --output-on-failure --no-tests=error -L clashflux-required` 为 **37/37，344.15 秒**。最终主目标、版本和 `core_api_lifetime` 再次通过。
+- Windows MSVC 14.51 / CMake 4.4.2 / Debug。 `cmake --build <构建目录> --target clash-flux`、`./run.ps1 --version`（v0.3.111）、`test_singbox --target-project` 和 `ctest -R ^core_api_lifetime$` 通过。订阅页面及规则快照的头文件在命名模块导入前加载。
+- Android NDK 29 arm64-v8a。通过独立 `cmake --build <构建目录> --target clash-flux` 和 Gradle `:app:externalNativeBuildDebug :app:compileDebugJavaWithJavac`。Gradle 使用 OpenJDK 17、固定 HuxerUI 源码、按 1.14.4 tag 构建并核对摘要的 libbox，以及进程级 Git 长路径设置，完成 native 构建、合并和应用 Java 编译，用时 10 分 41 秒。
+- Debug 合成 12,000 条规则只捕获一次来源。目标模型记账 11,202,915 B，弱索引键 788,123 B。以上是对应对象的缓存记账，进程 RSS 与大订阅真机耗时待单独测量。
+- 本轮覆盖无窗口 UI 回归、桌面候选检查和 Android 编译。手工界面交互、真机 VPN、macOS 本机和发布验收仍待单独执行。
+
 ## 2026-11-16：目标工作模型 R1 来源目标捕获
 
 - R1 在现有 singbox 模块增加拥有型不可变 TargetSourceModel，显式捕获未叠加个人修改的主来源规则、默认动作、目录、rule_set 和出处。管理信息与内核字段分开，原生 DOM 私有；目标 ID 仅在句柄内唯一，不当作跨刷新编辑 ID。实现与边界见 [R1 证据](evidence/2026-11-16-target-r1.md)。

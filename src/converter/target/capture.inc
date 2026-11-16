@@ -1,6 +1,25 @@
 // Main source capture runs before namespacing and runtime policy injection.
 // No source is re-parsed, and failed candidates never publish the pending model.
-bool convertCapturedRule(Context& ctx, const std::string& raw) {
+// Reuse only captured simple branches with no conversion diagnostics or
+// resource side effects. Outbounds are resolved again in this compilation.
+bool emitCapturedClashRule(Context& ctx, std::size_t sourceIndex, std::string_view raw) {
+    if (!ctx.ruleSource) return false;
+    const auto& data = TargetProjection::Read(*ctx.ruleSource);
+    if (sourceIndex >= data.origins.size()) return false;
+    const auto& origin = data.origins[sourceIndex];
+    if (!origin.editable || !origin.diagnostics.empty() ||
+        !origin.anchor.starts_with("clash:") || std::string_view(origin.anchor).substr(6) != trimCopy(raw))
+        return false;
+    const auto id = origin.rules.front();
+    const auto& rule = data.rules[id-1];
+    if (!rule.outbound.empty() && !ctx.tagKnown(rule.outbound)) return false;
+    ctx.config["route"]["rules"].push_back(data.payload[id-1]);
+    ++ctx.result.targetRulesReused;
+    return true;
+}
+
+bool convertSourceClashRule(Context& ctx, std::size_t sourceIndex, std::string_view raw) {
+    if (emitCapturedClashRule(ctx, sourceIndex, raw)) return true;
     if (!ctx.targetCapture) return convertRule(ctx, raw);
     const auto begin = ctx.config["route"]["rules"].size();
     const auto firstNote = ctx.result.fidelity.size();
@@ -15,9 +34,10 @@ void recordAfterFinal(Context& ctx, const YAML::Node& rules, std::size_t begin) 
     if (!ctx.targetCapture) return;
     for (auto index = begin; index < rules.size(); ++index) {
         if (ctx.cancelled()) return;
-        const auto raw = rules[index].IsScalar() ? trimCopy(rules[index].Scalar()) : YAML::Dump(rules[index]);
+        const bool scalar = rules[index].IsScalar();
+        const auto raw = scalar ? trimCopy(rules[index].Scalar()) : YAML::Dump(rules[index]);
         ctx.targetCapture->Record("clash:" + raw, TargetRuleState::AfterFinal,
-            nlohmann::json::array(), 0, 0, 0);
+            nlohmann::json::array(), 0, 0, 0, !scalar);
     }
 }
 
@@ -34,11 +54,13 @@ void captureNativeRules(Context& ctx) {
     }
 }
 
+void prepareTargetEditBindings(TargetCapture& capture);
 std::shared_ptr<const TargetSourceModel> finishTargetSource(Context& ctx, ProfileFormat format) {
     if (!ctx.targetCapture) return {};
     auto& capture = *ctx.targetCapture;
     auto& data = *capture.data;
     data.sourceId = ctx.sourceId;
+    data.sourceText = ctx.opt.profileYaml;
     data.format = format;
     const auto final = ctx.config["route"].value("final", "DIRECT");
     const bool reject = ctx.finalTarget == "REJECT" || ctx.finalTarget == "REJECT-DROP";
@@ -63,5 +85,6 @@ std::shared_ptr<const TargetSourceModel> finishTargetSource(Context& ctx, Profil
     data.ruleSets = format == ProfileFormat::SingBoxJson
         ? ctx.config["route"].value("rule_set", nlohmann::json::array()) : ctx.ruleSets;
     data.diagnostics = ctx.result.fidelity;
+    prepareTargetEditBindings(capture);
     return capture.Finish();
 }

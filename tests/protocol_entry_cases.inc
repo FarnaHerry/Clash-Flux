@@ -173,6 +173,16 @@ void RunBoundaries(const std::filesystem::path& directory) {
         const auto [excludedOptions, excluded] = CompileProvider(two, kind, directory, true, "^keep$");
         check(excluded.error.empty() && !Node(excluded, "p5-main", "keep").empty() && NodeNotes(excluded, "p5-main").empty(),
             "P5 filtered-out URI aliases do not enter the node ledger");
+        auto legacy = uriNode;
+        legacy["aid"] = "2";
+        const auto mixed = "vmess://" + encodeNodeFixture(legacy.dump()) + "\nvmess://" + encodeNodeFixture(ordinary.dump());
+        const auto [legacyOptions, withLegacy] = CompileProvider(mixed, kind, directory, true);
+        check(withLegacy.error.empty() && Node(withLegacy, "p5-main", "values").value("security", "") == "aes-128-gcm" &&
+            Node(withLegacy, "p5-main", "keep").value("security", "") == "auto" &&
+            NodeNotes(withLegacy, "p5-main").size() == 2, "participating legacy VMess TLS provider uses explicit payload encryption");
+        const auto [modernOptions, modern] = CompileProvider(mixed, kind, directory, true, "^keep$");
+        check(modern.error.empty() && NodeNotes(modern, "p5-main").empty(),
+            "filtered-out legacy VMess TLS nodes produce no cipher compatibility note");
         const auto [badOptions, bad] = CompileProvider(uri + "\nss://unsupported", kind, directory, false, "^values$");
         check(!bad.error.empty() && bad.json.empty(), "P5 URI syntax validation still rejects a bad excluded line before filtering");
         const auto [scopedOptions, scoped] = CompileProvider(uri, kind, directory, true, {}, "global-client-fingerprint: random\n");

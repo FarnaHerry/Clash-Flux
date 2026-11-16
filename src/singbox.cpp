@@ -8,13 +8,19 @@ module;
 #include "http_representation.h"
 
 #include <yaml-cpp/yaml.h>
+#if defined(CLASHFLUX_TEST_LEGACY_RULE_PROJECTION)
 #include <yaml-cpp/eventhandler.h>
 #include <yaml-cpp/parser.h>
+#endif
 #include <zstd.h>
 #include "profile_link.h"
 #include "http_request_headers.h"
 #include "tun_settings.h"
 #include "network_settings.h"
+#if defined(CLASHFLUX_TEST_TARGET_RESTART)
+#include <openssl/evp.h>
+#include "target_source_cache.h"
+#endif
 
 module clashflux.singbox;
 
@@ -23,6 +29,9 @@ import nlohmann.json;
 
 namespace singbox {
 #include "converter/target/model.inc"
+#if defined(CLASHFLUX_TEST_TARGET_RESTART)
+#include "../tests/target_restart_probe.inc"
+#endif
 namespace {
 
 #include "singbox_yaml_openvpn.inc"
@@ -43,8 +52,11 @@ std::string personalRuleSetTag(const RuleSetLibrary& library, const std::string&
 #include "singbox_filter.inc"
 #include "singbox_proxy_provider.inc"
 #include "singbox_profile_rules.inc"
+#include "converter/target/edit.inc"
 #include "converter/target/project.inc"
-#include "singbox_rule_projection.inc"
+#if defined(CLASHFLUX_TEST_LEGACY_RULE_PROJECTION)
+#include "../tests/legacy_rule_projection.inc"
+#endif
 #include "singbox_compile.inc"
 #include "singbox_sources.inc"
 } // namespace
@@ -88,28 +100,48 @@ ProfileFormat DetectProfileFormat(std::string_view content) {
     return ProfileFormat::ClashYaml;
 }
 
-bool ValidateProfileDocument(const std::string& content, std::string& error) {
+bool ValidateProfileUpdate(const std::string& content, const ProfileRuleEdits& edits,
+                           std::string& error, bool validateDocument) {
     error.clear();
-    if (content.empty() || content.size() > 8 * 1024 * 1024 || content.find('\0') != std::string::npos) {
+    if (validateDocument &&
+        (content.empty() || content.size() > 8 * 1024 * 1024 || content.find('\0') != std::string::npos)) {
         error = "订阅文件为空、含 NUL 或超过 8 MiB"; return false;
     }
+    if (!validateDocument && edits.rules.empty()) return true;
     try {
         const auto format = DetectProfileFormat(content);
+        const auto validateBindings = [&](std::vector<ProfileRule> originals) {
+            error = personalRulePlan(std::move(originals), edits).error;
+            return error.empty();
+        };
         if (format == ProfileFormat::SingBoxJson) {
-            if (!nlohmann::json::parse(content, nullptr, false).is_object())
-                throw std::runtime_error("原生配置必须是 JSON 对象");
+            const auto root = nlohmann::json::parse(content, nullptr, !validateDocument);
+            if (!root.is_object())
+                throw std::runtime_error(validateDocument ? "原生配置必须是 JSON 对象" : "原生配置必须为 JSON 对象");
+            if (!edits.rules.empty()) return validateBindings(nativeProfileRules(root));
         } else if (format == ProfileFormat::OpenVpn) {
-            if (!parseOpenVpnEndpointInput(content, error)) return false;
+            if (validateDocument && !parseOpenVpnEndpointInput(content, error)) return false;
+            if (!edits.rules.empty()) { error = "OpenVPN 使用连接和内网路由规则"; return false; }
         } else {
             const auto root = loadClashProfileDocument(content);
-            if (!root.IsMap() || root.size() == 0) throw std::runtime_error("订阅必须是非空配置对象");
-            std::set<std::string> fields;
-            for (const auto& field : root)
-                if (!field.first.IsScalar() || !fields.insert(field.first.Scalar()).second)
-                    throw std::runtime_error("订阅含重复或无效的顶层字段");
+            if (validateDocument) {
+                if (!root.IsMap() || root.size() == 0) throw std::runtime_error("订阅必须是非空配置对象");
+                std::set<std::string> fields;
+                for (const auto& field : root)
+                    if (!field.first.IsScalar() || !fields.insert(field.first.Scalar()).second)
+                        throw std::runtime_error("订阅含重复或无效的顶层字段");
+            }
+            if (!edits.rules.empty()) {
+                if (!root.IsMap()) { error = "订阅必须为 YAML 对象"; return false; }
+                return validateBindings(clashProfileRules(root));
+            }
         }
         return true;
     } catch (const std::exception& exception) { error = exception.what(); return false; }
+}
+
+bool ValidateProfileDocument(const std::string& content, std::string& error) {
+    return ValidateProfileUpdate(content, {}, error, true);
 }
 
 bool ValidateProfileRuleEdits(const ProfileRuleEdits& edits, std::string& error) {
@@ -201,6 +233,15 @@ ProfileRules ProjectTargetSource(const TargetSourceModel& model, const ProfileRu
     return projectTargetSource(model, edits, library);
 }
 
+ProfileRules InspectTargetSource(const TargetSourceModel* model, const ProfileRules& effective, const ProfileRuleEdits& edits) {
+    return inspectTargetSource(model, effective, edits);
+}
+
+bool BindTargetSourceEdit(const TargetSourceModel& model, std::string_view targetId, ProfileRuleEdit& edit, std::string& error) {
+    return bindTargetSourceEdit(model, targetId, edit, error);
+}
+
+#if defined(CLASHFLUX_TEST_LEGACY_RULE_PROJECTION)
 ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEdits& edits, bool includeOriginal) {
     try {
         const auto project = [&](std::vector<ProfileRule> rows) {
@@ -223,6 +264,7 @@ ProfileRules InspectProfileRules(const std::string& content, const ProfileRuleEd
         return project(clashProfileRules(root));
     } catch (const std::exception& error) { return {{}, error.what()}; }
 }
+#endif
 
 std::vector<ExternalResource> InspectExternalResources(
     std::string_view content, std::string& error, std::string sourceId) {
@@ -376,7 +418,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes) {
     return summary;
 }
 
-CompileResult compileConfig(const CompileOptions& options, std::stop_token cancel) {
+CompileResult compileConfig(const CompileOptions& options, std::stop_token cancel, const TargetSourceModel* ruleSource) {
     Context ctx{options, cancel};
     if (ctx.cancelled()) return std::move(ctx.result);
     ctx.sourceId = options.mainConnectionId;
@@ -400,6 +442,10 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
     if (original.starts_with("\xEF\xBB\xBF")) original.remove_prefix(3);
     const std::string trimmed = trimCopy(original);
     const auto format = DetectProfileFormat(trimmed);
+    if (ruleSource && !options.captureTargetSource && format == ruleSource->format() &&
+        options.mainConnectionId == ruleSource->sourceId() &&
+        options.profileYaml == ruleSource->sourceText())
+        ctx.ruleSource = ruleSource;
     if (options.captureTargetSource && format != ProfileFormat::OpenVpn) {
         ctx.targetCapture = std::make_unique<TargetCapture>();
         ctx.targetCapture->data->format = format;

@@ -190,6 +190,7 @@ std::string FidelitySummary(const std::vector<FidelityNote>& notes);
 
 节点订阅支持 SS SIP002、VMess JSON、VLESS/Trojan、HY2/TUIC/AnyTLS 的明确子集，复用下列协议映射，不增加内核协议能力；字段/格式默认与严格拒绝范围见[节点订阅边界](node-subscriptions.md)。Base64/URL-safe 包装解码与标准字段映射为 exact；
 无规则列表生成 selector/MATCH 为字段 approx，非标准 `net=tls` → 显式 TCP+TLS 为节点 approx。
+旧版 VMess TLS 分享的自动载荷加密按[节点订阅边界](node-subscriptions.md#vmess-json-既有子集)显式映射，记节点 approx。
 未知协议、未知字段、无法表达的传输/证书约束或畸形条目拒绝整份候选，不提交合法前缀；原订阅字节保留。
 
 ### 4.1 出站协议（Clash 转换覆盖 12 / 15 个代理协议类型）

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -15,6 +16,9 @@ import clashflux.core;
 import clashflux.singbox;
 import clashflux.data;
 import clashflux.store.core;
+import clashflux.store.profiles;
+import clashflux.routing;
+import clashflux.vpn;
 #include "../src/ui/profiles_model.h"
 #include "../src/ui/profile_rules_snapshot.h"
 
@@ -47,6 +51,13 @@ Task<void> AwaitRulePrewarm() {
         co_await Delay(1ms);
     }
 }
+Task<void> AwaitRuleRead(std::uint64_t expected) {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (ruleViews->rules->readsStarted < expected) {
+        Require(std::chrono::steady_clock::now() < deadline, "prewarm did not start reading");
+        co_await Delay(1ms);
+    }
+}
 Task<void> CheckRulePrewarm() {
     namespace ui = clashflux::ui;
     auto& data = clashflux::data::session();
@@ -67,7 +78,8 @@ Task<void> CheckRulePrewarm() {
     ruleViews->list = data.listProfiles(); ruleViews->loaded = true;
     ruleViews->ruleSources = std::vector<std::int64_t>{1,2}; ruleViews->ruleSourcesReady = true;
     ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
-    Require(ruleViews->rules->readsStarted == 1 && ruleViews->rulesPrewarm.running,
+    co_await AwaitRuleRead(1);
+    Require(ruleViews->rules->readsStarted == 1 && !ruleViews->rules->entries.contains(2),
         "startup must warm one eligible source, not every saved subscription");
     ui::RequestPersonalRules(applicationTasks, ruleViews, 1, false, "read failed");
     co_await AwaitRulePrewarm();
@@ -77,6 +89,17 @@ Task<void> CheckRulePrewarm() {
     ui::RequestPersonalRules(applicationTasks, ruleViews, 1, false, "read failed");
     Require(ruleViews->rules->SnapshotOf(1) == warmed && ruleViews->rules->readsStarted == 1,
         "first page request after prewarm must reuse its exact ready snapshot without IO or conversion");
+    ui::RequestPersonalRules(applicationTasks, ruleViews, 1, true, "read failed");
+    const auto editorDeadline = std::chrono::steady_clock::now() + 3s;
+    while (!ruleViews->rules->EditorReady(1)) {
+        Require(std::chrono::steady_clock::now() < editorDeadline, "target editor did not finish");
+        co_await Delay(1ms);
+    }
+    const auto editor = ruleViews->rules->SnapshotOf(1);
+    Require(editor && editor->editor && editor->data == warmed->data && ruleViews->rules->readsStarted == 1 &&
+        editor->editor->rules.size() == warmed->data->effective.rules.size() &&
+        editor->editor->rules.front().editable && editor->editor->rules.front().pattern == "seed.test",
+        "production editor reuses the prewarmed source and effective rows while adding edit permissions");
 
     model::Profile imported=first; imported.id=3; imported.name="imported"; imported.file="3.import.yaml"; imported.selected=false;
     write(imported.file, "imported.test");
@@ -105,8 +128,8 @@ Task<void> CheckRulePrewarm() {
     ruleViews->FinishRefresh(3, refresh);
     ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
     const auto latest = ruleViews->rules->SnapshotOf(3);
-    Require(latest->data->content.find("latest.test") != std::string::npos && ruleViews->rules->readsStarted == 3 &&
-        original->data->content.find("imported.test") != std::string::npos, "refresh prewarm reads only the latest accepted file and retains old caller data");
+    Require(latest->data->content().find("latest.test") != std::string::npos && ruleViews->rules->readsStarted == 3 &&
+        original->data->content().find("imported.test") != std::string::npos, "refresh prewarm reads only the latest accepted file and retains old caller data");
     // Same body/file and even the same updatedAt can be a successful 304 whose
     // providers were revalidated. The accepted record version still invalidates.
     Require(co_await data.commitProfile(imported, data.profileRevision(3)), "commit same-file accepted refresh");
@@ -124,12 +147,12 @@ Task<void> CheckRulePrewarm() {
 
     // An idle over-budget artifact must be evicted once, never continually
     // requeued just because no page currently pins it.
-    ruleViews->rules->budgetBytes = 512;
+    ruleViews->rules->budgetBytes = 2048;
     imported.id=4; imported.file="4.budget.yaml"; write(imported.file, "budget.test");
     Require(co_await data.commitProfile(imported, 0), "commit budget fixture");
     ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
     Require(!ruleViews->rules->entries.contains(4) && ruleViews->rules->readsStarted == 5 &&
-        ruleViews->rules->RetainedBytes() <= 512, "idle prewarm shares the real cache budget without retaining an oversized result");
+        ruleViews->rules->RetainedBytes() <= 2048, "the exact idle budget still applies after the speculative size check");
     ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
     Require(ruleViews->rules->readsStarted == 5 && ruleViews->rulesPrewarm.pending.empty(), "eviction must not cause a background rebuild loop");
     ruleViews->rules->budgetBytes = 32*1024*1024;
@@ -151,6 +174,7 @@ Task<void> CheckRulePrewarm() {
     Require(co_await data.commitProfile(imported, 0), "commit ABA source");
     const auto beforeAba = ruleViews->rules->readsStarted;
     ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    co_await AwaitRuleRead(beforeAba+1);
     const auto stale = ruleViews->rules->entries.at(7).generation;
     imported.file="7.b.yaml"; write(imported.file, "temporary.test");
     Require(co_await data.commitProfile(imported, data.profileRevision(7)), "commit ABA middle");
@@ -160,7 +184,7 @@ Task<void> CheckRulePrewarm() {
     ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
     lifecycle.unlock(); co_await AwaitRulePrewarm();
     Require(ruleViews->rules->readsStarted == beforeAba+2 && ruleViews->rules->entries.at(7).published > stale &&
-        ruleViews->rules->SnapshotOf(7)->data->content.find("aba.test") != std::string::npos,
+        ruleViews->rules->SnapshotOf(7)->data->content().find("aba.test") != std::string::npos,
         "real worker ABA rejects the first ticket and prepares only the latest accepted input");
     imported.id=8; imported.file="8.deleted.yaml"; write(imported.file, "deleted.test");
     Require(co_await data.commitProfile(imported, 0), "commit queued deletion source");
@@ -171,14 +195,126 @@ Task<void> CheckRulePrewarm() {
     ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
     Require(!ruleViews->rulesPrewarm.sources.contains(8) && ruleViews->rulesPrewarm.pending.empty() &&
         ruleViews->rules->readsStarted == beforeDelete, "deleted queued IDs never start a stale conversion");
+
+    ruleViews->rules->budgetBytes = 2048;
+    imported.id=9; imported.file="9.deferred.yaml";
+    write(imported.file, "deferred-prewarm-source-keeps-every-rule.test");
+    Require(co_await data.commitProfile(imported, 0), "commit deferred source");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    Require(ruleViews->rules->readsStarted == beforeDelete && !ruleViews->rules->Ready(9),
+        "a source above the speculative size limit must go idle without reading");
+    Require(co_await data.commitProfile(imported, data.profileRevision(9)), "accept deferred source again");
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews);
+    ruleViews->rules->Pin(9);
+    ui::RequestPersonalRules(applicationTasks, ruleViews, 9, false, "read failed");
+    Require(ruleViews->rules->readsStarted == beforeDelete+1,
+        "page demand starts immediately while the new version's speculative size check is pending");
+    const auto demandDeadline = std::chrono::steady_clock::now() + 3s;
+    while (!ruleViews->rules->Ready(9)) {
+        Require(std::chrono::steady_clock::now() < demandDeadline, "deferred rules did not load on demand");
+        co_await Delay(1ms);
+    }
+    co_await AwaitRulePrewarm();
+    const auto deferred = ruleViews->rules->SnapshotOf(9);
+    Require(ruleViews->rules->readsStarted == beforeDelete+1 && deferred->data->error.empty() &&
+        deferred->data->effective.rules.size() == 2 &&
+        deferred->data->effective.rules.front().pattern == "deferred-prewarm-source-keeps-every-rule.test",
+        "the first page request must read the deferred source once and load all its rules");
+    ruleViews->rules->Unpin(9);
+    ui::StartProfileRulesPrewarm(applicationTasks, ruleViews); co_await AwaitRulePrewarm();
+    Require(!ruleViews->rules->entries.contains(9) && ruleViews->rules->readsStarted == beforeDelete+1,
+        "a deferred snapshot can still be evicted after the page unpins it");
     const auto after = core.snapshot();
     Require(after.state == initialCore.state && after.planRevision == initialCore.planRevision &&
         after.runtimeEpoch == initialCore.runtimeEpoch && std::filesystem::exists(cfg::profilesDir()/"1.seed.yaml") &&
-        std::filesystem::exists(cfg::profilesDir()/"3.import.yaml") && data.listProfiles().size() == 7 &&
+        std::filesystem::exists(cfg::profilesDir()/"3.import.yaml") && data.listProfiles().size() == 8 &&
         data.settingsRevision() == initialSettings+1,
         "prewarm preserves unrelated records, version files, settings and applied runtime");
     co_await data.close();
     std::puts("rules-prewarm: real files/commits, one read on first open, resource wait, coalescing, budgets, failures and ABA passed");
+}
+
+Task<void> CheckRuleEditor() {
+    auto& data = clashflux::data::session();
+    Require(co_await data.open(cfg::databaseFile(), cfg::profilesDir()), "rule editor database open");
+    auto& core = store::coreStore();
+    core.init();
+    core.ensureSecret();
+    const std::string body = "rules: ['DOMAIN,anchor.test,DIRECT','DOMAIN,retained.test,DIRECT','MATCH,DIRECT']\n";
+    model::Profile profile;
+    profile.id = 1; profile.name = "rule editor"; profile.type = "local"; profile.file = "1.rules.yaml";
+    std::ofstream(cfg::profilesDir() / profile.file, std::ios::binary) << body;
+    Require(co_await data.commitProfile(profile, 0), "rule editor source commit");
+    auto other = profile;
+    other.id = 2; other.name = "independent"; other.file = "2.rules.yaml";
+    std::ofstream(cfg::profilesDir() / other.file, std::ios::binary) << body;
+    Require(co_await data.commitProfile(other, 0), "rule editor independent source commit");
+    co_await RunWorker([&] {
+        auto& profiles = store::profilesStore();
+        const auto captured = core.profileTargetSource(profile.id, body, profile.name, 0);
+        Require(bool(captured.targetSource), "rule editor target capture");
+        const auto runtimeBefore = core.snapshot();
+        const auto record = data.profileRevision(profile.id);
+        std::string error;
+        singbox::ProfileRuleEdit rule{.id="replacement", .operation="replace",
+            .match="domain", .pattern="replacement.test", .target="DIRECT"};
+        Require(singbox::BindTargetSourceEdit(*captured.targetSource, "target:1", rule, error), "rule editor bind");
+        singbox::ProfileRuleEdits edits;
+        edits.rules.push_back(rule);
+        Require(!profiles.saveRuleEdits(profile.id, edits, body, profile.file, record - 1, 0, error),
+            "stale form revision must fail before writing");
+        const auto saved = profiles.saveRuleEdits(profile.id, edits, body, profile.file, record, 0, error);
+        Require(saved, error.c_str());
+        const auto accepted = profiles.ruleEdits(profile.id);
+        Require(accepted.revision == 1 && accepted.rules == edits.rules, "accepted save uses legacy edit with a new revision");
+        const auto preview = profiles.previewRuleSource(profile.id);
+        Require(preview.error.empty() && preview.targetRulesReused == 1 &&
+            preview.json.find("replacement.test") != std::string::npos &&
+            preview.json.find("retained.test") != std::string::npos &&
+            preview.json.find("anchor.test") == std::string::npos &&
+            preview.json.find("\"secret\"") == std::string::npos, "preview composes accepted edits and hides control secrets");
+        const auto settings = data.settingsRevision();
+        edits = accepted;
+        edits.rules.front().match = "domain_regex";
+        edits.rules.front().pattern = "[";
+        Require(!profiles.saveRuleEdits(profile.id, edits, body, profile.file, record, 0, error) && !error.empty(),
+            "invalid kernel regex must fail the full candidate check");
+        Require(data.settingsRevision() == settings && profiles.ruleEdits(profile.id) == accepted,
+            "failed kernel check must not publish or dirty proposed edits");
+        Require(!profiles.saveYaml(profile.id, "rules: ['DOMAIN,changed.test,DIRECT','MATCH,DIRECT']"),
+            "source refresh must reject an incompatible persisted anchor");
+        singbox::ProfileRuleEdits secondary;
+        secondary.rules.push_back({.id = "secondary", .operation = "disable", .anchor = "clash:DOMAIN,retained.test,DIRECT"});
+        const auto savedSecondary = profiles.saveRuleEdits(other.id, secondary, body, other.file,
+            data.profileRevision(other.id), 0, error);
+        Require(savedSecondary, error.c_str());
+        Require(data.setSelectedProfile(profile.id), "select main for the auxiliary refresh fixture");
+        vpn::VpnPolicy policy;
+        policy.rules.push_back({.match = vpn::MatchKind::ExactDomain, .pattern = "secondary.test",
+            .connectionId = routing::ConnectionId(other.id), .id = "secondary-route"});
+        data.setSetting("vpn.global_policy", routing::EncodePolicy(policy));
+        Require(core.sourceParticipates(other.id), "fixture source must be used as a secondary");
+        Require(!profiles.saveYaml(other.id, "rules: ['DOMAIN,anchor.test,DIRECT','MATCH,DIRECT']") &&
+            profiles.lastError().find("冲突") != std::string::npos,
+            "secondary refresh validates saved anchors even when its internal rules do not run");
+        const auto revisionBeforeRefresh = data.profileRevision(other.id);
+        Require(!profiles.saveYaml(other.id, "rules: ['MATCH,DIRECT']\nrules: ['MATCH,DIRECT']") &&
+            data.profileRevision(other.id) == revisionBeforeRefresh,
+            "local source update still rejects duplicate document keys before committing");
+        Require(profiles.yamlOf(profile.id) == body && profiles.yamlOf(other.id) == body &&
+            core.snapshot().state == runtimeBefore.state && core.snapshot().planRevision == runtimeBefore.planRevision,
+            "failed candidates and preview leave files, independent profiles and running-plan state intact");
+    });
+    Require(co_await data.flushSettings(), "flush accepted rule edits");
+    Require(co_await data.flushProfiles(), "flush selected main");
+    co_await data.close();
+    Require(co_await data.open(cfg::databaseFile(), cfg::profilesDir()), "reopen rule editor database");
+    const auto persisted = store::profilesStore().ruleEdits(profile.id);
+    Require(persisted.revision == 1 && persisted.rules.size() == 1 &&
+        persisted.rules.front().anchor == "clash:DOMAIN,anchor.test,DIRECT" &&
+        data.listProfiles().size() == 2, "rule editor reopen preserves the legacy anchor and all source rows");
+    co_await data.close();
+    std::puts("rule-editor: real candidate check, no failed writes, preview reuse, refresh rejection and reopen passed");
 }
 Task<void> CheckPreparation() {
     auto& data = clashflux::data::session();
@@ -288,6 +424,9 @@ Task<void> CheckLifetime() {
     try {
         if (endpoint == "--rules-prewarm") {
             co_await CheckRulePrewarm(); finished = true; co_return;
+        }
+        if (endpoint == "--rules-editor") {
+            co_await CheckRuleEditor(); finished = true; co_return;
         }
         if (endpoint == "--prepare-resources") {
             co_await CheckPreparation(); finished = true; co_return;

@@ -196,36 +196,13 @@ std::vector<std::string> resolvePath(
     return out;
 }
 
-// 延迟着色：未测灰 / <300ms 绿 / <1000ms 琥珀 / 超时红。
-huxerui::Color delayColor(const huxerui::ThemeSpec& theme, int delay, bool timeout) {
-    return DelayLevelColor(theme, delay, timeout || delay <= 0);
-}
-
-// 单行截断（UTF-8 代码点安全）：超限截断加省略号。HuxerUI Text 默认按词
-// 换行且没有省略号能力，节点名撑成两行会让网格行高参差，这里统一单行化。
-std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
-    std::size_t count = 0;
-    std::size_t i = 0;
-    while (i < s.size()) {
-        if (count == maxCodePoints) return s.substr(0, i) + "…";
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        const std::size_t len =
-            c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
-        i += std::min(len, s.size() - i);
-        ++count;
-    }
-    return s;
-}
-
 // Windows' bundled emoji font displays regional-indicator pairs as country
 // letters. Draw only the leading flag from the packaged atlas; keep the
 // original UTF-8 name for proxy identity, search and accessibility.
-huxerui::View NodeTitle(const std::string& name, std::size_t limit,
-                        huxerui::Color foreground) {
+huxerui::View NodeTitle(const std::string& name, huxerui::Color foreground) {
     const auto plain = [&] {
-        return huxerui::View{huxerui::Text(truncateOneLine(name, limit))
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBodySmall), foreground})};
+        return huxerui::Text(name).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall), foreground});
     };
 #ifdef _WIN32
     if (name.size() < 8) return plain();
@@ -268,12 +245,11 @@ huxerui::View NodeTitle(const std::string& name, std::size_t limit,
             {0.0F, 0.0F, size.width, size.height});
     }).With(huxerui::Frame{.width = 20.0F, .height = 15.0F});
     return huxerui::Row {
-        std::move(flag),
-        huxerui::Text(truncateOneLine(name.substr(8), limit > 2 ? limit - 2 : 0))
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBodySmall), foreground}),
-    }.With(huxerui::Spacing(4.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+      flag,
+      huxerui::Text(name.substr(8)).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+          .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall), foreground})
+          .With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Spacing(4.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 #else
     return plain();
 #endif
@@ -302,8 +278,6 @@ constexpr float kProxyNodeWidth = 196.0F;
 // 桌面右下角悬浮测速按钮的滚动尾部净空：56pt 按钮 + 24pt 底部外边距。
 constexpr float kSpeedFabFooterHeight = 80.0F;
 
-// 延迟槽能放下的字符数（"测速中…"/"99999 ms"），超出截断成省略号。
-constexpr std::size_t kNodeMetaChars = 8;
 // sing-box constant.TCPTimeout；单节点和组测速都使用内核同一上限。
 constexpr int kProxyDelayTimeoutMs = 15000;
 
@@ -379,13 +353,9 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
     });
 }
 
-// 节点矩形卡：内部左右对齐——左侧名称单行（溢出省略号），右侧写延迟
-// （组类型节点写「组·分支当前选中」），延迟按区间着色；选中态 primary 底。
-// 宽度由 VirtualGrid 均分，高度由 EstimatedRowExtent 提供估计。
+// 左侧两行显示节点名和协议或组信息，右侧共用延迟和单节点测速位置。
 [[huxerui::composable]] huxerui::View NodeCard(
-    const ProxyNode& node, bool selected,
-    bool selectable, std::function<void()> onActivate, std::size_t nameLimit,
-    std::size_t detailLimit) {
+    const ProxyNode& node, bool selected, bool selectable, std::function<void()> onActivate) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const auto tasks = huxerui::UseApplicationTaskScope();
     const auto control = UseCoreControl();
@@ -405,66 +375,18 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
     const int delay = currentProbe.delay;
     const bool timeout = currentProbe.timeout;
 
-    // 右侧槽位只放"测速结果"：
-    //   测速中… / N ms / 超时（**仅真正测过且失败**）/ 空占位（从未测过）。
-    // 以前把 delay==0 一律画成"超时"，未测速的节点满屏红字，现在留空但保留等宽
-    // 占位，卡片之间仍然对齐。
-    std::string meta;
-    if (!node.isGroup) {
-        if (currentProbe.testing) {
-            meta = "测速中…";
-        } else if (delay > 0) {
-            meta = std::format("{} ms", delay);
-        } else if (timeout) {
-            meta = "超时";
-        }
+    const auto tile = ResolveSelectableTileColors(theme, selected);
+    const auto detailColor = selected ? tile.fg : tile.muted;
+    huxerui::View delayView;
+    if (!node.isGroup && (currentProbe.testing || delay > 0 || timeout)) {
+        const auto text = currentProbe.testing ? huxerui::StringVariant{Localized("测速中…")}
+            : delay > 0 ? huxerui::StringVariant{std::to_string(delay)}
+                        : huxerui::StringVariant{Localized("超时")};
+        const auto color = selected ? tile.fg : currentProbe.testing ? tile.muted
+            : delay > 0 ? DelayLevelColor(theme, delay, false) : theme.colors.error;
+        delayView = huxerui::Text(text).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
     }
-    // 第二行与延迟都在卡片宽度内截断成省略号：huxerui 的 Text 没有省略号能力，
-    // 与名称用同一套字符预算（延迟槽更窄，预算更小）。短字符串走 SSO，不额外
-    // 分配。第二行元数据本身在解析期算好（见 ProxyNode::detail）。
-    const std::string detail =
-        node.detail.size() > detailLimit ? truncateOneLine(node.detail, detailLimit)
-                                         : node.detail;
-    const std::string localizedMeta =
-        meta == "测速中…" ? huxerui::UseString(Localized("测速中…"))
-        : meta == "超时" ? huxerui::UseString(Localized("超时"))
-                         : meta;
-    const std::string metaText = localizedMeta.size() > kNodeMetaChars
-                                     ? truncateOneLine(localizedMeta, kNodeMetaChars)
-                                     : localizedMeta;
-
-    // 卡片表面与文字色来自统一原语：未选中 islands.active，选中
-    // primary_container 淡染底（描边由 SelectableTile 落笔）。
-    const SelectableTileColors tile =
-        ResolveSelectableTileColors(theme, selected);
-    const huxerui::Color detailColor = selected ? tile.fg : tile.muted;
-    const huxerui::Color metaColor =
-        selected ? tile.fg
-                 : (meta == "超时"
-                        ? theme.colors.error
-                        : (meta.empty() || meta == "测速中…"
-                               ? tile.muted
-                               : delayColor(theme, delay, false)));
-    // 延迟槽固定宽度（含"测速中…"），内容**右对齐**贴住卡片右边距：以前 Text
-    // 在槽内左对齐，短文本（"128 ms"）右侧会多出一截空隙，看着像没对齐；未测速
-    // 时留空占位，卡片之间仍然对齐。
-    huxerui::View metaView =
-        metaText.empty()
-            ? huxerui::View{huxerui::Row{}.With(
-                  huxerui::Frame{.width = kProxyDelaySlotWidth})}
-            : huxerui::View{
-                  huxerui::Row{huxerui::Text(metaText).Style(
-                      huxerui::TextStyle{
-                          huxerui::Font::System(font_size::kCaption),
-                          metaColor})}
-                      .With(huxerui::Frame{.width = kProxyDelaySlotWidth},
-                            huxerui::MainAlign(
-                                huxerui::MainAxisAlignment::End))};
-    // 两行：第一行名称，第二行是「元数据（左）＋ 测速（右）」同一基线左右对齐。
-    // 表面 / 内边距 / 圆角 / 交互全部交给 SelectableTile——代理页节点卡就是这套
-    // 形状的标准（订阅卡等其它列表项同样复用它）。
-    // URLTest 等只读组没有手动选择动作；整卡交互与正常节点一致，点击只提示。
-    // Windows 的禁用透明度会为每张卡创建单独的 Direct2D 图层。
     const auto startProbe = [tasks, control, tests, tag = node.name, delay = node.delay,
                              timeout = node.timeout, testTime = node.urlTestTime, toast] {
         if (tests->progress.Get().busy) return;
@@ -477,10 +399,10 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
             co_return;
         });
     };
-    return ProxyNodeTile(NodeTitle(node.displayName, nameLimit, tile.fg),
-        huxerui::Text(detail).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kCaption), detailColor}),
-        std::move(metaView), selected, node.displayName, std::move(onActivate),
+    return ProxyNodeTile(NodeTitle(node.displayName, tile.fg),
+        huxerui::Text(node.detail).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), detailColor}),
+        delayView, selected, node.displayName, std::move(onActivate),
         selectable ? SelectableTileInteraction::Selectable : SelectableTileInteraction::ReadOnly,
         !node.isGroup && !ProxyTestUsesNativeGroup(), currentProbe.testing,
         tests->preparing.Get() || tests->progress.Get().busy, startProbe);
@@ -751,12 +673,6 @@ std::function<void()> NodeSelectAction(
 
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-    // 节点名单行预算：定宽卡下留出右侧延迟与内边距后的可用字符数。
-    const std::size_t nodeNameLimit = compact ? 9 : 16;
-    // 第二行（协议/组类型）的字符预算：卡片宽度减去右侧固定延迟槽后的余量，
-    // 比名称行字号小、能多放几个字；超出截断成省略号。
-    const std::size_t detailLimit = compact ? 10 : 16;
-
     // 不可见时只保留本页 State/Lifecycle，不构建重子树：huxerui 的 Pager 会把
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
@@ -810,8 +726,7 @@ std::function<void()> NodeSelectAction(
         huxerui::View grid = ScrollArea(PageVirtualGrid(
                                  nodeCount,
                                  [groups, visibleNodes = std::move(visibleNodes),
-                                  detailLimit,
-                                  tasks, toast, nodeNameLimit, contentGroupName,
+                                  tasks, toast, contentGroupName,
                                   nodeCount, compact, proxiesModel,
                                   selectionIntent](std::size_t index)
                                      -> huxerui::View {
@@ -845,8 +760,7 @@ std::function<void()> NodeSelectAction(
                                                         toast.Show(Localized(
                                                             "此分组不支持手动切换节点，仅作展示"));
                                                     },
-                                                    *group, node),
-                                                nodeNameLimit, detailLimit)
+                                                    *group, node))
                                          .Key(group->name + "::" + nodeName);
                                  }, kSectionCardSpacing)
                                  .Columns(compact
@@ -854,7 +768,7 @@ std::function<void()> NodeSelectAction(
                                               : huxerui::GridColumns::Adaptive(
                                                     kProxyNodeWidth))
                                  // 行高**只给估算值**，真实高度由虚拟布局测量卡片内容
-                                 // 得到：卡片是「名称 + 元数据行 + 上下 8pt 内边距」的
+                                 // 得到：卡片是「两行内容 + 上下 8pt 内边距」的
                                  // 自适应高度（字体缩放、系统字号变化都会改高度），
                                  // 写死精确行高会在这些情况下裁切/错位。
                                  .EstimatedRowExtent(52.0F)

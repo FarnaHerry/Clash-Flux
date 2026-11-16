@@ -8,6 +8,7 @@ struct Context {
     std::stop_token cancel;
     CompileResult result;
     std::unique_ptr<TargetCapture> targetCapture;
+    const TargetSourceModel* ruleSource = nullptr;
     bool providerSyntaxOnly = false; // HTTP body validation, never a published candidate.
     std::size_t unpreparedAsnConditions = 0;
     nlohmann::json config;

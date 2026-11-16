@@ -590,6 +590,7 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
         compilePersonalClashRules(ctx, root);
         return;
     }
+    if (ctx.targetCapture) ctx.targetCapture->data->legacyClashDefault = clashCompatibilityDefault(root);
     if (const YAML::Node rules = root["rules"]; rules) {
         if (!rules.IsSequence()) {
             ctx.note(FidelityScope::Rule, Fidelity::Unsupported, "rules",
@@ -604,8 +605,8 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
                 ctx.note(FidelityScope::Rule, Fidelity::Unsupported,
                          "rules[" + std::to_string(index) + "]", "规则不是字符串，已跳过");
                 if (ctx.targetCapture) ctx.targetCapture->Record("clash:" + YAML::Dump(rule), TargetRuleState::Omitted,
-                    nlohmann::json::array(), 0, firstNote, ctx.result.fidelity.size());
-            } else if (!convertCapturedRule(ctx, rule.Scalar())) {
+                    nlohmann::json::array(), 0, firstNote, ctx.result.fidelity.size(), true);
+            } else if (!convertSourceClashRule(ctx, index, rule.Scalar())) {
                 recordAfterFinal(ctx, rules, index + 1);
                 break; // First valid MATCH terminates the source rule list.
             }

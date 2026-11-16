@@ -912,12 +912,10 @@ public:
         options.ruleProviderDir = cfg::dataDir().string();
         options.ruleProviderCacheDir = (cfg::coreWorkDir() / "rule-providers").string();
         options.proxyProviderCacheDir = (cfg::coreWorkDir() / "proxy-providers").string();
+        // Serialize cold reads with resource publication/rollback. Keep the
+        // lifecycle -> index lock order also used by runtime composition.
+        std::lock_guard lifecycle(lifecycleMutex_);
         auto captured = targetSources_.Get(options, resources, [&] {
-            // Cache misses can read provider files. Serialize with candidate
-            // publication/rollback so a view cannot retain temporary resources
-            // from an application that subsequently fails. Callers release the
-            // lifecycle lock before entering this API (index -> lifecycle order).
-            std::lock_guard lifecycle(lifecycleMutex_);
             return singbox::compileConfig(options);
         });
         singbox::CompileResult result;
@@ -932,7 +930,7 @@ public:
         ensureOpen();
         auto options = routingOptions(content, false, false, nullptr,
             routing::ConnectionId(id), nullptr, false);
-        auto result = singbox::compileConfig(options);
+        auto result = compileWithTargetRules(options);
         if (result.error.empty() && !result.json.empty()) {
             auto document = nlohmann::json::parse(result.json);
             // Editor previews do not need the application's control credentials.
@@ -945,11 +943,13 @@ public:
         return result;
     }
 
-    bool validateProfileRuleSource(std::int64_t id, const std::string& content, std::string& error) {
+    bool validateProfileRuleSource(std::int64_t id, const std::string& content,
+                                   const singbox::ProfileRuleEdits& edits, std::string& error) {
         std::lock_guard lock(lifecycleMutex_);
         ensureOpen();
         auto options = routingOptions(content, false, false, nullptr,
             routing::ConnectionId(id), nullptr, false);
+        options.profileRuleEdits = edits;
         singbox::CompileResult compiled;
         bool candidateChecked = false;
         if (!prepareHttpRuleProviders(options, compiled, error, nullptr, {}, nullptr,
@@ -1017,15 +1017,13 @@ public:
     }
 
     bool validateSourceUpdate(std::int64_t id, const std::string& content, std::string& error,
-                              bool forceProviderRefresh, std::function<bool()>& apply) {
+                              bool forceProviderRefresh, std::function<bool()>& apply,
+                              bool validateDocument = false) {
         std::unique_lock lock(lifecycleMutex_);
         ensureOpen();
         try {
             const auto edits = routing::DecodeProfileRules(setting(routing::ProfileRulesKey(id), ""));
-            if (!edits.rules.empty()) {
-                const auto plan = singbox::InspectProfileRules(content, edits);
-                if (!plan.error.empty()) { error = plan.error; return false; }
-            }
+            if (!singbox::ValidateProfileUpdate(content, edits, error, validateDocument)) return false;
             if (content.find_first_not_of(" \t\r\n") == std::string::npos) {
                 error = "订阅内容为空"; return false;
             }
@@ -1236,7 +1234,7 @@ public:
     }
 
     bool restartCore(const std::string& profileYaml, bool skipUnchanged = false,
-                     std::stop_token cancel = {}) {
+                     std::stop_token cancel = {}, const singbox::ProfileRuleEdits* ruleEdits = nullptr) {
         std::lock_guard operationLock(lifecycleMutex_);
         if (cancel.stop_requested()) return false;
         auto healthPause = streams_.pauseHealth();
@@ -1247,6 +1245,7 @@ public:
         std::string error;
         try {
             auto options = routingOptions(profileYaml, before.tunEnabled);
+            if (ruleEdits) options.profileRuleEdits = *ruleEdits;
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
             options.proxyListening = before.proxyListening;
 #endif

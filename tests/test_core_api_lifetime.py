@@ -125,3 +125,13 @@ if __name__ == "__main__":
         print(result.stdout.strip())
 
     check_preparation(executable)
+    if len(sys.argv) > 2 and sys.argv[2]:
+        engine = Path(sys.argv[2]).resolve(strict=True)
+        with tempfile.TemporaryDirectory(prefix="clashflux-rule-editor-") as directory:
+            env = {**os.environ, "HOME": directory, "APPDATA": directory, "XDG_DATA_HOME": directory,
+                   "XDG_CONFIG_HOME": directory, "XDG_CACHE_HOME": directory,
+                   "PATH": str(engine.parent) + os.pathsep + os.environ.get("PATH", "")}
+            result = subprocess.run([executable, "--rules-editor", directory], env=env,
+                                    capture_output=True, encoding="utf-8", errors="replace", timeout=20)
+            assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+            print(result.stdout.strip())

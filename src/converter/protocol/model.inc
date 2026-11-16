@@ -48,6 +48,7 @@ struct VmessOptions {
     std::optional<std::string> packetEncoding;
     std::optional<bool> globalPadding;
     std::optional<bool> authenticatedLength;
+    bool legacyShareTlsAutoCipher = false;
 };
 struct VlessOptions {
     std::string uuid;

@@ -41,6 +41,7 @@ export struct Operations {
                        std::string&)> check;
     std::function<bool(const std::filesystem::path&, const std::filesystem::path&,
                        std::string&)> commit;
+    std::function<singbox::CompileResult(const singbox::CompileOptions&, std::stop_token)> compile;
 };
 
 export struct PreparationStats {
@@ -75,7 +76,7 @@ export inline bool Prepare(singbox::CompileOptions& options, const Operations& o
         };
         if (stats) ++stats->compileCount;
         try {
-            auto compiled = singbox::compileConfig(candidate, cancel);
+            auto compiled = operations.compile ? operations.compile(candidate, cancel) : singbox::compileConfig(candidate, cancel);
             if (stats) stats->conversionCacheHits += compiled.ruleProviderConversionCacheHits;
             record();
             return compiled;

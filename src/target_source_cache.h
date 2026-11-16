@@ -61,6 +61,18 @@ public:
         }
         return {std::move(result.targetSource), {}, false};
     }
+    // Runtime composition only borrows source-local branches. The compiler
+    // rechecks source bytes and resolves each branch in the current context.
+    std::shared_ptr<const Model> FindForComposition(const Options& options) const {
+        std::lock_guard lock(mutex_);
+        for (const auto& entry : entries_) {
+            if (entry.input.mainConnectionId != options.mainConnectionId ||
+                entry.input.mainSourceName != options.mainSourceName ||
+                entry.input.profileYaml != options.profileYaml) continue;
+            if (auto model = entry.model.lock()) return model;
+        }
+        return {};
+    }
     std::size_t retainedKeyBytes() const {
         std::lock_guard lock(mutex_); std::size_t bytes = 0;
         for (const auto& entry : entries_) bytes += entry.bytes;

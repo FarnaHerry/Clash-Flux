@@ -1,6 +1,7 @@
 // profiles_page_card.cpp — 订阅卡片与原生连接状态展示。
 #include <huxerui/huxerui.h>
 #include "share_qr.h"
+#include "text_document.h"
 
 #include <chrono>
 #include <functional>

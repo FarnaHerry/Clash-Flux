@@ -220,7 +220,7 @@
         const bool geoInputsChanged = clashflux::runtime_compile::GeoInputsChanged(geoRefreshed, directoryChanged);
         options.ruleSetDir = workDir.string();
         if (geoInputsChanged) {
-            plan->compiled = singbox::compileConfig(options, cancel);
+            plan->compiled = compileWithTargetRules(options, cancel);
             candidateChecked = false;
         }
         trace(geoInputsChanged ? "geo-prefetch-and-recompile" : "geo-prefetch-reuse");
@@ -450,6 +450,12 @@
 
 #include "store/prepared_compilation.inc"
 
+    singbox::CompileResult compileWithTargetRules(const singbox::CompileOptions& options,
+                                                  std::stop_token cancel = {}) {
+        const auto source = targetSources_.FindForComposition(options);
+        return singbox::compileConfig(options, cancel, source.get());
+    }
+
     using FinalizeCompilation = std::function<bool(const singbox::CompileOptions&, singbox::CompileResult&)>;
 
     bool prepareHttpRuleProviders(singbox::CompileOptions& options,
@@ -477,6 +483,9 @@
         rule_provider_cache::PreparationStats stats;
         const auto began = std::chrono::steady_clock::now();
         rule_provider_cache::Operations operations;
+        operations.compile = [this](const auto& candidate, std::stop_token token) {
+            return compileWithTargetRules(candidate, token);
+        };
         operations.maxConcurrentFetches = provider_resources::kMaxConcurrentDownloads;
         operations.retainedDirectory = std::filesystem::path(options.ruleProviderCacheDir) / ".downloads";
         operations.publish = [this, guard](const std::function<bool()>& commit, std::string& reason) {
@@ -504,7 +513,7 @@
             // Only GEO prefetch can change compiler inputs here. HTTP/ASN
             // snapshots are already fully lowered and must still pass check.
             if (geoRefreshed)
-                result = singbox::compileConfig(candidate, cancel);
+                result = compileWithTargetRules(candidate, cancel);
             if (finalize && result.error.empty() && !result.json.empty() && !finalize(candidate, result)) {
                 reason = "订阅编译结果不是合法 JSON 对象";
                 return false;

@@ -397,17 +397,16 @@
     auto showCompiledPreview = [compact, dialog, navigation, desktopNavigation,
                                 tasks, toast](std::int64_t id) {
         tasks.Launch([=]() -> huxerui::Task<void> {
-            std::string text;
+            TextDocumentHandle document;
             try {
-                const auto content = co_await RunOnTaskThread(
-                    [id] { return store::profilesStore().yamlOf(id); });
-                const auto result = co_await RunOnTaskThread([id, content] {
-                    return store::coreStore().profileRulesPreview(id, content);
+                document = co_await RunOnTaskThread([id]() -> TextDocumentHandle {
+                    auto result = store::profilesStore().previewRuleSource(id);
+                    auto text = result.error.empty() ? std::move(result.json) : std::move(result.error);
+                    if (text.empty()) return {};
+                    return std::make_shared<TextDocument>(std::move(text));
                 });
-                text = result.error.empty() ? result.json : result.error;
-            } catch (const std::exception& exception) { text = exception.what(); }
-            if (text.empty()) { toast.Show(Localized("无法生成编译配置")); co_return; }
-            auto document = std::make_shared<TextDocument>(std::move(text));
+            } catch (const std::exception& exception) { toast.Show(exception.what()); co_return; }
+            if (!document) { toast.Show(Localized("无法生成编译配置")); co_return; }
             if (!compact) {
                 dialog.Show([document](huxerui::DialogContext context) {
                     return CompiledRulesPreviewDialog(document,

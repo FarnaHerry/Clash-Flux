@@ -3,10 +3,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -30,12 +33,12 @@ std::size_t ProfileRowsBytes(const singbox::ProfileRules& value) {
     for (const auto* rows : {&value.rules, &value.original}) {
         bytes += rows->capacity()*sizeof(singbox::ProfileRule);
         for (const auto& row : *rows) bytes += row.anchor.capacity() + row.raw.capacity() + row.type.capacity() +
-            row.pattern.capacity() + row.target.capacity() + row.editId.capacity() + row.origin.capacity() + row.position.capacity();
+            row.pattern.capacity() + row.target.capacity() + row.editId.capacity() + row.origin.capacity() + row.position.capacity() + row.targetId.capacity();
     }
     return bytes;
 }
 std::size_t ProfileDataBytes(const ProfileRulesData& data) {
-    auto bytes = sizeof(data) + data.content.capacity() + data.error.capacity() + ProfileRowsBytes(data.effective);
+    auto bytes = sizeof(data) + data.unconvertedContent.capacity() + data.error.capacity() + ProfileRowsBytes(data.effective);
     if (data.target) bytes += data.target->retainedBytes();
     bytes += data.edits.rules.capacity()*sizeof(singbox::ProfileRuleEdit);
     for (const auto& edit : data.edits.rules) bytes += edit.id.capacity() + edit.operation.capacity() + edit.anchor.capacity() +
@@ -94,6 +97,7 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id, const ProfileRulesInput&
     ProfileRulesSnapshot result{.id = id};
     auto data = std::make_shared<ProfileRulesData>();
     using Clock = std::chrono::steady_clock;
+    std::string content;
     const auto started = Clock::now();
     auto acquired = started;
     {
@@ -103,16 +107,16 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id, const ProfileRulesInput&
         acquired = Clock::now();
         std::ifstream source(cfg::profilesDir() / input.file, std::ios::binary);
         if (!source) throw std::runtime_error("无法读取订阅版本文件");
-        data->content.assign(std::istreambuf_iterator<char>(source), {});
-        if (source.bad() || data->content.empty()) throw std::runtime_error("订阅版本文件为空或读取失败");
+        content.assign(std::istreambuf_iterator<char>(source), {});
+        if (source.bad() || content.empty()) throw std::runtime_error("订阅版本文件为空或读取失败");
         data->edits = routing::DecodeProfileRules(input.edits);
         data->library = routing::DecodeRuleSetLibrary(input.library);
     }
-    data->supported = singbox::DetectProfileFormat(data->content) != singbox::ProfileFormat::OpenVpn;
+    data->supported = singbox::DetectProfileFormat(content) != singbox::ProfileFormat::OpenVpn;
     const auto loaded = Clock::now();
     bool reused = false;
     if (data->supported) {
-        auto compiled = store::coreStore().profileTargetSource(id, data->content, input.name, input.resources);
+        auto compiled = store::coreStore().profileTargetSource(id, content, input.name, input.resources);
         reused = compiled.targetSourceReused;
         data->target = std::move(compiled.targetSource);
         data->error = std::move(compiled.error);
@@ -121,6 +125,7 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id, const ProfileRulesInput&
             data->error = data->effective.error;
         }
     }
+    if (!data->target) data->unconvertedContent = std::move(content);
     data->retained = ProfileDataBytes(*data);
     result.data = data;
     const auto projected = Clock::now();
@@ -134,22 +139,13 @@ ProfileRulesSnapshot LoadPersonalRules(std::int64_t id, const ProfileRulesInput&
 }
 
 std::vector<std::string> LoadPersonalRuleTargets(
-    const ProfileRulesSnapshot& source, const ProfileRulesInput& input) {
+    const ProfileRulesSnapshot& source) {
     std::vector<std::string> targets{"DIRECT", "REJECT", "REJECT-DROP"};
     if (source.data->target) {
         for (const auto& object : source.data->target->objects())
             if (std::ranges::find(targets, object.objectId) == targets.end()) targets.push_back(object.objectId);
         return targets;
     }
-    singbox::CompileOptions options;
-    options.profileYaml = source.data->content;
-    options.mainConnectionId = routing::ConnectionId(source.id);
-    options.mainSourceName = input.name;
-    auto objects = singbox::DetectProfileFormat(source.data->content) == singbox::ProfileFormat::SingBoxJson
-        ? singbox::compileConfig(options) : singbox::inspectProfileSourceObjects(options);
-    for (const auto& object : objects.sourceObjects)
-        if (std::ranges::find(targets, object.objectId) == targets.end())
-            targets.push_back(object.objectId);
     return targets;
 }
 
@@ -196,11 +192,12 @@ void RequestPersonalRules(huxerui::TaskScope tasks,
             std::string error;
             std::shared_ptr<const ProfileRulesSnapshot> upgraded;
             try {
-                auto prepared = co_await RunOnTaskThread([source, input] {
+                auto prepared = co_await RunOnTaskThread([source] {
                     auto next = std::make_shared<ProfileRulesSnapshot>(*source);
-                    next->editor = std::make_shared<const singbox::ProfileRules>(singbox::InspectProfileRules(source->data->content, source->data->edits, false));
+                    next->editor = std::make_shared<const singbox::ProfileRules>(
+                        singbox::InspectTargetSource(source->data->target.get(), source->data->effective, source->data->edits));
                     next->editorBytes = ProfileRowsBytes(*next->editor);
-                    return std::pair{std::move(next), LoadPersonalRuleTargets(*source, input)};
+                    return std::pair{std::move(next), LoadPersonalRuleTargets(*source)};
                 });
                 upgraded = std::move(prepared.first); targets = std::move(prepared.second);
             }
@@ -215,6 +212,65 @@ void RequestPersonalRules(huxerui::TaskScope tasks,
         model->PublishTargets(id, *ticket, {}, readError);
     }
 }
+
+namespace {
+void PrewarmProfileRules(huxerui::TaskScope tasks, const std::shared_ptr<ProfilesModel>& profiles,
+                         std::int64_t id, std::uint64_t generation, std::string file) {
+    auto& warm = profiles->rulesPrewarm;
+    warm.running = true;
+    try {
+        tasks.Launch([tasks, profiles, id, generation, file = std::move(file)]() -> huxerui::Task<void> {
+            std::optional<std::uintmax_t> sourceBytes;
+            try {
+                sourceBytes = co_await RunOnTaskThread([file] -> std::optional<std::uintmax_t> {
+                    std::error_code error;
+                    const auto bytes = std::filesystem::file_size(cfg::profilesDir() / file, error);
+                    if (error) return std::nullopt; // The normal loader owns read errors.
+                    return bytes;
+                });
+            } catch (...) {} // The speculative size probe can fail independently of the loader.
+
+            profiles->SyncRuleInputs();
+            const auto model = profiles->rules;
+            const auto entry = model->entries.find(id);
+            auto& queue = profiles->rulesPrewarm;
+            // A newer input stays queued, and a page can start its own read while the probe is in flight.
+            // Mixed rules in the first-open probe occupy over 32 times the
+            // YAML bytes. This only gates speculative work; Trim measures the result.
+            constexpr auto retainedBytesPerSourceByte = 32;
+            if (entry != model->entries.end() && entry->second.generation == generation &&
+                !entry->second.loading && !model->Ready(id)) {
+                const auto preparing = profiles->Preparation(id);
+                if (profiles->Refreshing(id) || (preparing && preparing->phase == ProfilePreparationPhase::Preparing)) {
+                    queue.Queue(id);
+                } else if (sourceBytes && *sourceBytes > model->budgetBytes / retainedBytesPerSourceByte) {
+                    stream::logApplication("debug", "rules-prewarm defer source_id=" + std::to_string(id) +
+                        " source_bytes=" + std::to_string(*sourceBytes));
+                } else {
+                    stream::logApplication("debug", "rules-prewarm begin source_id=" + std::to_string(id) +
+                        " queued=" + std::to_string(queue.pending.size()));
+                    RequestPersonalRules(tasks, profiles, id, false, "Rule snapshot preparation failed", [tasks, profiles, id] {
+                        profiles->rulesPrewarm.running = false;
+                        stream::logApplication("debug", "rules-prewarm finish source_id=" + std::to_string(id) +
+                            " ready=" + std::to_string(profiles->rules->Ready(id)) +
+                            " reads_started=" + std::to_string(profiles->rules->readsStarted));
+                        const auto current = profiles->rules->entries.find(id);
+                        if (current != profiles->rules->entries.end() && !profiles->rules->Ready(id) && !current->second.loading)
+                            profiles->rulesPrewarm.Queue(id);
+                        StartProfileRulesPrewarm(tasks, profiles);
+                    });
+                    co_return;
+                }
+            }
+            queue.running = false;
+            StartProfileRulesPrewarm(tasks, profiles);
+        });
+    } catch (...) {
+        warm.running = false;
+        throw;
+    }
+}
+} // namespace
 
 // One application-owned prewarm read at a time. Busy sources stay queued;
 // the existing profile pump or preparation completion retries them, no timer.
@@ -239,19 +295,7 @@ void StartProfileRulesPrewarm(huxerui::TaskScope tasks, std::shared_ptr<Profiles
         const auto entry = profiles->rules->entries.find(id);
         if (entry == profiles->rules->entries.end() || profiles->rules->Ready(id)) continue;
         if (entry->second.loading) { warm.Queue(id); continue; }
-        warm.running = true;
-        stream::logApplication("debug", "rules-prewarm begin source_id=" + std::to_string(id) +
-            " queued=" + std::to_string(warm.pending.size()));
-        RequestPersonalRules(tasks, profiles, id, false, "Rule snapshot preparation failed", [tasks, profiles, id] {
-            profiles->rulesPrewarm.running = false;
-            stream::logApplication("debug", "rules-prewarm finish source_id=" + std::to_string(id) +
-                " ready=" + std::to_string(profiles->rules->Ready(id)) +
-                " reads_started=" + std::to_string(profiles->rules->readsStarted));
-            const auto current = profiles->rules->entries.find(id);
-            if (current != profiles->rules->entries.end() && !profiles->rules->Ready(id) && !current->second.loading)
-                profiles->rulesPrewarm.Queue(id);
-            StartProfileRulesPrewarm(tasks, profiles);
-        });
+        PrewarmProfileRules(tasks, profiles, id, entry->second.generation, entry->second.input.file);
         return;
     }
 }

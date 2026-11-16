@@ -43,27 +43,58 @@ ProfileRule clashProfileRule(std::string raw) {
     return row;
 }
 
+std::string clashCompatibilityDefault(const YAML::Node& root) {
+    if (const auto groups = root["proxy-groups"]; groups && groups.IsSequence())
+        for (const auto& group : groups)
+            if (ytext(group, "type") == "select") return ytext(group, "name");
+    return "DIRECT";
+}
+
+ProfileRule clashImplicitDefault(std::string target) {
+    return {.anchor = "implicit:final", .type = "MATCH", .target = std::move(target),
+        .editable = true, .terminal = true, .implicit = true};
+}
+
+ProfileRule clashNonScalarRule(std::string raw) {
+    return {.anchor = "clash:" + raw, .raw = std::move(raw), .type = "YAML"};
+}
+
 std::vector<ProfileRule> clashProfileRules(const YAML::Node& root) {
     std::vector<ProfileRule> rows;
     if (const auto rules = root["rules"]; rules && rules.IsSequence()) {
         rows.reserve(rules.size() + 1);
         for (const auto& rule : rules) {
             if (rule.IsScalar()) rows.push_back(clashProfileRule(rule.Scalar()));
-            else rows.push_back({.anchor = "clash:" + YAML::Dump(rule), .raw = YAML::Dump(rule), .type = "YAML"});
+            else rows.push_back(clashNonScalarRule(YAML::Dump(rule)));
         }
     }
-    // This row represents the existing implicit default, not a synthetic MATCH.
-    if (!std::ranges::any_of(rows, [](const auto& row) { return row.terminal; })) {
-        std::string target = "DIRECT";
-        if (const auto groups = root["proxy-groups"]; groups && groups.IsSequence()) {
-            for (const auto& group : groups) {
-                if (ytext(group, "type") == "select") { target = ytext(group, "name"); break; }
-            }
-        }
-        rows.push_back({.anchor = "implicit:final", .type = "MATCH", .target = target,
-            .editable = true, .terminal = true, .implicit = true});
-    }
+    if (!std::ranges::any_of(rows, &ProfileRule::terminal))
+        rows.push_back(clashImplicitDefault(clashCompatibilityDefault(root)));
     return rows;
+}
+
+ProfileRule nativeProfileRule(const nlohmann::json& rule) {
+    ProfileRule row{.type = "JSON"};
+    if (!rule.is_object()) return row;
+    row.target = rule.value("outbound", "");
+    if (rule.value("action", "") == "reject")
+        row.target = rule.value("method", "") == "drop" ? "REJECT-DROP" : "REJECT";
+    std::size_t conditions = 0;
+    bool simple = !row.target.empty();
+    for (auto it = rule.begin(); it != rule.end(); ++it) {
+        const auto& key = it.key();
+        const auto& value = it.value();
+        if (key == "outbound" || key == "action" || key == "method") continue;
+        ++conditions;
+        if (key != "rule_set" && validPersonalMatch(key) && value.is_array() && value.size() == 1 && value[0].is_string()) {
+            row.type = key; row.pattern = value[0].get<std::string>();
+        } else simple = false;
+    }
+    const auto action = rule.value("action", "route");
+    if (simple && conditions == 0 && (action == "route" || action == "reject")) row.position = "catch_all";
+    row.editable = simple && conditions == 1 && (action == "route" || action == "reject") &&
+        (!rule.contains("method") || (action == "reject" && rule["method"] == "drop"));
+    return row;
 }
 
 std::vector<ProfileRule> nativeProfileRules(const nlohmann::json& config) {
@@ -71,28 +102,11 @@ std::vector<ProfileRule> nativeProfileRules(const nlohmann::json& config) {
     if (config.contains("route") && config["route"].contains("rules")) {
         const auto& rules = config["route"]["rules"];
         if (!rules.is_array()) throw std::runtime_error("route.rules 必须为数组");
+        rows.reserve(rules.size() + 1);
         for (const auto& rule : rules) {
-            ProfileRule row{.anchor = "json:" + rule.dump(), .raw = rule.dump(), .type = "JSON"};
-            if (rule.is_object()) {
-                row.target = rule.value("outbound", "");
-                if (rule.value("action", "") == "reject")
-                    row.target = rule.value("method", "") == "drop" ? "REJECT-DROP" : "REJECT";
-                std::size_t conditions = 0;
-                bool simple = !row.target.empty();
-                for (auto it = rule.begin(); it != rule.end(); ++it) {
-                    const auto& key = it.key();
-                    const auto& value = it.value();
-                    if (key == "outbound" || key == "action" || key == "method") continue;
-                    ++conditions;
-                    if (key != "rule_set" && validPersonalMatch(key) && value.is_array() && value.size() == 1 && value[0].is_string()) {
-                        row.type = key; row.pattern = value[0].get<std::string>();
-                    } else simple = false;
-                }
-                const auto action = rule.value("action", "route");
-                if (simple && conditions == 0 && (action == "route" || action == "reject")) row.position = "catch_all";
-                row.editable = simple && conditions == 1 && (action == "route" || action == "reject") &&
-                    (!rule.contains("method") || (action == "reject" && rule["method"] == "drop"));
-            }
+            auto row = nativeProfileRule(rule);
+            row.raw = rule.dump();
+            row.anchor = "json:" + row.raw;
             rows.push_back(std::move(row));
         }
     }
@@ -210,17 +224,23 @@ bool emitPersonalRule(Context& ctx, const ProfileRule& row) {
     return true;
 }
 
+std::vector<ProfileRule> targetSourceOriginals(const auto& data);
+
 bool compilePersonalClashRules(Context& ctx, const YAML::Node& root) {
-    const auto originals = clashProfileRules(root);
-    auto plan = personalRulePlan(originals, ctx.opt.profileRuleEdits);
-    if (!plan.error.empty()) { ctx.result.error = std::move(plan.error); return false; }
+    auto originals = ctx.ruleSource ? targetSourceOriginals(TargetProjection::Read(*ctx.ruleSource))
+                                    : clashProfileRules(root);
     // Resolve fallback from the untouched source even when a new rule precedes it.
     for (const auto& original : originals) if (original.terminal) { ctx.finalTarget = original.target; break; }
+    auto plan = personalRulePlan(std::move(originals), ctx.opt.profileRuleEdits);
+    if (!plan.error.empty()) { ctx.result.error = std::move(plan.error); return false; }
+    std::size_t nextSource = 0;
     for (const auto& row : plan.rules) {
+        const auto sourceIndex = nextSource;
+        if (!row.anchor.empty()) ++nextSource;
         if (!row.enabled) continue;
         if (row.origin == "source") {
             if (row.implicit) break;
-            if (!convertRule(ctx, row.raw)) break;
+            if (!convertSourceClashRule(ctx, sourceIndex, row.raw)) break;
         } else {
             if (!emitPersonalRule(ctx, row)) return false;
             if (row.terminal) break;
@@ -230,11 +250,16 @@ bool compilePersonalClashRules(Context& ctx, const YAML::Node& root) {
 }
 
 bool compilePersonalNativeRules(Context& ctx) {
-    auto plan = personalRulePlan(nativeProfileRules(ctx.config), ctx.opt.profileRuleEdits);
+    const auto* captured = ctx.ruleSource ? &TargetProjection::Read(*ctx.ruleSource) : nullptr;
+    auto originals = captured ? targetSourceOriginals(*captured) : nativeProfileRules(ctx.config);
+    auto plan = personalRulePlan(std::move(originals), ctx.opt.profileRuleEdits);
     if (!plan.error.empty()) { ctx.result.error = std::move(plan.error); return false; }
     ctx.finalTarget = ctx.config["route"].value("final", "");
     ctx.config["route"]["rules"] = nlohmann::json::array();
+    std::size_t nextSource = 0;
     for (const auto& row : plan.rules) {
+        const auto sourceIndex = nextSource;
+        if (!row.anchor.empty() && !row.terminal) ++nextSource;
         if (!row.enabled) continue;
         if (row.terminal) {
             if (row.origin != "source") {
@@ -244,7 +269,12 @@ bool compilePersonalNativeRules(Context& ctx) {
                     ctx.config["route"]["rules"].push_back(rejectRule(target));
                 } else ctx.config["route"]["final"] = target;
             }
-        } else if (row.origin == "source") ctx.config["route"]["rules"].push_back(nlohmann::json::parse(row.raw));
+        } else if (row.origin == "source") {
+            if (captured) {
+                ctx.config["route"]["rules"].push_back(captured->payload[sourceIndex]);
+                ++ctx.result.targetRulesReused;
+            } else ctx.config["route"]["rules"].push_back(nlohmann::json::parse(row.raw));
+        }
         else if (!emitPersonalRule(ctx, row)) return false;
     }
     return true;

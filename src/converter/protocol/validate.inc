@@ -245,6 +245,13 @@ std::optional<ValidatedNode> ValidateNode(NodeSpec node, const TargetCapabilitie
     if (const auto* ss = std::get_if<ShadowsocksOptions>(&node.options); ss && !ValidateShadowsocks(*ss, diagnostics))
         return std::nullopt;
     if (!ValidateRemainingProtocol(node, diagnostics)) return std::nullopt;
+    if (auto* vmess = std::get_if<VmessOptions>(&node.options); vmess && vmess->legacyShareTlsAutoCipher) {
+        // sing-box 1.14.4 maps auto to zero when TLS is active. Legacy V2Ray shares still encrypt the VMess payload.
+        vmess->security = "aes-128-gcm";
+        diagnostics.Note(Fidelity::Approx, "scy",
+            "旧版 VMess TLS 分享的自动加密映射为 aes-128-gcm，以保留 VMess 载荷加密",
+            "可在分享链接中为节点明确指定服务端支持的 scy");
+    }
     const bool anytls = std::holds_alternative<AnyTlsOptions>(node.options);
     if (anytls) NoteAnyTlsUdp(node, diagnostics);
     if (node.dial.detour && node.dial.detour->empty()) {

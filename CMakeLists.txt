@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.111 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.112 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -826,6 +826,12 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
 
         # 同仓转换回归：不链接 HUI，复用现有模块及 std/JSON/yaml-cpp/Zstd。
         add_executable(test_singbox tests/test_singbox.cpp src/singbox.cpp src/profile_link.cpp)
+        target_compile_definitions(test_singbox PRIVATE CLASHFLUX_TEST_LEGACY_RULE_PROJECTION)
+        option(CLASHFLUX_BUILD_TARGET_RESTART_PROBE "Build the Linux target model restart benchmark" OFF)
+        if(CLASHFLUX_BUILD_TARGET_RESTART_PROBE AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            target_compile_definitions(test_singbox PRIVATE CLASHFLUX_TEST_TARGET_RESTART)
+            target_link_libraries(test_singbox PRIVATE OpenSSL::Crypto)
+        endif()
         if(MSVC)
             target_compile_options(test_singbox PRIVATE /utf-8)
         endif()
@@ -1243,7 +1249,7 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
                 src/api.cppm src/core.cppm src/stream.cppm src/singbox.cppm src/vpn.cppm src/service.cppm
                 src/pptp.cppm src/openvpn.cppm src/vpn_compensation.cppm src/sysproxy.cppm src/routing.cppm
                 src/rule_provider_cache.cppm src/proxy_provider_cache.cppm src/provider_resources.cppm
-                src/store/core_store.cppm)
+                src/store/core_store.cppm src/store/profiles.cppm)
             set_target_properties(test_core_api_lifetime PROPERTIES CXX_MODULE_STD ON)
             target_compile_features(test_core_api_lifetime PRIVATE cxx_std_23)
             target_include_directories(test_core_api_lifetime PRIVATE src)
@@ -1261,7 +1267,8 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             clashflux_deploy_huxerui_dll(test_core_api_lifetime)
             if (Python3_Interpreter_FOUND)
                 add_test(NAME core_api_lifetime COMMAND "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_core_api_lifetime.py" "$<TARGET_FILE:test_core_api_lifetime>")
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_core_api_lifetime.py" "$<TARGET_FILE:test_core_api_lifetime>"
+                    "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
                 set_tests_properties(core_api_lifetime PROPERTIES TIMEOUT 30)
             endif ()
             add_executable(test_persistence
