@@ -1,7 +1,7 @@
 // Main source capture runs before namespacing and runtime policy injection.
 // No source is re-parsed, and failed candidates never publish the pending model.
-// Reuse simple branches without resource side effects. Top-level no-resolve
-// also carries its note and position into the new candidate.
+// Reuse simple branches without resource side effects. A plain CIDR with
+// no-resolve also carries its note and position into the new candidate.
 bool emitCapturedClashRule(Context& ctx, std::size_t sourceIndex, std::string_view raw) {
     if (!ctx.ruleSource) return false;
     const auto& data = TargetProjection::Read(*ctx.ruleSource);
@@ -37,9 +37,12 @@ bool convertSourceClashRule(Context& ctx, std::size_t sourceIndex, std::string_v
     ctx.targetCapture->Record("clash:" + trimCopy(raw),
         more ? TargetRuleState::Omitted : TargetRuleState::Default,
         ctx.config["route"]["rules"], begin, firstNote, ctx.result.fidelity.size());
-    if (!ctx.noResolveSourceRules.empty() && ctx.noResolveSourceRules.back() == begin &&
-        ctx.config["route"]["rules"].size() > begin)
-        ctx.targetCapture->data->noResolveRuleIds.push_back(ctx.targetCapture->data->rules.back().id);
+    if (!ctx.noResolveSourceRules.empty() && ctx.noResolveSourceRules.back() == begin) {
+        // Resource-dependent branches must be rebuilt with current snapshots.
+        const auto kind = lowerCopy(trimCopy(raw.substr(0, raw.find(','))));
+        if (kind == "ip-cidr" || kind == "ip-cidr6")
+            ctx.targetCapture->data->noResolveRuleIds.push_back(ctx.targetCapture->data->rules.back().id);
+    }
     return more;
 }
 

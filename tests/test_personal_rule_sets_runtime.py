@@ -4,7 +4,7 @@ First generate fixtures with test_singbox --personal-rule-fixtures <directory>.
 Run: python test_personal_rule_sets_runtime.py <directory> <sing-box> [openssl] [test_runtime_health]
 """
 from pathlib import Path
-import json, subprocess, socket, threading, http.server, time, copy, sys, ssl, tempfile
+import json, subprocess, socket, threading, http.server, time, copy, sys, ssl, tempfile, ipaddress
 if len(sys.argv)>1 and sys.argv[1]=='--ctest':
  if len(sys.argv)!=6:raise SystemExit('compiler, fixed core, OpenSSL CLI and import test executable are required')
  compiler,engine,openssl,importer=map(lambda p:str(Path(p).resolve()),sys.argv[2:])
@@ -38,10 +38,15 @@ def recv(s,n):
   if not chunk:break
   b+=chunk
  return b
-def connect(proxy,host,target):
+def connect(proxy,host,target,literal=False):
  s=socket.create_connection(('127.0.0.1',proxy),timeout=5);s.settimeout(6)
  s.sendall(b'\x05\x01\x00'); assert recv(s,2)==b'\x05\x00'
- h=host.encode(); s.sendall(b'\x05\x01\x00\x03'+bytes([len(h)])+h+target.to_bytes(2,'big'))
+ h=host.encode()
+ if literal:
+  address=ipaddress.ip_address(host)
+  destination=bytes([1 if address.version==4 else 4])+address.packed
+ else:destination=b'\x03'+bytes([len(h)])+h
+ s.sendall(b'\x05\x01\x00'+destination+target.to_bytes(2,'big'))
  response=recv(s,4)
  if len(response)==4 and response[1]==0:
   if response[3]==1:recv(s,6)
@@ -52,7 +57,7 @@ def connect(proxy,host,target):
   # clients do. Pipelining them made the fixture depend on packet boundaries.
   s.sendall(b'GET / HTTP/1.0\r\nHost: '+h+b'\r\n\r\n')
  return s,response
-def run_case(label,config,offline=False,blocked='ads.test',expected_tag=None,empty=False,resolved='127.0.0.2'):
+def run_case(label,config,offline=False,blocked='ads.test',expected_tag=None,empty=False,resolved='127.0.0.2',literal=False,unresolved_direct=None):
  work=root/label;work.mkdir(exist_ok=True)
  listen=port();config=copy.deepcopy(config)
  config['inbounds']=[{'type':'mixed','tag':'test','listen':'127.0.0.1','listen_port':listen}]
@@ -60,6 +65,7 @@ def run_case(label,config,offline=False,blocked='ads.test',expected_tag=None,emp
  config['experimental']['cache_file']={'enabled':True,'path':str(root/'shared-cache.db' if 'binary' in label else work/'cache.db')}
  config['log']={'level':'debug','timestamp':False}
  config['dns']['servers']=[{'type':'hosts','tag':config['dns']['final'],'predefined':{blocked:[resolved]}}]
+ if unresolved_direct:config['dns']['servers'][0]['predefined'][unresolved_direct]=['127.0.0.1']
  file=work/'config.json';file.write_text(json.dumps(config))
  check=subprocess.run([str(engine),'check','-c',str(file),'-D',str(work)],capture_output=True,text=True,timeout=15)
  assert check.returncode==0,(label,check.stderr)
@@ -73,7 +79,7 @@ def run_case(label,config,offline=False,blocked='ads.test',expected_tag=None,emp
     except OSError:time.sleep(.1)
    else:raise AssertionError((label,'not ready'))
    if not empty:
-    s,r=connect(listen,blocked,80)
+    s,r=connect(listen,resolved if literal else blocked,80,literal=literal)
     if len(r)==4 and r[1]==0:
      try:assert s.recv(4096)==b'',(label,'blocked domain returned payload')
      except ConnectionResetError:pass
@@ -89,7 +95,7 @@ def run_case(label,config,offline=False,blocked='ads.test',expected_tag=None,emp
      c,_=sink.accept();c.settimeout(6);received.append(c.recv(4096));c.sendall(b'HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK');c.close()
     finally:sink.close()
    worker=threading.Thread(target=serve,daemon=True);worker.start()
-   s,r=connect(listen,'127.0.0.1',sink.getsockname()[1]);assert len(r)==4 and r[1]==0,(label,'DIRECT should connect',r)
+   s,r=connect(listen,unresolved_direct or '127.0.0.1',sink.getsockname()[1]);assert len(r)==4 and r[1]==0,(label,'DIRECT should connect',r)
    response=s.recv(4096);s.close();worker.join(7);assert b'200 OK' in response and received,(label,'direct echo',response)
   finally:
    p.terminate()
@@ -104,14 +110,17 @@ for name in ['ads.test','sub.ads.test','full.test','some-tracking.test','regex42
  config=json.loads((root/'geo-site.json').read_text())
  results.append(run_case('geo-site-'+name,config,blocked=name,expected_tag=config['route']['rule_set'][0]['tag']))
 config=json.loads((root/'geo-ip.json').read_text())
-results.append(run_case('geo-ip',config,blocked='ip.test',expected_tag=config['route']['rule_set'][1]['tag']))
+# These source rules carry no-resolve. Supply the IP as a client would when
+# it already has an address, without accidentally exercising an earlier query.
+results.append(run_case('geo-ip',config,literal=True,expected_tag=config['route']['rule_set'][1]['tag']))
 for fixture in ('geo-mmdb', 'geo-asn-mmdb'):
  config=json.loads((root/(fixture+'.json')).read_text())
  # ASN rules use CIDR directly, Geo country rules reference an inline rule set.
- results.append(run_case(fixture,config,blocked='ip.test',expected_tag=config['route']['rule_set'][0]['tag'] if config['route'].get('rule_set') else None))
- results.append(run_case(fixture+'-ipv6',config,blocked='ip.test',resolved='2001:db8::1',expected_tag=config['route']['rule_set'][0]['tag'] if config['route'].get('rule_set') else None))
+ results.append(run_case(fixture,config,literal=True,expected_tag=config['route']['rule_set'][0]['tag'] if config['route'].get('rule_set') else None))
+ results.append(run_case(fixture+'-ipv6',config,literal=True,resolved='2001:db8::1',expected_tag=config['route']['rule_set'][0]['tag'] if config['route'].get('rule_set') else None))
 config=json.loads((root/'geo-ip-inverse.json').read_text())
-results.append(run_case('geo-ip-inverse',config,blocked='ip.test',expected_tag=config['route']['rule_set'][1]['tag']))
+results.append(run_case('geo-ip-inverse',config,literal=True,unresolved_direct='unresolved.test',
+                        expected_tag=config['route']['rule_set'][1]['tag']))
 config=json.loads((root/'geo-filter.json').read_text())
 results.append(run_case('geo-filter',config,blocked='both.test',expected_tag=config['route']['rule_set'][0]['tag']))
 subprocess.run([str(engine),'check','-c',str(root/'geo-empty.json'),'-D',str(root)],check=True,capture_output=True,timeout=15)

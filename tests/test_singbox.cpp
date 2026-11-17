@@ -632,6 +632,32 @@ void testLogicalRuleResources() {
     const auto noResolve = compile("  - AND,((GEOIP,private),(NETWORK,TCP)),DIRECT,no-resolve\n");
     check(logicalRules(noResolve).size() == 1 && std::ranges::any_of(noResolve.fidelity, [](const auto& note) {
           return note.level == singbox::Fidelity::Approx; }), "logical no-resolve modifier retains existing approximate contract");
+    for (const auto* source : {
+            "OR,((DOMAIN,example.test),(IP-CIDR,192.0.2.0/24,no-resolve)),DIRECT",
+            "NOT,((IP-CIDR,192.0.2.0/24,no-resolve)),DIRECT",
+            "AND,((IP-CIDR,192.0.2.0/24),(IP-CIDR,198.51.100.0/24,no-resolve)),DIRECT",
+            "AND,((IP-CIDR,192.0.2.0/24,no-resolve),(IP-ASN,64512)),DIRECT",
+            "AND,((GEOSITE,CN),(IP-CIDR,192.0.2.0/24,no-resolve)),DIRECT"}) {
+        const auto mixedResolution = compile(std::format("  - {}\n", source));
+        check(mixedResolution.error.empty() && logicalRules(mixedResolution).empty() &&
+            mixedResolution.ruleSetResources.empty() && mixedResolution.httpRuleProviders.empty() &&
+            std::ranges::any_of(mixedResolution.fidelity, [](const auto& note) {
+                return note.level == singbox::Fidelity::Unsupported;
+            }), "logical shapes with unproven per-condition resolution stay unsupported");
+    }
+    singbox::CompileOptions noResolveReplay;
+    noResolveReplay.mainConnectionId = "no-resolve-sets";
+    noResolveReplay.profileYaml = "rule-providers:\n  local: {type: inline, behavior: ipcidr, payload: [192.0.2.0/24]}\n"
+        "rules: ['RULE-SET,local,DIRECT,no-resolve', 'AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP)),DIRECT', 'MATCH,DIRECT']\n";
+    noResolveReplay.captureTargetSource = true;
+    const auto captured = singbox::compileConfig(noResolveReplay);
+    noResolveReplay.captureTargetSource = false;
+    const auto replay = singbox::compileConfig(noResolveReplay, {}, captured.targetSource.get());
+    check(captured.targetSource && captured.error.empty() && replay.json == captured.json &&
+        replay.warnings == captured.warnings && replay.targetRulesReused == 0 &&
+        std::ranges::none_of(routeRules(replay), [](const auto& rule) {
+            return rule.value("action", "") == "resolve";
+        }), "new no-resolve branches use current context during snapshot replay");
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
     singbox::CompileOptions sources;
     sources.mainConnectionId = "logical-main";
@@ -847,13 +873,14 @@ void testFileRuleProviders() {
         check(file.good(), "file provider fixture written");
     };
     const auto compile = [&](const std::string& path, const std::string& behavior = "domain",
-                             const std::string& format = "yaml", const std::string& extra = "") {
+                             const std::string& format = "yaml", const std::string& extra = "",
+                             std::string_view rule = "AND,((RULE-SET,cn),(NETWORK,TCP)),DIRECT") {
         singbox::CompileOptions options;
         options.ruleProviderDir = directory.path.string();
         options.profileYaml = std::format(
             "rule-providers:\n  cn:\n    type: file\n    path: '{}'\n    behavior: {}\n    format: {}\n{}"
-            "rules:\n  - AND,((RULE-SET,cn),(NETWORK,TCP)),DIRECT\n  - MATCH,DIRECT\n",
-            path, behavior, format, extra);
+            "rules:\n  - {}\n  - MATCH,DIRECT\n",
+            path, behavior, format, extra, rule);
         return singbox::compileConfig(options);
     };
     const auto sets = [](const auto& result) {
@@ -891,7 +918,12 @@ void testFileRuleProviders() {
         "IP-CIDR6,2001:db8::/32,no-resolve\n"
         "AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP))\n";
     write("rules/modifiers.txt", modifiers);
-    const auto modified = compile("rules/modifiers.txt", "classical", "text");
+    const auto modified = compile("rules/modifiers.txt", "classical", "text", "", "RULE-SET,cn,DIRECT");
+    const auto resolves = [&routeRules](const auto& result) {
+        return std::ranges::any_of(routeRules(result), [](const auto& rule) {
+            return rule.value("action", "") == "resolve";
+        });
+    };
     check(modified.error.empty() && sets(modified).size() == 1 &&
           sets(modified)[0]["rules"].size() == 3 &&
           sets(modified)[0]["rules"][0]["ip_cidr"] == json{"192.0.2.28/32"} &&
@@ -900,14 +932,14 @@ void testFileRuleProviders() {
           std::ranges::count_if(modified.fidelity, [](const auto& note) {
               return note.scope == singbox::FidelityScope::Rule && note.level == singbox::Fidelity::Approx &&
                      note.subject.find("no-resolve") != std::string::npos;
-          }) == 3,
-          "classical provider preserves IPv4/IPv6 and nested no-resolve matches with approximation ledger");
+          }) == 3 && !resolves(modified),
+          "classical file with only optional target checks omits ordinary resolve");
     singbox::CompileOptions inlineModifiers;
     inlineModifiers.profileYaml = "rule-providers:\n  sample:\n    type: inline\n    behavior: classical\n"
         "    payload: ['IP-CIDR,192.0.2.28/32,no-resolve']\nrules: ['RULE-SET,sample,DIRECT','MATCH,DIRECT']\n";
     const auto inlineModified = singbox::compileConfig(inlineModifiers);
     check(inlineModified.error.empty() && sets(inlineModified).size() == 1 &&
-          sets(inlineModified)[0]["rules"][0]["ip_cidr"] == json{"192.0.2.28/32"},
+          sets(inlineModified)[0]["rules"][0]["ip_cidr"] == json{"192.0.2.28/32"} && !resolves(inlineModified),
           "inline classical provider shares no-resolve conversion");
     auto httpModifiers = inlineModifiers;
     httpModifiers.profileYaml = "rule-providers:\n  sample: {type: http, behavior: classical, format: text, url: https://example.test/rules}\n"
@@ -920,10 +952,17 @@ void testFileRuleProviders() {
         check(singbox::ValidateHttpRuleProvider(resource, modifiers, reason),
               "HTTP staging validator accepts complete classical no-resolve payload");
         httpModifiers.ruleProviderContents[resource.cacheKey] = modifiers;
+        httpModifiers.captureTargetSource = true;
         const auto httpModified = singbox::compileConfig(httpModifiers);
         check(httpModified.error.empty() && sets(httpModified).size() == 1 &&
-              sets(httpModified)[0]["rules"].size() == 3,
-              "HTTP candidate compiles all staged no-resolve entries");
+              sets(httpModified)[0]["rules"].size() == 3 && !resolves(httpModified),
+              "HTTP candidate skips DNS for a verified all-optional snapshot");
+        httpModifiers.captureTargetSource = false;
+        httpModifiers.ruleProviderContents[resource.cacheKey] += "IP-CIDR,203.0.113.0/24\n";
+        const auto httpMixed = singbox::compileConfig(httpModifiers, {}, httpModified.targetSource.get());
+        check(httpModified.targetSource && httpMixed.error.empty() &&
+              sets(httpMixed)[0]["rules"].size() == 4 && resolves(httpMixed),
+              "new HTTP snapshot with a required entry restores resolve during target replay");
         check(!singbox::ValidateHttpRuleProvider(resource,
               "DOMAIN,valid.test\nIP-CIDR,192.0.2.0/24,unknown\n", reason) &&
               reason.find("payload[1]") != std::string::npos,
@@ -1526,7 +1565,9 @@ void testAsnRuleProviders() {
     singbox::CompileOptions direct = candidate;
     direct.profileYaml = "rules: [\"IP-ASN,14061,DIRECT,no-resolve\", \"SRC-IP-ASN,14061,DIRECT\", \"MATCH,DIRECT\"]";
     const auto directResult = singbox::compileConfig(direct);
-    check(directResult.error.empty() && !directResult.json.empty(), "top-level ASN uses same prepared snapshot");
+    check(directResult.error.empty() && !directResult.json.empty() &&
+        directResult.json.find("\"action\":\"resolve\"") == std::string::npos,
+        "top-level ASN uses the prepared snapshot without triggering resolution");
     direct.ruleProviderContents.clear(); direct.ruleProviderCacheDir.clear();
     const auto missing = singbox::compileConfig(direct);
     check(!missing.error.empty() && missing.json.empty() && missing.httpRuleProviders.size() == 1,

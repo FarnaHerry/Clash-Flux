@@ -86,8 +86,13 @@ void testGeoData(const std::filesystem::path& fixtures = {}) {
         for (const auto* kind : {"site", "ip"}) {
             auto selected = config;
             auto& rules = selected["route"]["rules"];
+            const auto excludedTag = sets[std::string_view(kind) == "site" ? 1 : 0]["tag"];
+            const auto referencesExcluded = [&](const auto& rule) {
+                return rule.contains("rule_set") && rule["rule_set"][0] == excludedTag;
+            };
             std::erase_if(rules.get_ref<json::array_t&>(), [&](const auto& rule) {
-                return rule.contains("rule_set") && rule["rule_set"][0] != sets[std::string(kind) == "site" ? 0 : 1]["tag"];
+                return referencesExcluded(rule) || (rule.contains("rules") &&
+                    std::ranges::any_of(rule["rules"], referencesExcluded));
             });
             std::ofstream(fixtures / (std::string("geo-") + kind + ".json")) << selected.dump(2);
             if (std::string(kind) == "ip" && !inverted.json.empty()) {

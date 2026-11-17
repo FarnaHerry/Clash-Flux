@@ -1,4 +1,16 @@
+## v0.3.115 隔离补丁验证（2026-11-17）
+
+- 代码快照：基于正式 `v0.3.114` 提交 `6236644` 的隔离发布 worktree，应用规则级 `no-resolve` 增量及 AND 顺序修复；HuxerUI 固定消费 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`，sing-box 固定 v1.14.4。
+- Fedora 45 WSL / Clang 23.1.5 / libc++ / CMake 4.4.2 Debug：全目标和主目标构建通过，`run.sh --version` 输出 v0.3.115；目标 baseline/source/project、protocol baseline/entries 通过；完整 `clashflux-required` CTest 38/38 通过，含真实固定内核运行测试；`git diff --check` 通过。
+- 复杂 AND/OR/NOT 和混合解析需求保持保守记账；未验 Windows TUN、Android 真机、桌面 GUI、平台签名/安装或发布产物。CI 发布门禁待运行。
 # L1 / L2 / L3 开发完成度复核
+
+## 2026-11-17 路由解析后续
+
+- 顶层 `RULE-SET`、`GEOIP`、`IP-ASN` 的 `no-resolve` 进入解析规划。纯 AND 树可使用带修饰符的目标 CIDR 子条件。反向 GeoIP 先验证已有目标地址。固定 sing-box 1.14.4 与 Mihomo 对照覆盖字面 IP、未解析域名和前序已解析路径。编译支持与仍需近似的范围见 [后续修饰符支持](resolve-granularity-plan.md#10-后续修饰符支持)。
+- classical 内联、文件和 HTTP 快照中只有带修饰符的目标 CIDR 时，普通顶层引用也沿用已有目标地址。固定双内核探测和 HTTP 快照替换回归覆盖是否需要解析、实际出口和字面 IPv6。
+- 发布前复核补齐 AND 的短路顺序。只有排在目标 IP 之前的独立条件参与查询判断，后续 `no-resolve` 可用已查得的地址。固定内核回归核对 CIDR 在前时的查询和拒绝、域名在前时的零查询和代理出站。
+- 基于 `71ce44a` 加路由解析首批工作区，在 WSL2 Fedora 45 使用 Clang 23.1.5 和 CMake 4.4.2。主目标、版本 v0.3.112、目标 42 例及协议基线、`git diff --check` 与 `clashflux-required` CTest 38/38 通过。另完成 Android arm64 Debug NDK 主目标编译。Windows TUN 和 Android 真机未验。
 
 ## 2026-11-17 路由解析精细化
 

@@ -469,25 +469,41 @@ std::optional<std::vector<std::string>> splitLogicalParts(std::string_view text)
     return parts;
 }
 
+struct LogicalRouteResolution {
+    bool hasNoResolve = false;
+    bool canSkipResolve = true;
+};
+
 std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view text, unsigned depth,
-                                               unsigned& count, bool headless,
-                                               std::string& error) {
+                                               unsigned& count, bool headless, std::string& error,
+                                               LogicalRouteResolution* resolution = nullptr) {
     if (depth > 24 || ++count > 256) return std::nullopt;
     const auto parts = splitLogicalParts(text);
     if (!parts || parts->size() < 2 || (*parts)[1].empty()) return std::nullopt;
     const std::string kind = lowerCopy((*parts)[0]);
     const std::string& value = (*parts)[1];
+    const bool cidr = kind == "ip-cidr" || kind == "ip-cidr6";
+    const bool resource = kind == "geoip" || kind == "geosite" || kind == "rule-set";
     bool noResolve = false;
     if (parts->size() != 2) {
-        // Classical provider entries omit the route target, so their modifier
-        // is the third field. Never truncate unknown/additional fields.
-        if (!headless || (kind != "ip-cidr" && kind != "ip-cidr6" && kind != "src-ip-cidr" &&
-                          kind != "ip-asn" && kind != "src-ip-asn") ||
+        // Match-only conditions omit the target, placing no-resolve third.
+        const bool classicalExtra = headless &&
+            (kind == "src-ip-cidr" || kind == "ip-asn" || kind == "src-ip-asn");
+        if ((!cidr && !classicalExtra) ||
             parts->size() != 3 || lowerCopy((*parts)[2]) != "no-resolve") {
-            error = "不支持的规则集修饰符或附加字段";
+            error = "不支持的子条件修饰符或附加字段";
             return std::nullopt;
         }
         noResolve = true;
+    }
+    if (resolution) {
+        resolution->hasNoResolve |= cidr && noResolve;
+        if (kind == "or" || kind == "not" || resource || kind == "ip-asn" ||
+            kind == "src-ip-asn" || (cidr && !noResolve)) resolution->canSkipResolve = false;
+        if (!headless && resolution->hasNoResolve && !resolution->canSkipResolve) {
+            error = "no-resolve 当前支持纯 AND，且所有目标 CIDR 都必须带该修饰符";
+            return std::nullopt;
+        }
     }
     if (kind == "and" || kind == "or" || kind == "not") {
         if (value.size() < 3 || value.front() != '(' || value.back() != ')') return std::nullopt;
@@ -498,7 +514,7 @@ std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view te
         for (const std::string& child : *children) {
             if (child.size() < 3 || child.front() != '(' || child.back() != ')') return std::nullopt;
             auto compiled = logicalCondition(ctx, std::string_view(child).substr(1, child.size() - 2),
-                                             depth + 1, count, headless, error);
+                                             depth + 1, count, headless, error, resolution);
             if (!compiled) return std::nullopt;
             rules.push_back(std::move(*compiled));
         }
@@ -507,7 +523,6 @@ std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view te
         if (kind == "not") rule["invert"] = true;
         return rule;
     }
-    const bool resource = kind == "geoip" || kind == "geosite" || kind == "rule-set";
     if (headless && resource) {
         error = kind + ": inline HeadlessRule 不接受 GEO/RULE-SET 引用";
         return std::nullopt;
@@ -517,10 +532,10 @@ std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view te
                                   ? compileAsnCondition(ctx, kind, value, std::string(text))
                                   : compileLeafCondition(kind, value, headless);
     if (!condition) { error = kind + ": " + condition.error; return std::nullopt; }
-    if (noResolve) {
+    if (headless && noResolve) {
         ctx.note(FidelityScope::Rule, Fidelity::Approx, std::string(text),
-                 "规则集条目的 no-resolve 尚未保真，托管路由仍可能执行前置解析",
-                 "保留完整 IP 匹配条件；不输出内核不存在的 no-resolve 字段");
+                 "保留规则集条目的 IP 匹配条件；解析取决于引用和集合内其他条件",
+                 "带修饰符的目标 CIDR 可使用已有地址；混合解析需求仍按整组判断");
     }
     return std::move(condition.rule);
 }
@@ -602,7 +617,8 @@ std::optional<std::string> readRuleProviderFile(
 
 template<class Payload>
 std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& payload,
-        const std::string& behavior, std::string& failure, bool compact = false) {
+        const std::string& behavior, std::string& failure, bool compact = false,
+        LogicalRouteResolution* resolution = nullptr) {
     nlohmann::json rules = nlohmann::json::array();
     std::map<std::string, nlohmann::json> fields;
     std::vector<std::string> strictSuffixes;
@@ -660,7 +676,7 @@ std::optional<nlohmann::json> ruleProviderRules(Context& ctx, const Payload& pay
             }
         } else {
             unsigned count = 0;
-            condition = logicalCondition(ctx, value, 0, count, true, failure);
+            condition = logicalCondition(ctx, value, 0, count, true, failure, resolution);
         }
         if (!condition) {
             failure = "payload[" + std::to_string(index) + "]「" + value + "」无效：" +
@@ -766,7 +782,8 @@ ProviderConversionCache& providerConversionCache() {
 }
 
 std::optional<nlohmann::json> ruleProviderContentRules(Context& ctx, const std::string& content,
-        const std::string& format, const std::string& behavior, std::string& failure) {
+        const std::string& format, const std::string& behavior, std::string& failure,
+        LogicalRouteResolution* resolution = nullptr) {
     const bool cacheable = behavior == "domain" || behavior == "ipcidr";
     if (cacheable) if (auto cached = providerConversionCache().find(content, format, behavior, ctx.providerSyntaxOnly)) {
         ++ctx.result.ruleProviderConversionCacheHits;
@@ -778,7 +795,7 @@ std::optional<nlohmann::json> ruleProviderContentRules(Context& ctx, const std::
         if (entries) rules = ruleProviderRules(ctx, *entries, behavior, failure, true);
     } else {
         const auto payload = ruleProviderPayload(content, format, failure);
-        if (payload) rules = ruleProviderRules(ctx, *payload, behavior, failure);
+        if (payload) rules = ruleProviderRules(ctx, *payload, behavior, failure, false, resolution);
     }
     if (cacheable && rules && !ctx.providerSyntaxOnly)
         providerConversionCache().remember(content, format, behavior, *rules);
@@ -942,10 +959,11 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
             continue;
         }
         std::string failure;
+        LogicalRouteResolution resolution;
         std::optional<nlohmann::json> rules;
         if (type == "file") {
             const auto content = readRuleProviderFile(ctx, provider, failure);
-            if (content) rules = ruleProviderContentRules(ctx, *content, format, behavior, failure);
+            if (content) rules = ruleProviderContentRules(ctx, *content, format, behavior, failure, &resolution);
         } else if (type == "http") {
             const auto resource = httpProviderResource(ctx, provider, name, behavior, format, failure);
             if (!resource) { reject(failure); continue; }
@@ -958,18 +976,19 @@ void compileRuleProviders(Context& ctx, const YAML::Node& providers) {
                 reject(content ? "内容超过 size-limit/8 MiB 上限" : "HTTP 缓存未准备好：" + failure);
                 continue;
             }
-            rules = ruleProviderContentRules(ctx, *content, resource->format, behavior, failure);
+            rules = ruleProviderContentRules(ctx, *content, resource->format, behavior, failure, &resolution);
             if (rules && supplied == ctx.opt.ruleProviderContents.end())
                 ctx.result.ruleProviderContents.try_emplace(resource->cacheKey, std::move(*content));
         } else {
             const auto payload = provider["payload"];
             if (!payload || !payload.IsSequence()) { reject("payload 必须为数组"); continue; }
-            rules = ruleProviderRules(ctx, payload, behavior, failure);
+            rules = ruleProviderRules(ctx, payload, behavior, failure, false, &resolution);
         }
         if (!rules) { reject(failure); continue; }
         const std::string tag = "clash-provider-" + std::to_string(ctx.providerTags.size());
         ctx.providerTags.emplace(name, tag);
         if (behavior == "domain") ctx.domainProviders.insert(name);
+        if (resolution.hasNoResolve && resolution.canSkipResolve) ctx.noResolveProviders.insert(name);
         ctx.ruleSets.push_back({{"type", "inline"}, {"tag", tag}, {"rules", std::move(*rules)}});
         if (type == "file")
             ctx.note(FidelityScope::Field, Fidelity::Approx, "rule-providers." + name,
@@ -1063,11 +1082,13 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
         rule["outbound"] = target;
     }
 
+    bool skipResolve = false;
     if (logical) {
         LogicalRuleResources resources(ctx);
         unsigned count = 0;
         std::string error;
-        auto condition = logicalCondition(ctx, parts[0] + "," + value, 0, count, false, error);
+        LogicalRouteResolution resolution;
+        auto condition = logicalCondition(ctx, parts[0] + "," + value, 0, count, false, error, &resolution);
         if (!condition) {
             ctx.note(FidelityScope::Rule, Fidelity::Unsupported, line,
                      std::format("逻辑规则 {} 含无效或未接入的子条件：{}，整条跳过", line,
@@ -1075,6 +1096,7 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
                      "逻辑条件按路由 schema 转换，不删除子条件后扩大匹配");
             return true;
         }
+        skipResolve = resolution.hasNoResolve;
         rule.update(*condition);
         resources.commit();
     } else if (kind == "geoip" || kind == "geosite" || kind == "rule-set") {
@@ -1089,7 +1111,14 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
                 "规则 " + line + " 无法转换：" + condition.error + "，已跳过");
             return true;
         }
-        rule.update(condition.rule);
+        if (noResolve && kind == "geoip" && condition.rule.contains("rule_set")) {
+            // An inverted GeoIP set can also match an unresolved domain.
+            // Mihomo checks that a destination IP exists before testing GeoIP.
+            rule["type"] = "logical";
+            rule["mode"] = "and";
+            rule["rules"] = nlohmann::json::array({
+                {{"ip_cidr", {"0.0.0.0/0", "::/0"}}}, std::move(condition.rule)});
+        } else rule.update(condition.rule);
         // Only a whole positive top-level CN domain rule implies the existing
         // direct DNS policy. A nested CN leaf (especially NOT) does not.
         if (target == "DIRECT" && kind != "geoip" &&
@@ -1107,10 +1136,14 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
         }
         rule.update(condition.rule);
     }
-    if (noResolve && (kind == "ip-cidr" || kind == "ip-cidr6")) {
+    skipResolve |= noResolve && (kind == "ip-cidr" || kind == "ip-cidr6" ||
+        kind == "ip-asn" || kind == "geoip" || kind == "rule-set");
+    const bool optionalProvider = kind == "rule-set" && ctx.noResolveProviders.contains(value);
+    if (skipResolve || optionalProvider) {
         ctx.noResolveSourceRules.push_back(ctx.config["route"]["rules"].size());
         ctx.note(FidelityScope::Rule, Fidelity::Approx, line,
-                 std::format("规则 {} 的 no-resolve 不主动查询 DNS；匹配使用已有目标地址", line),
+                 skipResolve ? std::format("规则 {} 的 no-resolve 不主动查询 DNS；匹配使用已有目标地址", line)
+                             : "此规则集的目标 CIDR 均带 no-resolve，引用沿用已有地址",
                  "sing-box 可以匹配已有结果中的多个地址，Mihomo 使用单个目标 IP");
     } else if (noResolve) {
         ctx.note(FidelityScope::Rule, Fidelity::Approx, line,
@@ -1294,8 +1327,9 @@ bool mayNeedDestinationIp(const nlohmann::json& rule,
     });
 }
 
-// A default sing-box rule ORs domain and target IP match fields. A guard
-// requires explicit AND, with one positive IP leaf and independent siblings.
+// A default sing-box rule ORs domain and target IP match fields. An explicit
+// AND can guard a single positive IP leaf using earlier independent siblings.
+// Later siblings cannot prevent a lookup whose result subsequent rules can use.
 nlohmann::json resolveGuard(const nlohmann::json& rule) {
     if (rule.value("type", "") != "logical" || rule.value("mode", "") != "and" ||
         rule.contains("invert") || !rule.contains("rules") || !rule["rules"].is_array()) return {};
@@ -1310,7 +1344,7 @@ nlohmann::json resolveGuard(const nlohmann::json& rule) {
             if (!std::ranges::all_of(child.items(), [](const auto& field) {
                 return simplePreResolveCondition(field.key());
             })) return {};
-            conditions.push_back(child);
+            if (!foundAddress) conditions.push_back(child);
         }
     }
     return foundAddress && !conditions.empty() ? std::move(conditions) : nlohmann::json{};

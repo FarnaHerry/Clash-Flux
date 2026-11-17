@@ -672,20 +672,28 @@ sniff、DNS 劫持等前置规则。
 整条跳过并记 `Rule/Unsupported`，不保留半条匹配条件。
 
 2026-11-17：裸节点与受支持的混合 Clash YAML 在首条需要目标 IP 的规则前插入普通 `resolve`。
-顶层正向 `IP-CIDR` / `IP-CIDR6` 的 `no-resolve` 只匹配字面 IP 或已经解析的目标。
-修饰符随目标快照与来源规则重放，内核 JSON 仍使用原生 IP 条件。sing-box 可匹配整个地址列表，
-Mihomo 使用单个目标 IP，因此继续记 `Rule/Approx`。未知附加修饰符或缺少字段的规则整条跳过并记 unsupported。
+顶层 `IP-CIDR`、`IP-CIDR6`、`IP-ASN` 和 `GEOIP` 的 `no-resolve` 只匹配字面 IP 或已有目标地址。
+GeoIP 规则集的反向匹配也先检查已有地址，避免未解析的域名被取反命中。`RULE-SET` 的同名修饰符
+作用于这一次引用，规则集中的域名条件仍可直接命中。同一规则集的其他引用可按需解析。
+当 classical provider 快照仅含带该修饰符的目标 CIDR 和无需目标地址的条件时，普通顶层引用也
+跳过前置解析。含混合解析需求或 OR/NOT 的集合仍保守规划。每次候选编译依据本次实际快照判断。
+纯 AND 树允许目标 CIDR 子条件使用 `no-resolve`，要求树内所有目标 CIDR 都带该修饰符。
+混入未标记目标 CIDR、OR / NOT 或地理资源及规则集引用时，整条按 unsupported 记账。
+内核 JSON 使用原生条件。普通 CIDR 的修饰符随目标快照重放，资源相关规则按当前候选重编译。
+sing-box 可匹配整个地址列表，Mihomo 使用单个目标 IP，因此继续记 `Rule/Approx`。
+未知附加修饰符或缺少字段的规则整条跳过并记 unsupported。
 
-若只有一条规则会触发查询，且它是带单个正向目标 IP 条件的简单 AND，则普通解析只对符合域名、端口等
-前置条件的连接执行。当前候选的简单域名或来源 IP 内联集合无需为匹配而查询目标。远程、混合和无法证明
+若只有一条规则会触发查询，且它是带单个正向目标 IP 条件的简单 AND，则普通解析可用排在 IP 条件之前的
+域名、端口等约束查询范围。排在 IP 条件之后的条件仍可使用已解析地址，后续规则也可复用。
+当前候选的简单域名或来源 IP 内联集合无需为匹配而查询目标。远程、混合和无法证明
 内容或逻辑关系的集合继续保守处理。原生 JSON、OpenVPN/PPTP 原生来源和纯域名 Clash YAML 保留原策略。
-混入应用托管 VPN 补偿时默认保留前置解析，带顶层 CIDR `no-resolve` 的 Clash 规则链仍按修饰符规划。
+混入应用托管 VPN 补偿时默认保留前置解析，带已支持 `no-resolve` 的 Clash 规则链仍按修饰符规划。
 hosts 专用解析与 DNS 劫持继续在普通路由之前处理，规则追溯索引来自最终规则顺序。
 范围与实测见 [路由解析精细化](resolve-granularity-plan.md)。
 
 2026-10-04：classical inline/file/HTTP provider 的 `IP-CIDR` / `IP-CIDR6` /
 `SRC-IP-CIDR` 条目及嵌套逻辑子条件也接受第三字段 `no-resolve`。IP 匹配完整保留，
-修饰符仍按未转换记 `Rule/Approx`。未知、空或重复的附加字段拒绝整份 provider，
+修饰符按前述解析边界记 `Rule/Approx`。未知、空或重复的附加字段拒绝整份 provider，
 错误保留 payload 位置，不提交有效前缀。回归同时覆盖 HTTP 暂存校验与最终候选编译。
 
 2026-10-04 ASN/MRS 增量：

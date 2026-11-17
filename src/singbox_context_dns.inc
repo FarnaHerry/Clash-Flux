@@ -24,6 +24,7 @@ struct Context {
     std::map<std::string, std::string> dnsServerTags; // Clash DNS 地址 → typed server tag
     std::map<std::string, std::string> providerTags; // source name -> inline native tag
     std::set<std::string> domainProviders;          // Only successfully converted domain providers.
+    std::set<std::string> noResolveProviders;       // Classical snapshots with only optional target IP checks.
     std::set<std::string> declaredProviders;        // rejected declarations also shadow aliases
     std::string dnsBootstrapTag = "local";
     nlohmann::json hostsDomains = nlohmann::json::array(); // Main-only connection resolution.

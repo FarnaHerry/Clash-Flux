@@ -87,7 +87,7 @@ def main(compiler, engine, baseline=False):
             before = len(node.targets), len(dns.queries)
             if expected is None:
                 try:
-                    request(mixed, domain, echo.server_port)
+                    request(mixed, domain, echo.server_port, literal)
                 except TimeoutError:
                     raise AssertionError(f"kernel did not close the connection to {domain} in time")
                 except (OSError, EOFError):
@@ -161,6 +161,15 @@ def main(compiler, engine, baseline=False):
             with clash(required_miss, f"{cidr},REJECT,no-resolve") as (_, mixed):
                 assert exercise(mixed, "multiple.record.test", None, True) == {1, 28}
 
+        nested_no_resolve = ("AND,((NETWORK,TCP),(AND,((IP-CIDR,127.0.0.0/8,no-resolve),"
+                             "(IP-CIDR,127.0.0.1/32,no-resolve)))),DIRECT")
+        for optional_ip in (nested_no_resolve, "GEOIP,private,DIRECT,no-resolve"):
+            with clash(optional_ip) as (_, mixed):
+                exercise(mixed, "missing.optional.test", b"node-ok", False, "missing.optional.test")
+                exercise(mixed, "127.0.0.1", b"echo-ok", False, literal=True)
+            with clash(required_miss, optional_ip) as (_, mixed):
+                exercise(mixed, "previous-required.test", b"echo-ok", True)
+
         guarded = "AND,((DOMAIN,guarded.test),(DST-PORT,{port}),(IP-CIDR,127.0.0.1/32)),DIRECT"
         guarded = guarded.format(port=echo.server_port)
         with clash(guarded) as (_, mixed):
@@ -189,6 +198,35 @@ def main(compiler, engine, baseline=False):
         with clash("RULE-SET,sample,DIRECT",
                    providers=provider("classical", "DOMAIN,inside.test", "IP-CIDR,127.0.0.1/32")) as (_, mixed):
             exercise(mixed, "mixed-provider.test", b"echo-ok", True)
+        mixed_provider = provider("classical", "DOMAIN,inside.test", "IP-CIDR,127.0.0.1/32")
+        optional_set = "RULE-SET,sample,REJECT,no-resolve"
+        with clash(optional_set, providers=mixed_provider) as (_, mixed):
+            exercise(mixed, "inside.test", None, False)
+            exercise(mixed, "missing.outside.test", b"node-ok", False, "missing.outside.test")
+            exercise(mixed, "127.0.0.1", None, False, literal=True)
+        with clash(required_miss, optional_set, providers=mixed_provider) as (_, mixed):
+            exercise(mixed, "prepared-provider.test", None, True)
+        ip_first = "AND,((IP-CIDR,198.51.100.0/24),(DOMAIN,guarded.test)),DIRECT"
+        domain_first = "AND,((DOMAIN,guarded.test),(IP-CIDR,198.51.100.0/24)),DIRECT"
+        with clash(ip_first, optional_set, providers=mixed_provider) as (_, mixed):
+            exercise(mixed, "guard-miss.test", None, True)
+        with clash(domain_first, optional_set, providers=mixed_provider) as (_, mixed):
+            exercise(mixed, "guard-miss.test", b"node-ok", False, "guard-miss.test")
+        with clash(optional_set, "RULE-SET,sample,DIRECT", providers=mixed_provider) as (_, mixed):
+            exercise(mixed, "second-reference.test", b"echo-ok", True)
+        optional_entries = provider("classical", "DOMAIN,inside.test", "IP-CIDR,127.0.0.0/8,no-resolve",
+                                    "AND,((NETWORK,TCP),(IP-CIDR6,::1/128,no-resolve))")
+        ordinary_set = "RULE-SET,sample,REJECT"
+        with clash(ordinary_set, providers=optional_entries) as (_, mixed):
+            exercise(mixed, "inside.test", None, False)
+            exercise(mixed, "missing.entry.test", b"node-ok", False, "missing.entry.test")
+            exercise(mixed, "127.0.0.1", None, False, literal=True)
+            exercise(mixed, "::1", None, False, literal=True)
+        with clash(required_miss, ordinary_set, providers=optional_entries) as (_, mixed):
+            exercise(mixed, "prepared.entry.test", None, True)
+        with clash("RULE-SET,sample,DIRECT", providers=provider(
+                "classical", "IP-CIDR,192.0.2.0/24,no-resolve", "IP-CIDR,127.0.0.1/32")) as (_, mixed):
+            exercise(mixed, "mixed.entry.test", b"echo-ok", True)
     print("resolve_routing_runtime: node and Clash routing, no-resolve, AND guards and inline sets passed")
 
 
