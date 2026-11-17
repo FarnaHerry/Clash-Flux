@@ -498,7 +498,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
             if (!compilePersonalRuleSets(ctx)) return std::move(ctx.result);
             ctx.config["outbounds"] = ctx.outbounds;
             if (!applyNetworkRouteSets(ctx)) return std::move(ctx.result);
-            if (!applyConnectionRules(ctx)) return std::move(ctx.result);
+            if (!applyConnectionRules(ctx, format)) return std::move(ctx.result);
         } catch (const std::exception& error) {
             ctx.result.error = std::format("原生 sing-box 配置合并失败：{}", error.what());
             return std::move(ctx.result);
@@ -573,7 +573,7 @@ CompileResult compileConfig(const CompileOptions& options, std::stop_token cance
     if (!compilePersonalRuleSets(ctx)) return std::move(ctx.result);
     ctx.config["outbounds"] = std::move(ctx.outbounds);
     if (!applyNetworkRouteSets(ctx)) return std::move(ctx.result);
-    if (!applyConnectionRules(ctx)) return std::move(ctx.result);
+    if (!applyConnectionRules(ctx, format)) return std::move(ctx.result);
     if (ctx.cancelled()) return std::move(ctx.result);
     ctx.result.json = ctx.config.dump();
     if (ctx.cancelled()) ctx.result.json.clear();

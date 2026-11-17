@@ -186,18 +186,20 @@ private:
 
 struct DownloadPolicy {
     std::string origin, proxy;
-    bool allowProxyEnv = false, subscriptionRequest = false, compatibilityUserAgent = false;
+    std::string_view userAgent;
+    bool allowProxyEnv = false, subscriptionRequest = false;
     std::map<std::string, std::string> headers;
     std::array<std::optional<std::string>, 11> environment;
 
-    static DownloadPolicy From(const std::string& url, const ClashApi::DownloadOptions& options) {
+    static DownloadPolicy From(const std::string& url, const ClashApi::DownloadOptions& options,
+                               std::string_view userAgent) {
         DownloadPolicy policy;
         const auto scheme = url.find("://");
         policy.origin = url.substr(0, scheme == std::string::npos ? url.size() :
             url.find_first_of("/?#", scheme + 3));
         policy.proxy = options.proxyUrl;
         policy.subscriptionRequest = options.subscriptionRequest;
-        policy.compatibilityUserAgent = options.compatibilityUserAgent;
+        policy.userAgent = userAgent;
         policy.allowProxyEnv = options.allowProxyEnv;
         for (const auto& [name, value] : options.headers) {
             auto lower = name;
@@ -649,31 +651,34 @@ bool WriteFileAtomically(const std::filesystem::path& file, const std::string& c
 
 ApiResult ClashApi::downloadToFile(const std::string& url, const std::filesystem::path& dest,
                                  const DownloadOptions& inputOptions) {
-    auto options = inputOptions;
+    const auto options = inputOptions;
+    const auto transportAttempts = std::clamp(options.attempts, 1u, 3u);
+    const auto& userAgents = clashflux::download::kSubscriptionUserAgents;
+    std::size_t userAgentIndex = 0;
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    const bool allowUserAgentFallback = options.subscriptionRequest &&
+        std::ranges::all_of(options.headers, [](const auto& entry) {
+            const auto name = clashflux::http_request::LowerHeaderName(entry.first);
+            return name == "if-none-match" || name == "if-modified-since";
+        });
+#endif
     DownloadMetrics totals;
     ApiResult result;
-    for (unsigned attempt = 0; attempt < std::clamp(options.attempts, 1u, 3u); ++attempt) {
-        result = downloadOnce(url, dest, options);
+    for (unsigned attempt = 0; attempt < transportAttempts;) {
+        const char* userAgent = options.subscriptionRequest ? userAgents[userAgentIndex] : "clash-flux/0.1";
+        result = downloadOnce(url, dest, options, userAgent);
         totals.attempts += std::max(1u, result.download.attempts);
         totals.networkMicros += result.download.networkMicros;
         totals.bytes += result.download.bytes;
         totals.newConnections += result.download.newConnections;
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
-        if (options.subscriptionRequest && result.status == 403 && !options.compatibilityUserAgent &&
-            std::ranges::all_of(options.headers, [](const auto& entry) {
-                const auto name = clashflux::http_request::LowerHeaderName(entry.first);
-                return name == "if-none-match" || name == "if-modified-since";
-            })) {
-            options.compatibilityUserAgent = true;
-            result = downloadOnce(url, dest, options);
-            totals.attempts += std::max(1u, result.download.attempts);
-            totals.networkMicros += result.download.networkMicros;
-            totals.bytes += result.download.bytes;
-            totals.newConnections += result.download.newConnections;
+        if (allowUserAgentFallback && result.status == 403 && userAgentIndex + 1 < userAgents.size()) {
+            ++userAgentIndex;
+            continue;
         }
 #endif
         if (result.ok || !result.download.retryable) break;
-        if (attempt + 1 < std::clamp(options.attempts, 1u, 3u))
+        if (++attempt < transportAttempts)
             std::this_thread::sleep_for(std::chrono::milliseconds{250});
     }
     if (!result.ok && (result.failurePhase.empty() || result.failurePhase == "none"))
@@ -687,7 +692,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url, const std::filesystem
 
 ApiResult ClashApi::downloadOnce(const std::string& url,
                                    const std::filesystem::path& dest,
-                                   const DownloadOptions& inputOptions) {
+                                   const DownloadOptions& inputOptions, [[maybe_unused]] const char* userAgent) {
     auto options = inputOptions;
     if (options.subscriptionRequest && (!options.maxBytes || options.maxBytes > clashflux::download::kSubscriptionMaxBytes))
         options.maxBytes = clashflux::download::kSubscriptionMaxBytes;
@@ -772,7 +777,7 @@ ApiResult ClashApi::downloadOnce(const std::string& url,
     }
 #else
     CurlHeaderList requestHeaders;
-    DownloadSession session(impl_->downloadPool, DownloadPolicy::From(url, options));
+    DownloadSession session(impl_->downloadPool, DownloadPolicy::From(url, options, userAgent));
     CURL* const easy = session.get();
     if (!easy) {
         result.error = "curl_easy_init failed";
@@ -801,7 +806,7 @@ ApiResult ClashApi::downloadOnce(const std::string& url,
                      options.timeoutSecs > 0 ? options.timeoutSecs : 60L);
     curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(easy, CURLOPT_USERAGENT, options.compatibilityUserAgent ? "clash.meta" : "clash-flux/0.1");
+    curl_easy_setopt(easy, CURLOPT_USERAGENT, userAgent);
     // Decode supported HTTP compression before the bounded write callback.
     curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
     // 失败原因（OpenSSL 文本，例如 "SSL certificate problem: unable to get
@@ -824,7 +829,6 @@ ApiResult ClashApi::downloadOnce(const std::string& url,
     } else if (!options.allowProxyEnv) {
         curl_easy_setopt(easy, CURLOPT_PROXY, "");
     }
-    // 订阅服务器 UA 嗅探常见：clash-meta 的 UA 通过率更高。
     const auto transferBegan = std::chrono::steady_clock::now();
     const CURLcode code = curl_easy_perform(easy);
     result.download.networkMicros = std::chrono::duration_cast<std::chrono::microseconds>(

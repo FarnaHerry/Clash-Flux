@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码固定 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`，保留既有平台/Pager 修复，并合入官方文本方向、编辑动作、多格式剪贴板与资源包更新；CodeEditor 已同步兼容接口，升级边界见上述记录。下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码固定 `e2afd8a3ca68bd7729ef084b11e741580237f252`，在 `89359f43`（保留既有平台/Pager 修复，合入官方文本方向、编辑动作、多格式剪贴板与资源包更新）之上集成上游跨窗口拖放、Dock 自定义标签栏与跨窗口停靠、桌面浮动窗口选项及 Win7/macOS 窗口修复，并移除旧 WindowSupport 查询；CodeEditor 已同步兼容接口，升级边界见上述记录。下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 
@@ -42,6 +42,12 @@ Camera、Charts、SQLite、CodeEditor、Media 通过 `huxerui_use_library(URL, C
 4. 重新编译应用并运行必跑回归，包含 `cps_dependencies`、下载 TLS 与持久化。
 
 HuxerUI 与其扩展仍遵守独立 fork 维护、固定提交和 Java/native 同源规则。
+
+## 2026-11-16 HuxerUI 更新
+
+HUI `e2afd8a3` 集成上游至 `c67c42c2`（跨窗口拖放、Dock 停靠、浮动窗口选项、Win7/macOS 窗口修复），
+在 `89359f43`（含官方 `3bebb8c7`）之上前移；应用无需页面迁移，CodeEditor fork `ee5b0cf8`、
+Media 官方 `fee506de` 及其余扩展固定提交保持；远端完整 SHA 与验证见 [fork 记录](../docs/huxerui-fork.md)。
 
 ## 2026-11-15 HuxerUI / CodeEditor / Media 更新
 

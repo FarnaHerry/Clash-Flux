@@ -550,6 +550,12 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
 #endif // platform-specific theme and language entries
 
+[[huxerui::composable]] huxerui::View NetworkDnsEntry() {
+    const auto navigation = huxerui::UseNavigation();
+    return SettingNavigationItem(Localized("DNS 设置"), app::images::globe,
+        [navigation] { navigation.Push(NetworkDnsEditorPage); });
+}
+
 [[huxerui::composable]] huxerui::View NetworkSettingsEntry(HomeProxySettingsKind kind) {
     const auto settings = huxerui::UseService<SettingsModel>();
     const auto dialog = huxerui::UseDialog();
@@ -886,6 +892,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     sections.push_back(SettingsSectionCard(Localized("代理与网络"), huxerui::Column {
       NetworkSettingsEntry(HomeProxySettingsKind::SystemProxy),
       NetworkSettingsEntry(HomeProxySettingsKind::Tun),
+      NetworkDnsEntry(),
       CLASHFLUX_NETWORK_PLATFORM_SECTION(),
     }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .Key("settings-network"));

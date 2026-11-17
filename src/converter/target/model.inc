@@ -8,6 +8,7 @@ struct TargetSourceModel::Data {
     TargetDefaultAction defaultAction;
     std::vector<SourceObject> objects;
     std::vector<FidelityNote> diagnostics;
+    std::vector<std::uint64_t> noResolveRuleIds;
     nlohmann::json payload = nlohmann::json::array();
     nlohmann::json ruleSets = nlohmann::json::array();
 };
@@ -103,6 +104,7 @@ struct TargetCapture {
             targetJsonBytes(data->payload) + targetJsonBytes(data->ruleSets) +
             data->rules.capacity()*sizeof(TargetRule) + data->origins.capacity()*sizeof(TargetRuleOrigin) +
             data->objects.capacity()*sizeof(SourceObject) + data->diagnostics.capacity()*sizeof(FidelityNote);
+        bytes += data->noResolveRuleIds.capacity()*sizeof(std::uint64_t);
         for (const auto& rule : data->rules) {
             bytes += rule.action.capacity() + rule.outbound.capacity() + rule.rejectMethod.capacity() + rule.matches.capacity()*sizeof(TargetMatch);
             for (const auto& match : rule.matches) {

@@ -567,7 +567,7 @@ file/inline 声明依据同 revision 的 [provider parser](https://github.com/Me
 | `default-nameserver` | IP DNS bootstrap，允许已接入的加密 IP DNS；域名和 detour 依赖拒绝并记 unsupported，数组仍记 approx |
 | `proxy-server-nameserver` | 域名代理节点的原生 domain_resolver；未指定时按同一完整域名/整层通配 policy 或 DNS final 选择；合法域名下划线也进入解析依赖。静态节点选择暂不匹配普通 policy 的资源条件，存在该路径时单独记 approx，建议显式指定节点解析器 |
 | `proxy-server-nameserver-policy` | 与普通 policy 共用模式元数据/优先级，仅在 proxy-server-nameserver 有可转换默认服务器时生效；只设置节点解析器，不进入普通 DNS 查询规则 |
-| `direct-nameserver` | 写入 DIRECT domain_resolver，approx：托管前置 resolve 已解析的请求不会重查此解析器 |
+| `direct-nameserver` | 写入 DIRECT domain_resolver，记 approx。到达 DIRECT 时若路由动作已查得目标地址，则沿用该结果 |
 | DNS 地址数组 | 首个可转换服务器作为默认/策略目标，不执行并发或后备，记 approx |
 | `fallback` | nameserver 存在时不参与查询，缺省时作为默认来源；两者都记 approx，不冒充污染筛选 |
 | `http://` DNS | unsupported；内核 HTTPS transport 强制 TLS，不改写用户 HTTP 地址 |
@@ -671,13 +671,21 @@ sniff、DNS 劫持等前置规则。
 转换为 `:`，单端口与范围在同一规则中保留 OR 语义；非法 CIDR、端口、范围或网络类型
 整条跳过并记 `Rule/Unsupported`，不保留半条匹配条件。
 
-`no-resolve` 修饰符目前保留匹配条件但记 `Rule/Approx`：托管路由的前置 resolve
-仍可能解析域名，不能宣称复现 Clash 的“不解析”语义。未知附加修饰符和缺少字段的
-规则整条跳过并记 unsupported，不再截断第三个字段以后的内容后静默接受。
+2026-11-17：裸节点与受支持的混合 Clash YAML 在首条需要目标 IP 的规则前插入普通 `resolve`。
+顶层正向 `IP-CIDR` / `IP-CIDR6` 的 `no-resolve` 只匹配字面 IP 或已经解析的目标。
+修饰符随目标快照与来源规则重放，内核 JSON 仍使用原生 IP 条件。sing-box 可匹配整个地址列表，
+Mihomo 使用单个目标 IP，因此继续记 `Rule/Approx`。未知附加修饰符或缺少字段的规则整条跳过并记 unsupported。
+
+若只有一条规则会触发查询，且它是带单个正向目标 IP 条件的简单 AND，则普通解析只对符合域名、端口等
+前置条件的连接执行。当前候选的简单域名或来源 IP 内联集合无需为匹配而查询目标。远程、混合和无法证明
+内容或逻辑关系的集合继续保守处理。原生 JSON、OpenVPN/PPTP 原生来源和纯域名 Clash YAML 保留原策略。
+混入应用托管 VPN 补偿时默认保留前置解析，带顶层 CIDR `no-resolve` 的 Clash 规则链仍按修饰符规划。
+hosts 专用解析与 DNS 劫持继续在普通路由之前处理，规则追溯索引来自最终规则顺序。
+范围与实测见 [路由解析精细化](resolve-granularity-plan.md)。
 
 2026-10-04：classical inline/file/HTTP provider 的 `IP-CIDR` / `IP-CIDR6` /
-`SRC-IP-CIDR` 条目及嵌套逻辑子条件也接受第三字段 `no-resolve`；IP 匹配完整保留，
-修饰符仍按上述契约记 `Rule/Approx`。未知、空或重复的附加字段拒绝整份 provider，
+`SRC-IP-CIDR` 条目及嵌套逻辑子条件也接受第三字段 `no-resolve`。IP 匹配完整保留，
+修饰符仍按未转换记 `Rule/Approx`。未知、空或重复的附加字段拒绝整份 provider，
 错误保留 payload 位置，不提交有效前缀。回归同时覆盖 HTTP 暂存校验与最终候选编译。
 
 2026-10-04 ASN/MRS 增量：

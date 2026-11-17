@@ -66,6 +66,7 @@ struct NetworkForm {
         add("route_sets", extra.route_sets); add("exclude_sets", extra.exclude_sets);
         add("pac_port", std::to_string(extra.pac_port)); add("pac_url", extra.pac_url);
         add("pac_direct_domains", extra.pac_direct_domains);
+        add("remote_dns", extra.remote_dns);
     }
     bool Changed(const Network& source) const {
         const NetworkForm original(source);
@@ -131,6 +132,7 @@ struct NetworkForm {
             if (extra.proxy_mode != "pac_url") return {};
             advanced.proxy_mode = extra.proxy_mode; advanced.pac_url = text;
         } else if (key == "pac_direct_domains") advanced.pac_direct_domains = text;
+        else if (key == "remote_dns") advanced.remote_dns = text;
         else if (key == "interfaces" || key == "uids" || key == "macs") {
             advanced.override_filters = extra.override_filters; advanced.auto_redirect = extra.auto_redirect;
             if (key == "interfaces") { advanced.interface_mode = extra.interface_mode; advanced.interfaces = text; }
@@ -172,6 +174,7 @@ struct NetworkForm {
         advanced.interfaces = fields.at("interfaces").text; advanced.uids = fields.at("uids").text;
         advanced.macs = fields.at("macs").text;
         advanced.route_sets = fields.at("route_sets").text; advanced.exclude_sets = fields.at("exclude_sets").text;
+        advanced.remote_dns = fields.at("remote_dns").text;
         advanced.pac_url = fields.at("pac_url").text; advanced.pac_direct_domains = fields.at("pac_direct_domains").text;
         if (advanced.proxy_mode == "pac" && !clashflux::network::Integer(fields.at("pac_port").text, advanced.pac_port, 1, 65535))
             return "PAC 端口需要 1–65535 的整数";
@@ -379,9 +382,9 @@ std::vector<NetworkApplication> ReadNetworkApplications() {
     adapter.push_back(NetworkSwitch(form, &Network::override_mtu, Localized("覆盖 MTU"),
         Localized("关闭时保留配置中的 MTU")));
     if (form.Get().value.override_mtu) adapter.push_back(NetworkField(form, "mtu", "MTU"));
-    adapter.push_back(NetworkDisclosure(Localized("网卡名称与地址"), addresses).Key("network-address-toggle"));
+    if (!kAndroidNetwork) adapter.push_back(NetworkField(form, "interface_name", Localized("网卡名称（留空跟随配置）")));
+    adapter.push_back(NetworkDisclosure(Localized("网卡地址"), addresses).Key("network-address-toggle"));
     if (addresses.Get()) {
-        if (!kAndroidNetwork) adapter.push_back(NetworkField(form, "interface_name", Localized("网卡名称（留空跟随配置）")));
         adapter.push_back(NetworkField(form, "addresses", Localized("网卡 IPv4/IPv6 地址（每行一个 CIDR）"), true));
     }
     return huxerui::Column {
@@ -702,5 +705,94 @@ void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun) {
     dialog.Show([tun, request](huxerui::DialogContext context) {
         return NetworkSettingsEditor(tun, [context] { context.Dismiss(); }, false, request);
     }, {.on_dismiss_request = [request] { if (*request) (*request)(); }});
+}
+
+// 独立 DNS 二级页：首行为“覆写 DNS”总开关，控制应用 DNS 是否参与编译；开关下方为具体配置。
+[[huxerui::composable]] huxerui::View NetworkDnsEditor(std::function<void()> onBack) {
+    const auto& theme = huxerui::UseTheme();
+    const auto settings = huxerui::UseService<SettingsModel>();
+    const auto control = UseCoreControl();
+    const auto baseline = huxerui::UseState(settings->view.Get().network);
+    const auto form = huxerui::UseState(NetworkForm(baseline.Get()));
+    const auto alive = huxerui::UseState(true);
+    huxerui::Lifecycle([alive] { return [alive] { alive = false; }; }, 0);
+    const auto toast = UseFluxToast();
+    Network parsed;
+    const auto failure = form.Get().Read(parsed);
+    const auto title = Localized("DNS 设置");
+    const bool busy = control.Busy();
+    const bool valid = failure.empty() && settings->view.Get().networkError.empty() && !busy;
+    const bool canApply = control.ProxyActive();
+    const auto save = [=](bool apply) {
+        if (control.Busy()) return;
+        Network next;
+        if (const auto error = form.Get().Read(next); !error.empty()) { toast.Show(error); return; }
+        const auto expected = baseline.Get();
+        LaunchCoreOperation<NetworkSaveResult>(control.tasks, control.model, {.action = CoreAction::NetworkSettings},
+            [next, expected, apply](CoreCommand) -> huxerui::Task<NetworkSaveResult> {
+                co_return co_await RunOnTaskThread([=] {
+                    auto& core = store::coreStore();
+                    NetworkSaveResult result;
+                    result.error = core.saveNetworkSettings(next, expected, apply);
+                    result.value = core.networkSettings();
+                    result.core = ReadCoreView(true, false);
+                    return result;
+                });
+            }, [=](std::optional<NetworkSaveResult> result, std::exception_ptr error) {
+                if (error || !result) {
+                    try { if (error) std::rethrow_exception(error); }
+                    catch (const std::exception& exception) { toast.Show(exception.what()); return; }
+                    catch (...) {}
+                    toast.Show(Localized("网络设置保存失败")); return;
+                }
+                settings->PublishNetwork(result->value);
+                control.model->Update([&](CoreView& view) { view = result->core; });
+                if (!result->error.empty()) { toast.Show(result->error); return; }
+                toast.Show(apply && canApply ? Localized("网络设置已应用") : Localized("网络设置已保存，待下次连接或重启应用"));
+                if (alive.Get()) onBack();
+            });
+    };
+    const auto dialog = huxerui::UseDialog();
+    const auto close = [=] {
+        if (control.Busy()) return;
+        if (!form.Get().Changed(baseline.Get())) { onBack(); return; }
+        ConfirmDiscardChanges(dialog, onBack);
+    };
+    std::vector<huxerui::View> notices;
+    if (canApply && control.model->view.Get().core.networkRevision != settings->view.Get().network.revision)
+        notices.push_back(huxerui::Text(Localized("有待应用的网络设置")));
+    if (!failure.empty()) notices.push_back(huxerui::Text(failure).Style(huxerui::TextStyle{
+        huxerui::Font::System(font_size::kCaption), theme.colors.error}));
+    if (!settings->view.Get().networkError.empty()) notices.push_back(huxerui::Text(settings->view.Get().networkError));
+    const auto content = PageBodyRegion(huxerui::Column {
+      notices.empty() ? huxerui::View{} : huxerui::View{huxerui::Column(notices).With(
+          huxerui::Spacing(4.0F), huxerui::Padding(huxerui::EdgeInsets::Symmetric(16.0F, 4.0F)),
+          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("network-dns-notices")},
+      NetworkSection({
+        AdvancedSwitch(form, &AdvancedNetwork::override_dns, Localized("覆写 DNS"),
+            Localized("启用后，以下设置覆盖未自带 DNS 的订阅；关闭则跟随系统 DNS")),
+        form.Get().extra.override_dns ? NetworkField(form, "remote_dns", Localized("远程 DNS（DoH，可空）")) : huxerui::View{},
+        form.Get().extra.override_dns ? SettingsContentRow(huxerui::Text(
+            Localized("用于需要本地解析的域名；留空跟随系统 DNS，仅对未自带 DNS 的订阅生效，支持 https://1.1.1.1/dns-query 等 IP 地址形式。"))) : huxerui::View{},
+      }),
+    }.With(huxerui::Grow(1.0F), huxerui::Enabled(!busy),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), PageScrollInset(theme));
+    const auto saveMenu = UseActionMenu();
+    const auto commit = [saveMenu, save, canApply] {
+        if (!canApply) { save(false); return; }
+        saveMenu.Show({
+            ActionMenuItem(app::images::check, Localized("保存并应用"), [save] { save(true); }),
+            ActionMenuItem(app::images::save, Localized("保存"), [save] { save(false); }),
+        });
+    };
+    return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
+        FormHeaderAction(app::images::save, Localized("保存"), commit, valid, busy)
+            .With(saveMenu.Target()).Key("network-dns-save"),
+        FormPageContent(content), close, false, true, true);
+}
+
+[[huxerui::composable]] huxerui::View NetworkDnsEditorPage() {
+    const auto navigation = huxerui::UseNavigation();
+    return NetworkDnsEditor([navigation] { static_cast<void>(navigation.Pop()); });
 }
 } // namespace clashflux::ui

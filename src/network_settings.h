@@ -20,6 +20,10 @@ struct Advanced {
     std::string proxy_mode = "manual"; // manual / pac / pac_url
     int pac_port = 7900;
     std::string pac_url, pac_direct_domains;
+    // 可选远程 DNS（DoH，IP 字面量地址），仅覆盖未自带 DNS 的来源；空 = 系统 DNS。
+    // override_dns=false 时 remote_dns 仅作草稿保存，不参与编译。
+    bool override_dns = false;
+    std::string remote_dns;
     bool operator==(const Advanced&) const = default;
 };
 
@@ -129,6 +133,32 @@ inline bool OneOf(std::string_view value, std::initializer_list<std::string_view
     return std::find(choices.begin(), choices.end(), value) != choices.end();
 }
 
+// 远程 DNS 仅接受 https://IP[:port][/path]，避免 DoH 服务器域名自身再需要引导解析。
+inline bool ParseDohUrl(std::string_view url, std::string& host, int& port, std::string& path) {
+    if (!url.starts_with("https://")) return false;
+    const std::string_view rest = url.substr(8);
+    const auto slash = rest.find('/');
+    const auto authority = rest.substr(0, slash);
+    path = slash == std::string_view::npos ? "/dns-query" : std::string(rest.substr(slash));
+    if (path.size() > 256 || path.find_first_of(" \t\r\n?#") != std::string_view::npos) return false;
+    if (authority.empty() || authority.find_first_of("@\\\"") != std::string_view::npos) return false;
+    port = 443;
+    if (authority.starts_with('[')) {
+        const auto end = authority.find(']');
+        if (end == std::string_view::npos) return false;
+        host = authority.substr(1, end - 1);
+        if (!IPv6(host)) return false;
+        if (end + 1 == authority.size()) return true;
+        if (authority[end + 1] != ':') return false;
+        return Integer(authority.substr(end + 2), port, 1, 65535);
+    }
+    const auto colon = authority.find(':');
+    host = authority.substr(0, colon);
+    if (!IPv4(host)) return false;
+    if (colon == std::string_view::npos) return true;
+    return Integer(authority.substr(colon + 1), port, 1, 65535);
+}
+
 inline bool PacUrl(std::string_view url) {
     const auto start = url.starts_with("https://") ? 8U : url.starts_with("http://") ? 7U : 0U;
     if (!start || url.size() > 4096 || url.find_first_of("@#\\\"' <>`$\r\n\t") != std::string_view::npos ||
@@ -201,6 +231,12 @@ inline std::string ValidateAdvanced(const Advanced& a) {
             if (id.size() > 96 || id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" ) != std::string::npos)
                 return "规则集资源 ID 无效";
     if (a.pac_port < 1 || a.pac_port > 65535) return "PAC 端口需要 1–65535 的整数";
+    if (!a.remote_dns.empty()) {
+        std::string host, path;
+        int port = 0;
+        if (!ParseDohUrl(a.remote_dns, host, port, path))
+            return "远程 DNS 需要 https://IP[:port][/path] 形式（如 https://1.1.1.1/dns-query）";
+    }
     if (a.proxy_mode == "pac_url" && !PacUrl(a.pac_url))
         return "PAC URL 需要有效的 HTTP(S) 地址，不能含凭据或片段";
     for (const auto& domain : Lines(a.pac_direct_domains))

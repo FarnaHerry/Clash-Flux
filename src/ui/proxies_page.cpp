@@ -275,6 +275,12 @@ std::string BuildNodeDetail(const ProxyNode& node) {
 // 列数继续增加，更窄时逐级回落（卡片文本截断省略，窄列不溢出）。
 constexpr float kProxyNodeWidth = 196.0F;
 
+// 虚拟网格的固定缓存高度。宽屏列数多时，框架默认的 0.5 视口高度会让每个
+// 滚动帧反复回收/重建边界卡片（15 列 × 96 帧约 7.3 万次工厂调用，见
+// docs/evidence/2026-11-16-proxy-grid-scroll.md）；200pt 保留约 3 行预热，
+// 消除该抖动并把同时挂载的卡片数减少约四成。
+constexpr float kProxyGridCacheExtent = 200.0F;
+
 // 桌面右下角悬浮测速按钮的滚动尾部净空：56pt 按钮 + 24pt 底部外边距。
 constexpr float kSpeedFabFooterHeight = 80.0F;
 
@@ -772,6 +778,7 @@ std::function<void()> NodeSelectAction(
                                  // 自适应高度（字体缩放、系统字号变化都会改高度），
                                  // 写死精确行高会在这些情况下裁切/错位。
                                  .EstimatedRowExtent(52.0F)
+                                 .CacheExtent(kProxyGridCacheExtent)
                                  .ColumnSpacing(kSectionCardSpacing), {}, {}, {},
                                  ScrollAreaInsets::Symmetric(kSectionCardSpacing, compact
                                      ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F)))

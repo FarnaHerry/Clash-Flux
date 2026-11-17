@@ -69,7 +69,7 @@ DNS 定向回归：
 
 ```bash
 cmake --build build --target test_singbox
-ctest --test-dir build --output-on-failure --no-tests=error -R '^(dns_hosts_runtime|dns_policy_runtime|dns_tls_runtime)$'
+ctest --test-dir build --output-on-failure --no-tests=error -R '^(dns_hosts_runtime|dns_policy_runtime|dns_tls_runtime|resolve_routing_runtime)$'
 ```
 
 验收证据写入 [L1/L2/L3 状态](../../docs/l1-l2-l3-status.md)：日期、代码快照、真实检查及未完成边界。构建、配置检查、无窗口回归不能写成真机 VPN 或发布通过。

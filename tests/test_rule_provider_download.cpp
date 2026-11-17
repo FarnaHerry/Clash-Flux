@@ -136,11 +136,15 @@ int testDownloadPool(char** argv) {
                 readFile(root / "recovery") == preserved, "candidate validation held or leaked the transport");
     options.validate = {};
     options.subscriptionRequest = true;
+    const auto native = recovery.downloadToFile(base + "/identity-native", root / "identity", options);
+    require(native.ok && native.download.attempts == 1, "native subscriptions use one request");
     const auto compatible = recovery.downloadToFile(base + "/identity", root / "identity", options);
     require(compatible.ok && compatible.download.attempts == 2,
-            "ordinary subscriptions get one bounded 403 user-agent fallback");
+            "ordinary subscriptions try Clash after the first 403");
+    const auto last = recovery.downloadToFile(base + "/identity-last", root / "identity", options);
+    require(last.ok && last.download.attempts == 3, "the application identity is the last fallback");
     const auto deniedSource = recovery.downloadToFile(base + "/direct-denied", root / "identity", options);
-    require(!deniedSource.ok && deniedSource.download.attempts == 2 && deniedSource.failurePhase == "http",
+    require(!deniedSource.ok && deniedSource.download.attempts == 3 && deniedSource.failurePhase == "http",
             "persistent HTTP denial is classified and never loops the user-agent fallback");
     options.headers = {{"User-Agent", "explicit-test-agent"}};
     const auto customAgent = recovery.downloadToFile(base + "/identity", root / "identity", options);

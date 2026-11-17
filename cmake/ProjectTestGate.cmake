@@ -3,7 +3,7 @@
 # persistence (including migration and file preservation) remains mandatory.
 function(clashflux_check_required_tests)
     set(required smoke profile_links page_transition singbox wire_codec rule_provider_download
-        dns_hosts_runtime dns_policy_runtime dns_tls_runtime shadowsocks_runtime protocol_runtime v2ray_uri_runtime secure_uri_runtime node_input_catalog vpn routing compensation
+        dns_hosts_runtime dns_policy_runtime dns_tls_runtime resolve_routing_runtime shadowsocks_runtime protocol_runtime v2ray_uri_runtime secure_uri_runtime node_input_catalog vpn routing compensation
         persistence core_api_lifetime connection_trace_runtime project_test_gate group_expansion_runtime proxy_provider_runtime proxy_standby_runtime service_protocol cps_dependencies runtime_health native_control_runtime ui_resources runtime_evidence personal_rule_sets_runtime resource_management_runtime)
     if (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
         list(APPEND required app_update app_update_async app_update_handoff)

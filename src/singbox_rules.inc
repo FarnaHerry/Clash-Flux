@@ -1027,10 +1027,10 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
                  std::format("规则 {} 缺少匹配值或目标，已跳过", line));
         return true;
     }
-    bool ignoredNoResolve = false;
+    bool noResolve = false;
     for (std::size_t index = 3; index < parts.size(); ++index) {
         if (lowerCopy(parts[index]) == "no-resolve") {
-            ignoredNoResolve = true;
+            noResolve = true;
         } else {
             ctx.note(FidelityScope::Rule, Fidelity::Unsupported, line,
                      std::format("规则 {} 的修饰符「{}」尚未转换，已跳过", line, parts[index]),
@@ -1107,9 +1107,14 @@ bool convertRule(Context& ctx, std::string_view rawLine) {
         }
         rule.update(condition.rule);
     }
-    if (ignoredNoResolve) {
+    if (noResolve && (kind == "ip-cidr" || kind == "ip-cidr6")) {
+        ctx.noResolveSourceRules.push_back(ctx.config["route"]["rules"].size());
         ctx.note(FidelityScope::Rule, Fidelity::Approx, line,
-                 std::format("规则 {} 的 no-resolve 尚未保真，托管路由仍会执行前置解析", line),
+                 std::format("规则 {} 的 no-resolve 不主动查询 DNS；匹配使用已有目标地址", line),
+                 "sing-box 可以匹配已有结果中的多个地址，Mihomo 使用单个目标 IP");
+    } else if (noResolve) {
+        ctx.note(FidelityScope::Rule, Fidelity::Approx, line,
+                 std::format("规则 {} 的 no-resolve 尚未保真，仍按该条件的目标地址依赖规划解析", line),
                  "当前保留原匹配规则；no-resolve 不会写成内核不存在的字段");
     }
     ctx.config["route"]["rules"].push_back(std::move(rule));
@@ -1249,7 +1254,69 @@ std::string unusedOutboundTag(const nlohmann::json& config, std::string preferre
     return preferred;
 }
 
-bool applyConnectionRules(Context& ctx) {
+bool simplePreResolveCondition(std::string_view field) {
+    return field == "domain" || field == "domain_suffix" || field == "domain_keyword" ||
+        field == "domain_regex" || field == "network" || field == "port" || field == "port_range" ||
+        field == "source_port" || field == "source_port_range" || field == "source_ip_cidr";
+}
+
+std::set<std::string_view> addressIndependentInlineSets(const nlohmann::json& route) {
+    std::set<std::string_view> tags;
+    const auto sets = route.find("rule_set");
+    if (sets == route.end() || !sets->is_array()) return tags;
+    for (const auto& set : *sets) {
+        if (!set.is_object() || set.value("type", "") != "inline") continue;
+        const auto rules = set.find("rules");
+        const auto tag = set.find("tag");
+        if (rules == set.end() || !rules->is_array() || tag == set.end() || !tag->is_string()) continue;
+        if (std::ranges::all_of(*rules, [](const auto& rule) {
+            if (!rule.is_object() || rule.empty()) return false;
+            return std::ranges::all_of(rule.items(), [](const auto& field) {
+                return simplePreResolveCondition(field.key());
+            });
+        })) tags.insert(tag->get_ref<const std::string&>());
+    }
+    return tags;
+}
+
+bool mayNeedDestinationIp(const nlohmann::json& rule,
+                          const std::set<std::string_view>& addressIndependentSets) {
+    if (!rule.is_object()) return false;
+    if (rule.contains("ip_cidr") || rule.contains("geoip") || rule.contains("ip_is_private")) return true;
+    if (const auto sets = rule.find("rule_set"); sets != rule.end()) {
+        if (!sets->is_array() || std::ranges::any_of(*sets, [&](const auto& tag) {
+            return !tag.is_string() || !addressIndependentSets.contains(tag.template get_ref<const std::string&>());
+        })) return true;
+    }
+    const auto children = rule.find("rules");
+    return children != rule.end() && children->is_array() && std::ranges::any_of(*children, [&](const auto& child) {
+        return mayNeedDestinationIp(child, addressIndependentSets);
+    });
+}
+
+// A default sing-box rule ORs domain and target IP match fields. A guard
+// requires explicit AND, with one positive IP leaf and independent siblings.
+nlohmann::json resolveGuard(const nlohmann::json& rule) {
+    if (rule.value("type", "") != "logical" || rule.value("mode", "") != "and" ||
+        rule.contains("invert") || !rule.contains("rules") || !rule["rules"].is_array()) return {};
+    bool foundAddress = false;
+    nlohmann::json conditions = nlohmann::json::array();
+    for (const auto& child : rule["rules"]) {
+        if (!child.is_object() || child.empty()) return {};
+        if (child.size() == 1 && (child.contains("ip_cidr") || child.contains("ip_is_private"))) {
+            if (foundAddress) return {};
+            foundAddress = true;
+        } else {
+            if (!std::ranges::all_of(child.items(), [](const auto& field) {
+                return simplePreResolveCondition(field.key());
+            })) return {};
+            conditions.push_back(child);
+        }
+    }
+    return foundAddress && !conditions.empty() ? std::move(conditions) : nlohmann::json{};
+}
+
+bool applyConnectionRules(Context& ctx, ProfileFormat format) {
 #if (!defined(__linux__) && !defined(_WIN32)) || defined(__ANDROID__)
     if (ctx.opt.tunInbound && std::ranges::any_of(ctx.opt.nativeConnections,
             [](const auto& native) {
@@ -1407,8 +1474,8 @@ bool applyConnectionRules(Context& ctx) {
         {{"protocol", "dns"}}, {{"inbound", nativeDnsTuns}, {"invert", true}}})}, {"action", "hijack-dns"}});
     if (!ctx.hostsDomains.empty()) precedence.push_back({
         {"domain", ctx.hostsDomains}, {"action", "resolve"}, {"server", ctx.hostsDnsTag}, {"disable_cache", true}});
-    if (ctx.hostsDomains.empty()) precedence.push_back({{"action", "resolve"}});
-    else precedence.push_back({{"domain", ctx.hostsDomains}, {"invert", true}, {"action", "resolve"}});
+    const bool nodeSubscription = format == ProfileFormat::NodeSubscription;
+    const std::size_t resolvePosition = precedence.size();
     auto rules = ctx.opt.globalRules;
     // 原生内网规则进入同一 SourcePolicy 层；显式 UserOverride 始终在其前面。
     struct InternalRule { std::string cidr; std::string connectionId; int prefix; };
@@ -1438,8 +1505,10 @@ bool applyConnectionRules(Context& ctx) {
             .tier = vpn::RuleTier::SourcePolicy, .order = ++order});
     }
     std::stable_sort(rules.begin(), rules.end(), vpn::RulePrecedes);
+    bool usesManagedVpn = false;
     for (const auto& item : rules) {
         if (!item.enabled) continue;
+        usesManagedVpn = usesManagedVpn || nativeTags.contains(item.connectionId);
         if (item.match == vpn::MatchKind::ExactIp && item.pattern.find(':') != std::string::npos &&
             nativeTags.contains(item.connectionId)) {
             ctx.result.error = "原生 VPN 补偿路由当前仅支持 IPv4，不能使用 IPv6 目标规则";
@@ -1460,12 +1529,78 @@ bool applyConnectionRules(Context& ctx) {
     nlohmann::json globalMode{{"clash_mode", "global"}};
     applyMainDefault(globalMode);
     precedence.push_back(std::move(globalMode));
+    const std::size_t sourceRuleBegin = precedence.size();
     for (auto& rule : config["route"]["rules"]) precedence.push_back(std::move(rule));
     precedence.push_back({{"clash_mode", "rule"}, {"outbound", config["route"]["final"]}});
+
+    const auto end = precedence.size();
+    std::size_t insertAt = nodeSubscription ? end : resolvePosition;
+    nlohmann::json guard;
+    if (nodeSubscription || (format == ProfileFormat::ClashYaml && !ctx.opt.profileYaml.empty())) {
+        const auto independentSets = addressIndependentInlineSets(config["route"]);
+        bool hasAddressRules = false;
+        bool finalActionsOnly = true;
+        std::size_t firstRequired = end;
+        bool laterRequired = false;
+        for (auto index = resolvePosition; index < end; ++index) {
+            const auto& rule = precedence[index];
+            const auto action = rule.value("action", "route");
+            finalActionsOnly = finalActionsOnly && (action == "route" || action == "reject");
+            if (!mayNeedDestinationIp(rule, independentSets)) {
+                // Proven inline sets can move a previously mixed configuration
+                // onto the no-ordinary-resolve path.
+                hasAddressRules = hasAddressRules ||
+                    (!independentSets.empty() && mayNeedDestinationIp(rule, {}));
+                continue;
+            }
+            hasAddressRules = true;
+            if (index >= sourceRuleBegin && std::ranges::binary_search(
+                    ctx.noResolveSourceRules, index - sourceRuleBegin)) continue;
+            if (firstRequired == end) firstRequired = index;
+            else laterRequired = true;
+        }
+        // Domain-only Clash YAML retains its existing DNS policy. A mixed
+        // generated route can defer the ordinary query past earlier final rules.
+        if (hasAddressRules && (!finalActionsOnly || (usesManagedVpn && ctx.noResolveSourceRules.empty()))) {
+            insertAt = resolvePosition;
+        } else if (nodeSubscription || hasAddressRules) {
+            insertAt = firstRequired;
+            if (insertAt < end && !laterRequired) guard = resolveGuard(precedence[insertAt]);
+        }
+    }
+    if (insertAt < end) {
+        nlohmann::json resolve{{"action", "resolve"}};
+        if (guard.is_array()) {
+            if (!ctx.hostsDomains.empty()) guard.push_back({{"domain", ctx.hostsDomains}, {"invert", true}});
+            resolve.update({{"type", "logical"}, {"mode", "and"}, {"rules", std::move(guard)}});
+        } else if (!ctx.hostsDomains.empty()) {
+            resolve.update({{"domain", ctx.hostsDomains}, {"invert", true}});
+        }
+        precedence.insert(precedence.begin() + insertAt, std::move(resolve));
+        for (auto& origin : ctx.result.rulePlan.origins)
+            if (origin.index >= insertAt) ++origin.index;
+    }
     config["route"]["rules"] = std::move(precedence);
     ctx.result.rulePlan.ruleCount = config["route"]["rules"].size();
     for (const auto& object : ctx.result.sourceObjects)
         ctx.result.rulePlan.outboundLabels[object.tag] = object.objectId +
             (object.sourceName.empty() ? "" : " · " + object.sourceName);
+    // 可选远程 DNS：仅覆盖应用注入的默认 DNS，不改来源自带 DNS。远程服务器经默认
+    // 出口查询，避免 UDP 污染；DIRECT 与节点域名仍用 local，保持既有引导行为。
+    if (ctx.defaultDnsInjected && ctx.opt.network.advanced && ctx.opt.network.advanced->override_dns &&
+        !ctx.opt.network.advanced->remote_dns.empty()) {
+        std::string host, path;
+        int port = 443;
+        if (clashflux::network::ParseDohUrl(ctx.opt.network.advanced->remote_dns, host, port, path)) {
+            ctx.config["dns"]["servers"].push_back({
+                {"type", "https"}, {"tag", "remote"}, {"server", host},
+                {"server_port", port}, {"path", path}, {"detour", ctx.config["route"]["final"]}});
+            ctx.config["dns"]["final"] = "remote";
+            const auto localTag = ctx.config["dns"]["servers"][0].value("tag", "local");
+            for (auto& outbound : ctx.config["outbounds"])
+                if (outbound.value("type", "") == "direct")
+                    outbound["domain_resolver"] = {{"server", localTag}};
+        }
+    }
     return true;
 }

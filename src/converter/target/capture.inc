@@ -1,19 +1,29 @@
 // Main source capture runs before namespacing and runtime policy injection.
 // No source is re-parsed, and failed candidates never publish the pending model.
-// Reuse only captured simple branches with no conversion diagnostics or
-// resource side effects. Outbounds are resolved again in this compilation.
+// Reuse simple branches without resource side effects. Top-level no-resolve
+// also carries its note and position into the new candidate.
 bool emitCapturedClashRule(Context& ctx, std::size_t sourceIndex, std::string_view raw) {
     if (!ctx.ruleSource) return false;
     const auto& data = TargetProjection::Read(*ctx.ruleSource);
     if (sourceIndex >= data.origins.size()) return false;
     const auto& origin = data.origins[sourceIndex];
-    if (!origin.editable || !origin.diagnostics.empty() ||
+    if (origin.rules.size() != 1 ||
         !origin.anchor.starts_with("clash:") || std::string_view(origin.anchor).substr(6) != trimCopy(raw))
         return false;
     const auto id = origin.rules.front();
+    const bool noResolve = std::ranges::binary_search(data.noResolveRuleIds, id);
+    if (!noResolve && (!origin.editable || !origin.diagnostics.empty())) return false;
     const auto& rule = data.rules[id-1];
     if (!rule.outbound.empty() && !ctx.tagKnown(rule.outbound)) return false;
-    ctx.config["route"]["rules"].push_back(data.payload[id-1]);
+    auto& rules = ctx.config["route"]["rules"];
+    if (noResolve) {
+        ctx.noResolveSourceRules.push_back(rules.size());
+        for (const auto index : origin.diagnostics) {
+            const auto& note = data.diagnostics[index];
+            ctx.note(note.scope, note.level, note.subject, note.detail, note.action);
+        }
+    }
+    rules.push_back(data.payload[id-1]);
     ++ctx.result.targetRulesReused;
     return true;
 }
@@ -27,6 +37,9 @@ bool convertSourceClashRule(Context& ctx, std::size_t sourceIndex, std::string_v
     ctx.targetCapture->Record("clash:" + trimCopy(raw),
         more ? TargetRuleState::Omitted : TargetRuleState::Default,
         ctx.config["route"]["rules"], begin, firstNote, ctx.result.fidelity.size());
+    if (!ctx.noResolveSourceRules.empty() && ctx.noResolveSourceRules.back() == begin &&
+        ctx.config["route"]["rules"].size() > begin)
+        ctx.targetCapture->data->noResolveRuleIds.push_back(ctx.targetCapture->data->rules.back().id);
     return more;
 }
 

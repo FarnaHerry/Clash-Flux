@@ -3604,6 +3604,94 @@ void profileScrollWork() {
     });
 }
 
+int proxyGridBuilt = 0;
+struct ProxyGridProfileFixture {
+    huxerui::State<int> generation{0};
+    float cache_extent = -1.0F;
+    std::size_t count = 5000;
+};
+std::shared_ptr<ProxyGridProfileFixture> proxyGridProfileFixture;
+huxerui::ScrollController proxyGridController;
+huxerui::View ProxyGridProfileRoot() {
+    using namespace clashflux::ui;
+    const auto model = huxerui::UseState(std::make_shared<ProxyGridProfileFixture>()).Get();
+    proxyGridProfileFixture = model;
+    const int generation = model->generation.Get();
+    const auto item = [](std::size_t index) -> huxerui::View {
+        ++proxyGridBuilt;
+        const auto title = huxerui::Text("node-" + std::to_string(index))
+            .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall),
+                huxerui::Color::Transparent()});
+        return huxerui::Scope([index, title] {
+            return ProxyNodeTile(title, huxerui::Text("VLESS"),
+                huxerui::Text(std::to_string(20 + static_cast<int>(index % 980))),
+                index == 0, "node-" + std::to_string(index), [] {},
+                SelectableTileInteraction::Selectable, true, false, false, [] {});
+        }).Key("proxy-grid-card-" + std::to_string(index));
+    };
+    return huxerui::FlatTheme{huxerui::Scope([model, item, generation] {
+        const auto controller = huxerui::UseScrollController();
+        proxyGridController = controller;
+        auto grid = PageVirtualGrid(model->count, item, 8.0F)
+            .Columns(huxerui::GridColumns::Adaptive(196.0F)) // matches kProxyNodeWidth
+            .EstimatedRowExtent(52.0F)
+            .Controller(controller);
+        if (model->cache_extent >= 0.0F) grid = std::move(grid).CacheExtent(model->cache_extent);
+        return huxerui::Column {ScrollArea(std::move(grid)
+                .Key("proxy-grid-viewport-" + std::to_string(generation)), controller, {}, {},
+            ScrollAreaInsets::Symmetric(kSectionCardSpacing))}
+            .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kProxyGridProfileApplication{ProxyGridProfileRoot, {.show_debug_overlay = false}};
+void profileProxyGrid() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    const auto measure = [&](float width, float cache) {
+        const std::string kind = cache < 0.0F ? "default" : "c" + std::to_string(static_cast<int>(cache));
+        std::printf("proxy-grid-start,w=%.0f,cache=%s\n", width, kind.c_str());
+        huxerui::testing::UiTest ui(kProxyGridProfileApplication,
+            {.viewport = {width, 1400.0F}, .resource_provider = AppResources()});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        ui.Pump();
+        proxyGridBuilt = 0;
+        proxyGridProfileFixture->cache_extent = cache;
+        proxyGridProfileFixture->generation = proxyGridProfileFixture->generation.Get() + 1;
+        const auto mountStart = std::chrono::steady_clock::now();
+        ui.PumpAndSettle({.timeout = std::chrono::seconds(1), .maximum_frames = 400});
+        const double mountMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - mountStart).count();
+        const auto card = ui.Find(UiSelector::Key("proxy-grid-card-0")).One();
+        std::printf("proxy-grid-mounted,w=%.0f,cache=%s,items=%d,mount_ms=%.2f,"
+                    "card_w=%.1f,card_h=%.1f,content=%.1f,viewport=%.1f\n",
+            width, kind.c_str(), proxyGridBuilt, mountMs, card.bounds.width, card.bounds.height,
+            proxyGridController.ContentExtent(), proxyGridController.ViewportExtent());
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 7,
+            .position = {width * 0.5F, 700.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse});
+        ui.Pump();
+        proxyGridBuilt = 0;
+        constexpr int frames = 96;
+        std::array<double, frames> samples{};
+        for (int frame = 0; frame < frames; ++frame) {
+            const auto start = std::chrono::steady_clock::now();
+            static_cast<void>(proxyGridController.ScrollBy(160.0F));
+            ui.Pump(std::chrono::milliseconds(16));
+            samples[frame] = std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count();
+        }
+        std::sort(samples.begin(), samples.end());
+        std::printf("proxy-grid-profile,w=%.0f,cache=%s,frames=%d,new_items=%d,"
+                    "offset=%.1f/max=%.1f,p50_us=%.2f,p95_us=%.2f\n",
+            width, kind.c_str(), frames, proxyGridBuilt, proxyGridController.Offset(),
+            proxyGridController.MaxOffset(), samples[frames / 2], samples[frames * 95 / 100]);
+        std::fflush(stdout);
+    };
+    for (const float width : {800.0F, 3200.0F}) {
+        measure(width, -1.0F);
+        measure(width, 200.0F); // matches kProxyGridCacheExtent
+    }
+}
+
 struct ScrollEdgesFixture {
     huxerui::State<bool> grid{false};
     huxerui::State<bool> dense{false};
@@ -7997,6 +8085,10 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); testWebsiteFormScroll(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--scroll-profile") {
         profileScrollWork();
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--proxy-grid-profile") {
+        profileProxyGrid();
         return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--profile-interval") {

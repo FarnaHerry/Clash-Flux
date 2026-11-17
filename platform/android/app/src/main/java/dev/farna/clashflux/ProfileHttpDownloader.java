@@ -26,17 +26,17 @@ final class ProfileHttpDownloader {
     static Result fetch(String address, int timeoutSeconds,
             long maxBytes, boolean forceDirect, String[] requestHeaders,
             boolean subscriptionRequest, String destination) {
+        String[] userAgents = ProfileHttpPolicy.SUBSCRIPTION_USER_AGENTS;
         Result result = fetchProfileWithUserAgent(address, timeoutSeconds,
                 maxBytes, forceDirect, requestHeaders, destination,
-                ProfileHttpPolicy.DEFAULT_USER_AGENT);
-        if (ProfileHttpPolicy.shouldRetryWithClashMeta(
-                result.status, subscriptionRequest, requestHeaders)) {
+                subscriptionRequest ? userAgents[0] : ProfileHttpPolicy.RESOURCE_USER_AGENT);
+        for (int index = 1; index < userAgents.length &&
+                ProfileHttpPolicy.shouldTryNextUserAgent(result.status, subscriptionRequest, requestHeaders); index++) {
             Result retried = fetchProfileWithUserAgent(address, timeoutSeconds,
-                    maxBytes, forceDirect, requestHeaders, destination,
-                    ProfileHttpPolicy.CLASH_META_USER_AGENT);
+                    maxBytes, forceDirect, requestHeaders, destination, userAgents[index]);
             retried.bytes += result.bytes;
-            retried.attempts = 2;
-            return retried;
+            retried.attempts += result.attempts;
+            result = retried;
         }
         return result;
     }

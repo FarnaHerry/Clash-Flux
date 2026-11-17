@@ -473,6 +473,17 @@ def main():
             assert requests - before == Counter({"/conditional-source": 1, "/conditional-rule": 1})
             assert ("/conditional-rule", '"rule-v1"') in conditional_headers, "providers revalidate even when the primary returns 304"
             assert (profiles / conditional_file).read_bytes() == original_source
+            cache_file = data / "subscription-http" / f"{conditional_id}.cache"
+            header, identity, cached_body = cache_file.read_bytes().split(b"\n", 2)
+            prefix = f"{conditional_id}:sing-box:".encode()
+            assert identity.startswith(prefix)
+            old_identity = f"{conditional_id}:".encode() + identity[len(prefix):]
+            cache_file.write_bytes(b"\n".join((header, old_identity, cached_body)))
+            conditional_headers.clear()
+            run("profile", "update", str(conditional_id))
+            assert conditional_headers[0] == ("/conditional-source", None), conditional_headers
+            assert cache_file.read_bytes().split(b"\n", 2)[1].startswith(prefix)
+            conditional_file = profile_path(conditional_id).name
             # A local edit invalidates the validator, even with the same filename.
             (profiles / conditional_file).write_bytes(original_source + b"# external local edit\n")
             conditional_headers.clear()

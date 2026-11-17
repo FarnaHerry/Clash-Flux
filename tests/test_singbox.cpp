@@ -578,7 +578,9 @@ void testLogicalRuleResources() {
     };
     const auto logicalRules = [&](const auto& result) {
         json found = json::array();
-        for (const auto& rule : routeRules(result)) if (rule.value("type", "") == "logical") found.push_back(rule);
+        for (const auto& rule : routeRules(result))
+            if (rule.value("type", "") == "logical" && rule.value("action", "") != "resolve")
+                found.push_back(rule);
         return found;
     };
     const auto privateGeo = compile("  - AND,((NETWORK,TCP),(NOT,((GEOIP,private)))),REJECT-DROP\n");
@@ -2773,6 +2775,68 @@ void testNodeSubscriptions() {
         outputs[2]["security"] == "aes-128-gcm" &&
         outputs[3]["type"] == "selector" && outputs[3]["outbounds"].size() == 2 &&
         config["route"]["final"] == outputs[3]["tag"], "net=tls alias and selectable default preserve every node");
+    check(std::ranges::none_of(config["route"]["rules"], [](const json& rule) {
+        return rule.value("action", "") == "resolve";
+    }), "bare node subscriptions leave proxy targets to server-side resolution");
+    singbox::CompileOptions ipOptions;
+    ipOptions.profileYaml = raw;
+    vpn::RouteRule ipRule;
+    ipRule.match = vpn::MatchKind::Ipv4Cidr;
+    ipRule.pattern = "192.0.2.0/24";
+    ipRule.connectionId = vpn::DirectConnectionId();
+    ipRule.id = "ip-check";
+    ipRule.tier = vpn::RuleTier::UserOverride;
+    ipOptions.globalRules.push_back(std::move(ipRule));
+    const auto withIp = singbox::compileConfig(ipOptions);
+    check(withIp.error.empty(), "IP-matching personal rule compiles on a node subscription");
+    if (withIp.error.empty()) {
+        const auto ipConfig = json::parse(withIp.json);
+        const auto& ipRules = ipConfig["route"]["rules"];
+        std::size_t ipIndex = ipRules.size();
+        bool hasResolve = false;
+        for (std::size_t i = 0; i < ipRules.size(); ++i) {
+            if (ipRules[i].value("action", "") == "resolve") hasResolve = true;
+            if (ipRules[i].contains("ip_cidr")) ipIndex = i;
+        }
+        check(hasResolve && ipIndex < ipRules.size() && withIp.rulePlan.origins.size() == 1 &&
+            withIp.rulePlan.origins.front().index == ipIndex,
+            "IP-matching rules restore managed resolve and keep trace indices aligned");
+    }
+    singbox::CompileOptions dohOptions;
+    dohOptions.profileYaml = raw;
+    dohOptions.mainConnectionId = "runtime-main";
+    dohOptions.network.advanced = clashflux::network::Advanced{};
+    dohOptions.network.advanced->override_dns = true;
+    dohOptions.network.advanced->remote_dns = "https://1.1.1.1/dns-query";
+    const auto doh = singbox::compileConfig(dohOptions);
+    check(doh.error.empty(), "remote DoH override compiles on a bare node subscription");
+    if (doh.error.empty()) {
+        const auto dohConfig = json::parse(doh.json);
+        const auto& servers = dohConfig["dns"]["servers"];
+        check(servers.size() == 2 && servers[1]["type"] == "https" && servers[1]["tag"] == "remote" &&
+            servers[1]["server"] == "1.1.1.1" && servers[1]["server_port"] == 443 &&
+            servers[1]["path"] == "/dns-query" && servers[1]["detour"] == dohConfig["route"]["final"] &&
+            dohConfig["dns"]["final"] == "remote", "remote DoH server is routed through the default outbound");
+        check(std::ranges::any_of(dohConfig["outbounds"], [&](const json& outbound) {
+            return outbound.value("type", "") == "direct" &&
+                outbound.value("domain_resolver", json::object())["server"] == dohConfig["dns"]["servers"][0]["tag"];
+        }), "direct connections keep the local resolver when remote DoH is configured");
+    }
+    singbox::CompileOptions noDohOptions = dohOptions;
+    noDohOptions.network.advanced->override_dns = false;
+    const auto noDoh = singbox::compileConfig(noDohOptions);
+    check(noDoh.error.empty() && json::parse(noDoh.json)["dns"]["servers"].size() == 1 &&
+        json::parse(noDoh.json)["dns"]["final"] == json::parse(noDoh.json)["dns"]["servers"][0]["tag"],
+        "override switch off keeps the default local DNS even with a saved DoH draft");
+    for (const auto& [url, valid] : std::initializer_list<std::pair<std::string, bool>>{
+            {"https://1.1.1.1/dns-query", true}, {"https://[2606:4700:4700::1111]/dns-query", true},
+            {"https://8.8.8.8:8443/dns-query", true}, {"http://1.1.1.1/dns-query", false},
+            {"https://dns.google/dns-query", false}, {"https://1.1.1.1:0/dns-query", false},
+            {"https://user@1.1.1.1/dns-query", false}, {"https://1.1.1.1/dns-query?x=1", false}}) {
+        std::string host, path;
+        int port = 0;
+        check(clashflux::network::ParseDohUrl(url, host, port, path) == valid, "DoH URL validation: " + url);
+    }
     check(std::ranges::any_of(baseline.fidelity, [](const auto& note) {
         return note.subject == "node-subscription.policy" && note.level == singbox::Fidelity::Approx;
     }) && std::ranges::any_of(baseline.fidelity, [](const auto& note) {
@@ -3003,6 +3067,40 @@ void testNetworkSettings(const std::filesystem::path& root = {}) {
 
 }
 
+int writeResolveFixtures(const std::filesystem::path& root) {
+    singbox::CompileOptions options;
+    options.mainConnectionId = "resolve-main";
+    options.profileYaml = "ss://YWVzLTEyOC1nY206cGFzcw@127.0.0.1:1080#route-node";
+    const auto write = [&](std::string_view name) {
+        const auto result = singbox::compileConfig(options);
+        if (!result.error.empty() || result.json.empty()) {
+            std::println(stderr, "{}", result.error);
+            return false;
+        }
+        const auto rules = json::parse(result.json).at("route").at("rules");
+        if (result.rulePlan.ruleCount != rules.size()) return false;
+        if (name == "mixed") {
+            const auto& origins = result.rulePlan.origins;
+            if (origins.size() != 2 || origins[0].ruleId != "early-domain" ||
+                origins[1].ruleId != "resolved-ip" || origins[0].index + 2 != origins[1].index ||
+                !rules.at(origins[0].index).contains("domain_suffix") ||
+                rules.at(origins[0].index + 1).value("action", "") != "resolve" ||
+                !rules.at(origins[1].index).contains("ip_cidr")) return false;
+        }
+        std::ofstream output(root / (std::string(name) + ".json"));
+        return static_cast<bool>(output << result.json);
+    };
+    if (!write("bare")) return 1;
+    options.globalRules = {
+        {.match = vpn::MatchKind::DomainSuffix, .pattern = "early.test",
+         .connectionId = "resolve-main", .id = "early-domain",
+         .tier = vpn::RuleTier::UserOverride, .order = 1},
+        {.match = vpn::MatchKind::Ipv4Cidr, .pattern = "127.0.0.1/32",
+         .connectionId = std::string(vpn::DirectConnectionId()), .id = "resolved-ip", .order = 2}};
+    if (!write("mixed")) return 1;
+    return 0;
+}
+
 int writeTraceFixtures(const std::filesystem::path& root) {
     for (const auto* mode : {"unique", "duplicate"}) {
         singbox::CompileOptions options;
@@ -3050,6 +3148,8 @@ int writeTraceFixtures(const std::filesystem::path& root) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--resolve-fixtures")
+        return writeResolveFixtures(argv[2]);
     if (argc == 2 && std::string_view(argv[1]) == "--node-inputs") {
         node_input_tests::LegacyRun(); node_input_tests::CatalogRun(); return failures ? 1 : 0;
     }
@@ -3581,7 +3681,7 @@ int main(int argc, char** argv) {
               }),
           "select 组无降级条目");
 
-    // 路由：final = MATCH 目标；clash_mode 前置；resolve 使 GEOIP 可匹配域名；
+    // 路由：final = MATCH 目标；clash_mode 前置；首次目标 IP 匹配前解析；
     // REJECT → action；GEOIP/GEOSITE → rule_set。
     check(config["route"]["final"] == "自动选择", "MATCH 目标成为 final");
     const json& dnsServers = config["dns"]["servers"];
@@ -3600,11 +3700,16 @@ int main(int argc, char** argv) {
     const json& rules = config["route"]["rules"];
     check(rules[0].value("action", "") == "sniff", "首条规则为 sniff action");
     check(rules[1].value("action", "") == "hijack-dns", "DNS 劫持规则");
-    check(rules[2].value("action", "") == "resolve", "DNS 劫持后前置 resolve action");
-    check(rules[3].value("clash_mode", "") == "direct" &&
-              rules[3].value("outbound", "") == "DIRECT",
+    check(rules[2].value("clash_mode", "") == "direct" &&
+              rules[2].value("outbound", "") == "DIRECT",
           "direct 模式前置规则");
-    check(rules[4].value("clash_mode", "") == "global", "global 模式前置规则");
+    check(rules[3].value("clash_mode", "") == "global", "global 模式前置规则");
+    const auto firstResolve = std::find_if(rules.begin(), rules.end(), [](const auto& rule) {
+        return rule.value("action", "") == "resolve";
+    });
+    check(firstResolve != rules.end() && firstResolve + 1 != rules.end() &&
+        (firstResolve + 1)->contains("rule_set"),
+        "普通 resolve 紧邻首条需要目标地址的规则");
     check(rules.back().value("clash_mode", "") == "rule" &&
               rules.back()["outbound"] == config["route"]["final"],
           "rule 始终在模式列表且兜底不改变 route.final 语义");

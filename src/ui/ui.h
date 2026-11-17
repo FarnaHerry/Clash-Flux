@@ -500,6 +500,7 @@ huxerui::View RuntimeDiagnosticsRoutePage();
 enum class HomeProxySettingsKind { SystemProxy, Tun };
 huxerui::View NetworkSettingsEditor(bool tun, std::function<void()> onClose, bool fullPage,
     std::shared_ptr<std::function<void()>> dismissRequest = {});
+huxerui::View NetworkDnsEditorPage();
 void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun);
 huxerui::View HomeProxySettingsAction(HomeProxySettingsKind kind);
 huxerui::View HomeProxySettingsPage(HomeProxySettingsKind kind, std::function<void()> onBack);

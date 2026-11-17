@@ -16,6 +16,7 @@ import time
 GOOD = b"payload: [valid.test]\n"
 # Zstandard MRSv1 IPCIDR fixture: exactly 192.0.2.0/24, including NUL bytes.
 MRS = base64.b64decode("KLUv/SA+HQEAwE1SUwEBAAEAAQABAP//wAACAP//wAAC/wUQALsUPHDGQxE=")
+SUBSCRIPTION_AGENTS = {"/identity-native": "sing-box", "/identity": "clash.meta", "/identity-last": "clash-flux"}
 
 
 class PoolHandler(http.server.BaseHTTPRequestHandler):
@@ -23,6 +24,7 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
     lock = threading.Lock()
     active = 0
     peak = 0
+    identity_agents = []
 
     def setup(self):
         super().setup()
@@ -37,8 +39,11 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
         authorized = self.path not in expected or self.headers.get("Authorization") == expected[self.path]
         if self.path == "/direct-denied":
             authorized = False
-        if self.path == "/identity":
-            authorized = self.headers.get("User-Agent") == "clash.meta"
+        if self.path in SUBSCRIPTION_AGENTS:
+            agent = self.headers.get("User-Agent")
+            with self.lock:
+                self.identity_agents.append(agent)
+            authorized = agent == SUBSCRIPTION_AGENTS[self.path]
         if (self.path == "/reuse" or self.path.startswith("/concurrent-")) and self.headers.get("Authorization"):
             authorized = False
         if self.path == "/no-validator":
@@ -94,6 +99,9 @@ def pool_test(binary, folder, key=None, cert=None):
                                 env={**os.environ, "NO_PROXY": "", "no_proxy": ""})
         assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
         assert PoolHandler.peak >= 2, "pool serialized independent transfers"
+        assert PoolHandler.identity_agents == [
+            "sing-box", "sing-box", "clash.meta", "sing-box", "clash.meta", "clash-flux",
+            "explicit-test-agent", "clash-flux/0.1"]
         print(result.stdout, end="")
         print(f"download pool: observed concurrent HTTP handlers={PoolHandler.peak}")
     finally:

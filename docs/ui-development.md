@@ -300,7 +300,7 @@ CodeEditor 通过 `EditorOptions::settings.scrollbar.mode` 采用窄屏 never / 
 - 标签项内边距与项间距统一使用 `theme.spacing.extra_small`（当前 4pt），不再单独放大左右填充；保留原有栏高、指示线及外侧内容对齐边距，宽窄屏沿用同一间距。
 - 对照 ACGU 首页 `FeedTabs` + `SwipePages`：内容使用框架 Pager 的完整出入场、跟手拖动与取消回弹；内层首尾向外滑由框架滚动事务交给外层 Pager。不要再添加 PointerIntercept 或逐页入场过渡。
 - 标签保留独立警示色角标和溢出菜单，因此继续使用现有标签结构；一条由实际布局驱动的保留指示线连续移动并调整宽度。每对标签栏/内容页在所有 hook 区域调用一次 `UseSectionTabMotion()`，将同一 handle 传给 `SectionTabBar` 和 `SectionTabPages`；它从 Pager 与参与显示的页的最终呈现几何读取进度，拖动、提交与取消回弹时下划线同步跟随。两端分别使用正弦的加速/减速插值，形成前端延伸、后端收拢的效果；标签文字的普通色与主色也按同一实际进度线性混合：离场标签逐渐淡出，目标标签逐渐增强，取消或反向拖动沿原进度恢复；警示角标保持语义警示色。文字仍由普通 Text 测量并提供语义，保留扩展只绘制渐变颜色。动画只更新保留几何与标签前景绘制，不逐帧写 State 或使布局失效。首次显示直接定位，reduced motion 保留线性跟手但关闭伸缩。
-- 页面根用稳定语义 Key 与有界 Column，Pager 只测量显示轨道中的页。代理组仅声明轻量 VirtualGrid，卡片按视口构建，避免无界 IndexedPages 让大组节点全量构建；切回分区保留各页滚动位置。
+- 页面根用稳定语义 Key 与有界 Column，Pager 只测量显示轨道中的页。代理组仅声明轻量 VirtualGrid，卡片按视口构建，避免无界 IndexedPages 让大组节点全量构建；切回分区保留各页滚动位置。代理节点网格显式设置 `CacheExtent(200pt)`，不用框架默认的半视口缓存：宽屏多列时默认值会在每个滚动帧重建边界卡片，见[证据](evidence/2026-11-16-proxy-grid-scroll.md)。
 - 分页视口占满页面骨架可用宽度，水平内容边距放进每个分页，与内容一起移动。`fullWidthSections` 通过 PageBodyRegion 请求半份卡距（当前 4pt），每页 ScrollArea 消费，宽屏按通用滚动条规则至少 16pt，Compact 保留请求值。固定 SectionTabBar 通过 PageBodyFrame 使用同一预算，两侧与正文视口对齐，溢出选择入口也留在该范围内；已移除旧 SectionTabContentInsets 通道。网络设置等局部编辑器显式发布自己的内容预算，标签与表单正文同源。网格行列间距仍独立由 kSectionCardSpacing（8pt）计算，紧凑订阅行距遵循卡片约定。Pager 外侧不加水平 Padding，翻页步长始终是完整视口宽度。
 - 标签栏用实际标签几何计算各项居中偏移，先限制到滚动范围，再按 Pager 呈现进度在两端偏移间插值（与 Flutter TabBar 相同）。内容拖动期间提前揭示目标，松手收敛、反向和取消回弹时标签条同步跟随；选择变化、标签尺寸变化与窗口缩放重新尽量居中。首尾标签按滚动边界对齐，手动滚动保持浏览位置。滚动请求在保留扩展的帧更新中执行，不逐帧写页面 State；溢出菜单的显隐不能重挂载 ScrollView。
 - Pager 反向切换修复已合入 HuxerUI fork 的 `farna/main`：清除过期 drag target，保留跨标签反向动画的离场页 slot。应用使用固定集成 SHA，不再在 CMake 或 CI 打框架补丁。

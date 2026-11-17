@@ -29,8 +29,8 @@
 - 新权威键 core.network_settings 保存 format_version=1、revision 及整个表单；没有新值时
   从旧 core.* 键读入，不启动写迁移、不删旧键、不改 schema 或订阅原文。未知字段、未来
   版本、类型错误明确拒绝，错误不回显凭据；单 key flush 不会落下一半表单。
-  本轮的 advanced 为可缺省扩展对象，旧 v1 不缺其它必填字段即可原样读入；扩展对象内部
-  仍严格检查完整字段，新写入不会回写旧字段键。
+  advanced 为可缺省扩展对象。已有 v1 的 advanced 缺少后加的 `override_dns` 或 `remote_dns` 时，
+  分别使用关闭和空字符串的默认值。其余字段仍按原 schema 严格检查，新写入不会回写旧设置键。
 - 新高级参数缺省跟随来源；监听端口、监听地址、认证、MTU、路由范围和 UDP 会话上限
   有显式覆盖开关。原生 JSON 的其它字段保留。严格路由继续由应用管理。
 - 保存经应用任务在工作线程取得生命周期锁，核对整份基线（含 revision）、参数、完整候选
@@ -45,6 +45,11 @@
 - MTU 1280–9000，生成默认 1400；IPv6 是全局网络偏好，新生成 TUN 按该偏好配置双地址族。
 - DNS 接管：跟随配置、native、hijack、disabled。原生/关闭模式的 TUN 不再匹配应用生成的
   通用 DNS 劫持前置规则，HTTP/SOCKS DNS 行为保留；来源自定义 DNS 路由不删除。
+  远程 DNS（可选，DoH）：仅对未自带 DNS 的来源生效；填入 `https://IP[:port][/path]` 后，
+  需要本地解析的域名（IP 规则匹配、直连目标等）改经默认出口用该 DoH 查询，DIRECT 与节点域名
+  仍用系统 DNS；留空保持系统 DNS。设置存于 `core.network_settings.advanced.remote_dns`，不修改订阅原文。
+  设置首页“代理与网络”下有独立“DNS 设置”二级页：首行“覆写 DNS”总开关（`override_dns`）
+  控制应用 DNS 是否参与编译，关闭时仅保留草稿、行为同旧默认；开启后远程 DoH 字段生效。
   dns_address、上游 DNS、FakeIP 与 DNS 分流仍属于来源 DNS 配置，不另造第二份 DNS 库。
 - 网卡名称、IPv4/IPv6 地址（CIDR）；自定义接管/排除网段。空接管覆盖表示默认全流量，
   排除流量绕过内核与全局规则。原生 VPN 的传输地址和自有回环补偿继续追加，不能被用户

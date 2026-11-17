@@ -53,6 +53,13 @@ int main() {
         assert(clashflux::network::Validate(network).empty());
         const auto advancedText = clashflux::wire::EncodeNetworkSettings(network);
         assert(advancedText && clashflux::wire::DecodeNetworkSettings(advancedText.value).value == network);
+        auto beforeDnsOverride = nlohmann::json::parse(advancedText.value);
+        beforeDnsOverride["advanced"].erase("override_dns");
+        beforeDnsOverride["advanced"].erase("remote_dns");
+        const auto migratedSettings = clashflux::wire::DecodeNetworkSettings(beforeDnsOverride.dump());
+        assert(migratedSettings && migratedSettings.value == network);
+        beforeDnsOverride["advanced"]["override_dns"] = "true";
+        assert(!clashflux::wire::DecodeNetworkSettings(beforeDnsOverride.dump()));
         auto incomplete = nlohmann::json::parse(advancedText.value);
         incomplete["advanced"].erase("pac_port");
         assert(!clashflux::wire::DecodeNetworkSettings(incomplete.dump()));

@@ -65,8 +65,28 @@ void CheckEditor() {
     const auto cold = singbox::compileConfig(options);
     const auto warm = singbox::compileConfig(options, {}, model.get());
     check(cold.error.empty() && warm.json == cold.json && warm.warnings == cold.warnings &&
-        warm.rulePlan.origins == cold.rulePlan.origins && warm.targetRulesReused == 1,
-        "R3 composed Clash JSON and diagnostics match cold compilation; resource/modifier branches recompile");
+        warm.rulePlan.origins == cold.rulePlan.origins && warm.targetRulesReused == 2,
+        "R3 composed Clash JSON and diagnostics match cold compilation, including reused no-resolve");
+    auto inserted = replace;
+    inserted.operation = "prepend";
+    inserted.anchor.clear();
+    inserted.match = "ip_cidr";
+    inserted.pattern = "198.51.100.0/24";
+    options.profileRuleEdits.rules = {inserted, final};
+    const auto insertedCold = singbox::compileConfig(options);
+    const auto insertedWarm = singbox::compileConfig(options, {}, model.get());
+    check(insertedCold.error.empty() && insertedWarm.json == insertedCold.json &&
+        insertedWarm.warnings == insertedCold.warnings && insertedWarm.targetRulesReused == 2,
+        "a preceding personal CIDR shifts the replayed no-resolve rule in the generated route");
+    if (!insertedWarm.json.empty()) {
+        const auto rules = json::parse(insertedWarm.json).at("route").at("rules");
+        const auto resolve = std::find_if(rules.begin(), rules.end(), [](const auto& rule) {
+            return rule.value("action", "") == "resolve";
+        });
+        check(resolve != rules.end() && resolve + 1 != rules.end() &&
+            (resolve + 1)->value("ip_cidr", json::array()) == json::array({"198.51.100.0/24"}),
+            "the personal CIDR triggers DNS ahead of the no-resolve source rule");
+    }
     options.profileYaml += "\n# different source version\n";
     check(singbox::compileConfig(options, {}, model.get()).targetRulesReused == 0,
         "R3 source identity includes exact content");

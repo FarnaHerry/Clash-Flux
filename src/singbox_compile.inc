@@ -69,6 +69,7 @@ void applyManagedSkeleton(Context& ctx, const CompileOptions& opt) {
     config["log"] = std::move(log);
 
     if (!config.contains("dns")) {
+        ctx.defaultDnsInjected = true;
         config["dns"] = {
             {"servers", nlohmann::json::array({
                             {{"type", "local"}, {"tag", "local"}},

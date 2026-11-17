@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.112 release notes](docs/releases/v0.3.112.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.113 release notes](docs/releases/v0.3.113.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -579,7 +579,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The source is pinned to `89359f43` consistently in the local checkout and CI, including Windows text direction, text actions, multi-format clipboard, independent resource packages and the existing Pager fixes. CodeEditor uses fork `ee5b0cf8`, with retained documents and a controller for each mount. Media uses upstream `fee506de`, with the QR page migrated to the system image-picker API. The fork record explains the remaining Camera audio-dependency integration. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
+The source is pinned to `e2afd8a3` consistently in the local checkout and CI, integrating upstream cross-window drag and drop, dock-layout custom tab bars and cross-window docking, desktop floating window options, and Win7/macOS window fixes on top of `89359f43` (Windows text direction, text actions, multi-format clipboard, independent resource packages and the existing Pager fixes); legacy WindowSupport queries superseded by `WindowHandle::Capabilities()` were removed. CodeEditor uses fork `ee5b0cf8`, with retained documents and a controller for each mount. Media uses upstream `fee506de`, with the QR page migrated to the system image-picker API. The fork record explains the remaining Camera audio-dependency integration. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

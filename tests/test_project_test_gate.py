@@ -6,7 +6,7 @@ import tempfile
 
 REQUIRED = ["smoke", "profile_links", "app_update", "app_update_async", "app_update_handoff", "page_transition", "singbox",
             "wire_codec", "rule_provider_download", "dns_hosts_runtime", "dns_policy_runtime",
-            "dns_tls_runtime", "shadowsocks_runtime", "protocol_runtime", "v2ray_uri_runtime", "secure_uri_runtime", "node_input_catalog", "vpn", "routing", "compensation", "sqlite_orm",
+            "dns_tls_runtime", "resolve_routing_runtime", "shadowsocks_runtime", "protocol_runtime", "v2ray_uri_runtime", "secure_uri_runtime", "node_input_catalog", "vpn", "routing", "compensation", "sqlite_orm",
             "persistence", "core_api_lifetime", "connection_trace_runtime", "project_test_gate", "group_expansion_runtime", "proxy_provider_runtime", "proxy_standby_runtime", "service_protocol", "cps_dependencies", "runtime_health", "native_control_runtime", "ui_resources", "runtime_evidence", "personal_rule_sets_runtime", "resource_management_runtime", "sysproxy"]
 
 
@@ -49,7 +49,7 @@ def main():
         configure([name for name in REQUIRED if not name.startswith("app_update") and name != "sysproxy"], platform="Darwin")
         for name in REQUIRED:
             configure([other for other in REQUIRED if other != name], missing=name)
-        for name in ("persistence", "core_api_lifetime", "connection_trace_runtime", "dns_tls_runtime", "shadowsocks_runtime", "protocol_runtime", "v2ray_uri_runtime", "secure_uri_runtime", "node_input_catalog", "personal_rule_sets_runtime", "proxy_standby_runtime", "resource_management_runtime"):
+        for name in ("persistence", "core_api_lifetime", "connection_trace_runtime", "dns_tls_runtime", "resolve_routing_runtime", "shadowsocks_runtime", "protocol_runtime", "v2ray_uri_runtime", "secure_uri_runtime", "node_input_catalog", "personal_rule_sets_runtime", "proxy_standby_runtime", "resource_management_runtime"):
             configure(REQUIRED, disabled=name)
         without_orm = [name for name in REQUIRED if name != "sqlite_orm"]
         configure(without_orm, msvc=True)

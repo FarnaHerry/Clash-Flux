@@ -787,7 +787,7 @@
       "expected": {
         "error": "",
         "fidelity": [],
-        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"one.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"ip_cidr\":[\"192.0.2.0/24\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"domain\":[\"one.test\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"action\":\"resolve\"},{\"ip_cidr\":[\"192.0.2.0/24\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
         "objects": [
           {
             "kind": 2,
@@ -930,15 +930,15 @@
         "error": "",
         "fidelity": [
           {
-            "action": "当前保留原匹配规则；no-resolve 不会写成内核不存在的字段",
-            "detail": "规则 IP-CIDR,192.0.2.0/24,DIRECT,no-resolve 的 no-resolve 尚未保真，托管路由仍会执行前置解析",
+            "action": "sing-box 可以匹配已有结果中的多个地址，Mihomo 使用单个目标 IP",
+            "detail": "规则 IP-CIDR,192.0.2.0/24,DIRECT,no-resolve 的 no-resolve 不主动查询 DNS；匹配使用已有目标地址",
             "level": 1,
             "scope": 2,
             "sourceId": "target-r0",
             "subject": "IP-CIDR,192.0.2.0/24,DIRECT,no-resolve"
           }
         ],
-        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"ip_cidr\":[\"192.0.2.0/24\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"ip_cidr\":[\"192.0.2.0/24\"],\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
         "objects": [
           {
             "kind": 2,
@@ -1035,7 +1035,7 @@
           ]
         },
         "rulePlan": {
-          "count": 7,
+          "count": 6,
           "labels": {
             "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
             "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"
@@ -1043,7 +1043,7 @@
           "origins": []
         },
         "warnings": [
-          "规则 IP-CIDR,192.0.2.0/24,DIRECT,no-resolve 的 no-resolve 尚未保真，托管路由仍会执行前置解析"
+          "规则 IP-CIDR,192.0.2.0/24,DIRECT,no-resolve 的 no-resolve 不主动查询 DNS；匹配使用已有目标地址"
         ]
       }
     },
@@ -4209,7 +4209,7 @@
             "subject": "node-subscription.policy"
           }
         ],
-        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"method\":\"aes-128-gcm\",\"password\":\"synthetic-secret\",\"server\":\"example.test\",\"server_port\":8388,\"tag\":\"cf_7461726765742d7230_o_53616d706c65\",\"type\":\"shadowsocks\"},{\"outbounds\":[\"cf_7461726765742d7230_o_53616d706c65\"],\"tag\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\"}]}}",
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"method\":\"aes-128-gcm\",\"password\":\"synthetic-secret\",\"server\":\"example.test\",\"server_port\":8388,\"tag\":\"cf_7461726765742d7230_o_53616d706c65\",\"type\":\"shadowsocks\"},{\"outbounds\":[\"cf_7461726765742d7230_o_53616d706c65\"],\"tag\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\",\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\"},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_e88a82e782b9e98089e68ba9\"}]}}",
         "objects": [
           {
             "kind": 2,
@@ -4293,7 +4293,7 @@
           ]
         },
         "rulePlan": {
-          "count": 6,
+          "count": 5,
           "labels": {
             "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
             "cf_7461726765742d7230_o_53616d706c65": "Sample · Target R0",
@@ -4438,7 +4438,7 @@
       "expected": {
         "error": "",
         "fidelity": [],
-        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rule_set\":[{\"rules\":[{\"domain\":[\"provider.test\"]}],\"tag\":\"cf_7461726765742d7230_r_636c6173682d70726f76696465722d30\",\"type\":\"inline\"}],\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"action\":\"resolve\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"outbound\":\"cf_7461726765742d7230_o_444952454354\",\"rule_set\":[\"cf_7461726765742d7230_r_636c6173682d70726f76696465722d30\"]},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
+        "json": "{\"dns\":{\"final\":\"cf_7461726765742d7230_d_6c6f63616c\",\"reverse_mapping\":true,\"servers\":[{\"tag\":\"cf_7461726765742d7230_d_6c6f63616c\",\"type\":\"local\"}],\"strategy\":\"prefer_ipv4\"},\"endpoints\":[],\"experimental\":{\"cache_file\":{\"enabled\":true},\"clash_api\":{\"default_mode\":\"rule\",\"external_controller\":\"127.0.0.1:29097\"}},\"inbounds\":[{\"listen\":\"127.0.0.1\",\"listen_port\":7899,\"tag\":\"mixed-in\",\"type\":\"mixed\"}],\"log\":{\"level\":\"info\",\"timestamp\":true},\"outbounds\":[{\"tag\":\"cf_7461726765742d7230_o_444952454354\",\"type\":\"direct\"},{\"outbounds\":[\"cf_7461726765742d7230_o_444952454354\"],\"tag\":\"cf_7461726765742d7230_o_5069636b\",\"type\":\"selector\"}],\"route\":{\"default_domain_resolver\":{\"server\":\"cf_7461726765742d7230_d_6c6f63616c\"},\"final\":\"cf_7461726765742d7230_o_5069636b\",\"rule_set\":[{\"rules\":[{\"domain\":[\"provider.test\"]}],\"tag\":\"cf_7461726765742d7230_r_636c6173682d70726f76696465722d30\",\"type\":\"inline\"}],\"rules\":[{\"action\":\"sniff\"},{\"action\":\"hijack-dns\",\"protocol\":\"dns\"},{\"clash_mode\":\"direct\",\"outbound\":\"cf_7461726765742d7230_o_444952454354\"},{\"clash_mode\":\"global\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"},{\"outbound\":\"cf_7461726765742d7230_o_444952454354\",\"rule_set\":[\"cf_7461726765742d7230_r_636c6173682d70726f76696465722d30\"]},{\"clash_mode\":\"rule\",\"outbound\":\"cf_7461726765742d7230_o_5069636b\"}]}}",
         "objects": [
           {
             "kind": 2,
@@ -4535,7 +4535,7 @@
           ]
         },
         "rulePlan": {
-          "count": 7,
+          "count": 6,
           "labels": {
             "cf_7461726765742d7230_o_444952454354": "DIRECT · Target R0",
             "cf_7461726765742d7230_o_5069636b": "Pick · Target R0"

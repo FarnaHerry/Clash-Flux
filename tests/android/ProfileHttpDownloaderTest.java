@@ -14,6 +14,12 @@ final class ProfileHttpDownloaderTest {
     static void run() throws Exception {
         Path root = Files.createTempDirectory("clashflux-http-");
         Path staging = root.resolve("exclusive-staging");
+        java.util.List<String> identityAgents = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.Map<String, String> acceptedAgents = new java.util.HashMap<>();
+        acceptedAgents.put("/identity-native", "sing-box");
+        acceptedAgents.put("/identity", "clash.meta");
+        acceptedAgents.put("/identity-last", "clash-flux");
+        acceptedAgents.put("/identity-denied", "fixture-not-allowed");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             String path = exchange.getRequestURI().getPath();
@@ -25,10 +31,15 @@ final class ProfileHttpDownloaderTest {
             } else if ("/conditional".equals(path) && "test-etag".equals(exchange.getRequestHeaders().getFirst("If-None-Match"))) {
                 exchange.sendResponseHeaders(304, -1);
             } else {
-                int status = "/identity".equals(path) && !"clash.meta".equals(exchange.getRequestHeaders().getFirst("User-Agent")) ? 403 : 200;
+                String agent = exchange.getRequestHeaders().getFirst("User-Agent");
+                String acceptedAgent = acceptedAgents.get(path);
+                if (acceptedAgent != null) identityAgents.add(agent);
+                int status = acceptedAgent != null && !acceptedAgent.equals(agent) ? 403 : 200;
                 exchange.getResponseHeaders().set("ETag", "test-etag");
+                if ("/short".equals(path)) exchange.getResponseHeaders().set("Connection", "close");
                 exchange.sendResponseHeaders(status, body.length + ("/short".equals(path) ? 1 : 0));
                 exchange.getResponseBody().write(body);
+                if ("/short".equals(path)) exchange.getResponseBody().flush();
             }
             exchange.close();
         });
@@ -51,13 +62,26 @@ final class ProfileHttpDownloaderTest {
             ProfileHttpDownloader.Result shortBody = ProfileHttpDownloader.fetch(base + "/short", 3, 1024,
                     true, new String[0], false, staging.toString());
             require(!shortBody.error.isEmpty() && shortBody.retryable, "truncated bodies remain explicit retryable failures");
+            ProfileHttpDownloader.Result nativeIdentity = ProfileHttpDownloader.fetch(base + "/identity-native", 3, 1024,
+                    true, new String[0], true, staging.toString());
+            require(nativeIdentity.status == 200 && nativeIdentity.attempts == 1, "native subscriptions use one request");
             ProfileHttpDownloader.Result identity = ProfileHttpDownloader.fetch(base + "/identity", 3, 1024,
                     true, new String[0], true, staging.toString());
             require(identity.status == 200 && identity.attempts == 2 && Files.size(staging) == "source body".length(),
                     "bounded subscriptions retry identity and truncate only their own staging file");
+            ProfileHttpDownloader.Result lastIdentity = ProfileHttpDownloader.fetch(base + "/identity-last", 3, 1024,
+                    true, new String[0], true, staging.toString());
+            require(lastIdentity.status == 200 && lastIdentity.attempts == 3, "the application identity is the last fallback");
+            ProfileHttpDownloader.Result denied = ProfileHttpDownloader.fetch(base + "/identity-denied", 3, 1024,
+                    true, new String[0], true, staging.toString());
+            require(denied.status == 403 && denied.attempts == 3, "persistent denial stops after the last identity");
             ProfileHttpDownloader.Result resource = ProfileHttpDownloader.fetch(base + "/identity", 3, 1024,
                     true, new String[0], false, staging.toString());
             require(resource.status == 403 && resource.attempts == 1, "providers never change their user agent implicitly");
+            require(identityAgents.equals(Arrays.asList("sing-box", "sing-box", "clash.meta",
+                    "sing-box", "clash.meta", "clash-flux", "sing-box", "clash.meta", "clash-flux",
+                    "clash-flux/0.1")),
+                    "subscription and resource requests use their expected wire identifiers");
             ProfileHttpDownloader.Result redirect = ProfileHttpDownloader.fetch(base + "/redirect", 3, 1024,
                     true, new String[]{"Authorization", "test-secret"}, false, staging.toString());
             require(redirect.status == 302 && !redirect.error.isEmpty(), "credential-bearing redirects remain refused");

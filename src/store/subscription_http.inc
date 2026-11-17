@@ -1,7 +1,9 @@
 // Optional HTTP representation cache. The accepted source file and row remain
 // authoritative; a cache miss, damage or write failure only costs a full GET.
     static std::string remoteIdentity(const model::Profile& profile) {
-        return std::to_string(profile.id) + ":" + std::to_string(profile.url.size()) + ":" + profile.url + profile.file;
+        // A source can serve a different representation under a new default UA.
+        return std::to_string(profile.id) + ":" + clashflux::download::kSubscriptionUserAgents.front() +
+            ":" + std::to_string(profile.url.size()) + ":" + profile.url + profile.file;
     }
 
     static std::filesystem::path remoteCachePath(std::int64_t id) {

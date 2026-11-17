@@ -111,7 +111,6 @@ public:
         long timeoutSecs = 60;
         bool subscriptionRequest = false;
         unsigned attempts = 1;
-        bool compatibilityUserAgent = false;
         std::string proxyUrl;        // 非空 = 经该代理（如 http://127.0.0.1:7899）
         bool allowProxyEnv = false;  // proxyUrl 为空时是否允许环境变量代理
         // Explicit conditional request only: 304 returns headers without
@@ -132,7 +131,8 @@ public:
                              const DownloadOptions& options);
 
 private:
-    ApiResult downloadOnce(const std::string& url, const std::filesystem::path& dest, const DownloadOptions& options);
+    ApiResult downloadOnce(const std::string& url, const std::filesystem::path& dest,
+                           const DownloadOptions& options, const char* userAgent);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

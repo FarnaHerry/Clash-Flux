@@ -65,6 +65,7 @@ cmake --build build --target clash-flux test_page_transition
 git diff --check
 ./build/test_page_transition --scrollbars
 ./build/test_page_transition --scroll-profile
+./build/test_page_transition --proxy-grid-profile
 ```
 
 Linux/glibc 可选分配探针只通过 LD_PRELOAD 注入测试进程，不链接进产品，不扩大到 GUI：
@@ -84,3 +85,10 @@ gdb -q -batch -x tests/scroll_work_counts.gdb ./build/test_page_transition
 完整 UI 回归仍运行 page_transition / ui_resources，包含中间帧同步、宽窄切换、拖动、
 箭头长按与隐藏时取消、嵌套边界、输入接管、主题/语言、hover 每帧颜色及虚拟化。
 原生性能优化应另在 Release 和实际设备测量，必要时再定位框架布局或绘制热点。
+
+## 2026-11-16 代理节点网格宽屏
+
+15 列代理卡片网格在框架默认半视口虚拟缓存下，滚动 96 帧产生约 7.3 万次卡片工厂
+调用（同距离应约 3.9 千），宽屏滚动明显卡顿。节点网格固定 `CacheExtent(200pt)` 后
+恢复为 4.1 千次，7 列下帧耗时也降低约三成；列数仍线性放大每帧成本。方法、数字与
+边界见 [证据](evidence/2026-11-16-proxy-grid-scroll.md)。

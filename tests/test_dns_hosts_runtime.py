@@ -63,6 +63,9 @@ class Echo(http.server.BaseHTTPRequestHandler):
 class Node(socketserver.BaseRequestHandler):
     requests = 0
 
+    def connected(self, address, port_number):
+        pass
+
     def handle(self):
         stream = self.request
         stream.settimeout(3)
@@ -71,12 +74,13 @@ class Node(socketserver.BaseRequestHandler):
         stream.sendall(b"\x05\x00")
         header = read_exact(stream, 4)
         if header[3] == 1:
-            read_exact(stream, 4)
+            address = str(ipaddress.ip_address(read_exact(stream, 4)))
         elif header[3] == 4:
-            read_exact(stream, 16)
+            address = str(ipaddress.ip_address(read_exact(stream, 16)))
         else:
-            read_exact(stream, read_exact(stream, 1)[0])
-        read_exact(stream, 2)
+            address = read_exact(stream, read_exact(stream, 1)[0]).decode("ascii")
+        port_number = struct.unpack("!H", read_exact(stream, 2))[0]
+        self.connected(address, port_number)
         stream.sendall(b"\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x00")
         self.__class__.requests += 1
         data = b""
@@ -114,14 +118,20 @@ def query(port_number, domain, kind):
     return flags & 15, records
 
 
-def request(mixed, domain, dest_port):
+def request(mixed, domain, dest_port, literal=False):
     with socket.create_connection(("127.0.0.1", mixed), timeout=3) as stream:
         stream.sendall(b"\x05\x01\x00")
         assert read_exact(stream, 2) == b"\x05\x00"
         raw = domain.encode("ascii")
-        stream.sendall(b"\x05\x01\x00\x03" + bytes([len(raw)]) + raw + struct.pack("!H", dest_port))
+        if literal:
+            address = ipaddress.ip_address(domain)
+            target = bytes([1 if address.version == 4 else 4]) + address.packed
+        else:
+            target = b"\x03" + bytes([len(raw)]) + raw
+        stream.sendall(b"\x05\x01\x00" + target + struct.pack("!H", dest_port))
         header = read_exact(stream, 4)
-        assert header[1] == 0, "kernel SOCKS connection failed"
+        if header[1] != 0:
+            raise ConnectionError(f"kernel SOCKS connection failed ({header[1]})")
         if header[3] == 1:
             read_exact(stream, 4)
         elif header[3] == 4:
@@ -136,7 +146,10 @@ def request(mixed, domain, dest_port):
             if not part:
                 break
             response += part
-        return response.split(b"\r\n\r\n", 1)[1]
+    _, separator, body = response.partition(b"\r\n\r\n")
+    if not separator:
+        raise EOFError("connection closed before an HTTP response")
+    return body
 
 
 @contextlib.contextmanager
@@ -145,6 +158,13 @@ def kernel(compiler, engine, folder, yaml, transform=None):
     source.write_text(yaml, encoding="utf-8")
     subprocess.run([compiler, "--compile-config", str(source), str(generated)], check=True, capture_output=True)
     config = json.loads(generated.read_text())
+    with run_kernel(engine, folder, config, transform) as endpoints:
+        yield endpoints
+
+
+@contextlib.contextmanager
+def run_kernel(engine, folder, config, transform=None):
+    generated = folder / "compiled.json"
     dns_port, mixed = port(socket.SOCK_DGRAM), port()
     config["inbounds"] = [
         {"type": "direct", "tag": "dns-test", "listen": "127.0.0.1", "listen_port": dns_port, "network": "udp"},

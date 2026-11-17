@@ -1,5 +1,11 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-17 路由解析精细化
+
+- 源码基于 `71ce44a` 加既有工作区。固定 sing-box 1.14.4 实测裸节点与混合 Clash YAML 延后解析、顶层 CIDR `no-resolve`、简单 AND 和可验证的候选内联集合。Mihomo 对照仍有多地址及查询失败差异。真实旧 VMess 订阅中 Google 和 Cloudflare 均可访问，内核日志对应目标查询为零。范围和逐例结果见 [路由解析记录](resolve-granularity-plan.md#9-本轮验收记录)。
+- 完整回归发现旧 v1 的 advanced 会因缺少新增 DoH 字段而被拒绝。读取旧数据时沿用两个字段的默认值，保留现有严格字段和类型校验。路由 codec 与生产资源 CLI 回归通过。
+- Fedora 45 WSL2 / Clang 23.1.5 / libc++ / CMake 4.4.2 Debug。主目标、全目标、`run.sh --version`（v0.3.112）、`git diff --check`、目标与协议基线、`ctest --output-on-failure --no-tests=error -L clashflux-required -j 4`（38/38）通过。另跑固定内核的 DNS 规则集优先级与 reverse mapping。Windows TUN 和 Android 真机待验。
+
 ## 2026-11-16 R5 预生成预算
 
 - 源码为 `6b00957` 加 R3–R5 和预生成预算改动。工作线程查询原文大小，超出经验门槛时等规则页请求。生产路径继续按实际快照计费，按来源版本拒绝过期结果。

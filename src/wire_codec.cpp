@@ -104,6 +104,10 @@ struct StoredLogInput {
 namespace glz {
 template <> struct meta<clashflux::network::Advanced> {
     using T = clashflux::network::Advanced;
+    static constexpr bool requires_key(std::string_view key, bool nullable) {
+        // Network settings written before the DoH override use the existing defaults.
+        return !nullable && key != "override_dns" && key != "remote_dns";
+    }
     static constexpr auto value = object(
         "auto_redirect", &T::auto_redirect,
         "override_filters", &T::override_filters,
@@ -119,7 +123,9 @@ template <> struct meta<clashflux::network::Advanced> {
         "proxy_mode", &T::proxy_mode,
         "pac_port", &T::pac_port,
         "pac_url", &T::pac_url,
-        "pac_direct_domains", &T::pac_direct_domains);
+        "pac_direct_domains", &T::pac_direct_domains,
+        "override_dns", &T::override_dns,
+        "remote_dns", &T::remote_dns);
 };
 template <> struct meta<clashflux::network::Settings> {
     using T = clashflux::network::Settings;

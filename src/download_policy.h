@@ -12,6 +12,7 @@
 
 namespace clashflux::download {
 
+inline constexpr std::array kSubscriptionUserAgents{"sing-box", "clash.meta", "clash-flux"};
 inline constexpr std::size_t kSubscriptionMaxBytes = 8 * 1024 * 1024;
 inline constexpr long ResourceTimeout(std::size_t limit) { return limit > kSubscriptionMaxBytes ? 120 : 20; }
 inline constexpr unsigned ResourceAttempts(std::size_t limit, bool android) {

@@ -12,6 +12,7 @@ struct Context {
     bool providerSyntaxOnly = false; // HTTP body validation, never a published candidate.
     std::size_t unpreparedAsnConditions = 0;
     nlohmann::json config;
+    std::vector<std::size_t> noResolveSourceRules;   // Indices in the append-only source route array.
     nlohmann::json outbounds = nlohmann::json::array();
     nlohmann::json ruleSets = nlohmann::json::array();
     std::vector<std::string> knownTags;               // 节点 + 组 + DIRECT
@@ -31,6 +32,7 @@ struct Context {
     std::string sourceId;
     std::string defaultFingerprint = "chrome";       // Scoped to this Clash source.
     std::string finalTarget;                          // MATCH 目标
+    bool defaultDnsInjected = false;                  // 来源无自带 DNS，应用注入了默认 local DNS。
 
     explicit Context(const CompileOptions& options, std::stop_token token = {}) : opt(options), cancel(token) {}
 
