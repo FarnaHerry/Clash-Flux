@@ -18,6 +18,7 @@
 
 #include "wire_codec.h"
 #include "http_request_headers.h"
+#include "subscription_user_agents.h"
 
 #if defined(__ANDROID__)
 #include <android/log.h>
@@ -84,7 +85,8 @@ JNIEnv* current_environment(bool& attached) noexcept {
 clashflux::android::ProfileHttpResponse
 clashflux::android::DownloadProfileToFile(const std::string& url, int timeoutSecs,
     const std::string& destination, std::size_t maxBytes, bool forceDirect,
-    const std::map<std::string, std::string>& headers, bool subscriptionRequest) {
+    const std::map<std::string, std::string>& headers, bool subscriptionRequest,
+    const std::string& userAgentOrder) {
     ProfileHttpResponse response;
     if (!clashflux::http_request::ValidHeaders(headers)) {
         response.error = "下载请求头非法或不支持";
@@ -127,7 +129,7 @@ clashflux::android::DownloadProfileToFile(const std::string& url, int timeoutSec
 
     const jmethodID fetchProfile = environment->GetStaticMethodID(
         activityClass, "fetchProfile",
-        "(Ljava/lang/String;IJZ[Ljava/lang/String;ZLjava/lang/String;)Landroid/os/Bundle;");
+        "(Ljava/lang/String;IJZ[Ljava/lang/String;Z[Ljava/lang/String;Ljava/lang/String;)Landroid/os/Bundle;");
     if (fetchProfile == nullptr || environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载接口不可用";
@@ -162,6 +164,23 @@ clashflux::android::DownloadProfileToFile(const std::string& url, int timeoutSec
             }
         }
     }
+    const auto userAgents = clashflux::subscription_http::UserAgents(userAgentOrder);
+    jobjectArray javaUserAgents = environment->NewObjectArray(
+        static_cast<jsize>(userAgents.size()), stringClass, nullptr);
+    if (javaUserAgents == nullptr || environment->ExceptionCheck()) {
+        environment->ExceptionClear(); response.error = "无法创建 Android UA 顺序"; return response;
+    }
+    index = 0;
+    for (const auto agent : userAgents) {
+        jstring item = environment->NewStringUTF(agent.data());
+        if (item != nullptr) {
+            environment->SetObjectArrayElement(javaUserAgents, index++, item);
+            environment->DeleteLocalRef(item);
+        }
+        if (item == nullptr || environment->ExceptionCheck()) {
+            environment->ExceptionClear(); response.error = "无法转换 Android UA"; return response;
+        }
+    }
     jstring javaDestination = environment->NewStringUTF(destination.c_str());
     if (javaDestination == nullptr || environment->ExceptionCheck()) {
         environment->ExceptionClear(); response.error = "无法转换 Android 下载暂存路径"; return response;
@@ -170,7 +189,7 @@ clashflux::android::DownloadProfileToFile(const std::string& url, int timeoutSec
         activityClass, fetchProfile, javaUrl,
         static_cast<jint>(timeoutSecs),
         static_cast<jlong>(maxBytes), forceDirect ? JNI_TRUE : JNI_FALSE, javaHeaders,
-        subscriptionRequest ? JNI_TRUE : JNI_FALSE, javaDestination);
+        subscriptionRequest ? JNI_TRUE : JNI_FALSE, javaUserAgents, javaDestination);
     if (bundle == nullptr || environment->ExceptionCheck()) {
         environment->ExceptionClear();
         response.error = "Android 订阅下载调用失败";

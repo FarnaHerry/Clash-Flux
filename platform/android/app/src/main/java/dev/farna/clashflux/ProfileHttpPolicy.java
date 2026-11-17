@@ -1,7 +1,6 @@
 package dev.farna.clashflux;
 
 final class ProfileHttpPolicy {
-    static final String[] SUBSCRIPTION_USER_AGENTS = {"sing-box", "clash.meta", "clash-flux"};
     static final String RESOURCE_USER_AGENT = "clash-flux/0.1";
 
     private ProfileHttpPolicy() {}

@@ -140,11 +140,9 @@ int testDownloadPool(char** argv) {
     require(native.ok && native.download.attempts == 1, "native subscriptions use one request");
     const auto compatible = recovery.downloadToFile(base + "/identity", root / "identity", options);
     require(compatible.ok && compatible.download.attempts == 2,
-            "ordinary subscriptions try Clash after the first 403");
-    const auto last = recovery.downloadToFile(base + "/identity-last", root / "identity", options);
-    require(last.ok && last.download.attempts == 3, "the application identity is the last fallback");
-    const auto deniedSource = recovery.downloadToFile(base + "/direct-denied", root / "identity", options);
-    require(!deniedSource.ok && deniedSource.download.attempts == 3 && deniedSource.failurePhase == "http",
+            "ordinary subscriptions try sing-box after the first 403");
+    const auto deniedSource = recovery.downloadToFile(base + "/identity-denied", root / "identity", options);
+    require(!deniedSource.ok && deniedSource.download.attempts == 2 && deniedSource.failurePhase == "http",
             "persistent HTTP denial is classified and never loops the user-agent fallback");
     options.headers = {{"User-Agent", "explicit-test-agent"}};
     const auto customAgent = recovery.downloadToFile(base + "/identity", root / "identity", options);
@@ -154,6 +152,18 @@ int testDownloadPool(char** argv) {
     const auto deniedResource = recovery.downloadToFile(base + "/identity", root / "identity", options);
     require(!deniedResource.ok && deniedResource.download.attempts == 1,
             "provider downloads never implicitly change their user agent");
+    options.subscriptionRequest = true;
+    options.subscriptionUserAgentOrder = "sing-box,clash";
+    const auto reordered = recovery.downloadToFile(base + "/identity", root / "identity", options);
+    require(reordered.ok && reordered.download.attempts == 1,
+            "the selected order controls the very first request");
+    options.headers = {{"If-None-Match", "first-identity-only"}};
+    options.acceptNotModified = true;
+    const auto revalidated = recovery.downloadToFile(base + "/identity-native", root / "identity", options);
+    require(revalidated.ok && revalidated.download.attempts == 2,
+            "fallback drops the previous identity's conditional validators");
+    options.headers.clear(); options.acceptNotModified = false;
+    options.subscriptionRequest = false; options.subscriptionUserAgentOrder.clear();
     options.attempts = 2;
     const auto retriedShort = recovery.downloadToFile(base + "/truncate", root / "recovery", options);
     require(!retriedShort.ok && retriedShort.download.attempts == 2 && readFile(root / "recovery") == preserved,

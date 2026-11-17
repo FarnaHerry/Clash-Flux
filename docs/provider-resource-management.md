@@ -9,7 +9,14 @@
 主订阅导入、手动更新与自动更新共用 ProfilesStore 的版本提交路径和常驻下载器。
 平台差异只在 `ClashApi::downloadToFile` 后端：桌面 curl、Android 文件流式桥接、iOS URLSession。
 主订阅显式标记请求用途并统一限制 8 MiB；不再用“大小不限”识别 Android 403 UA 兼容请求。
-桌面和 Android 的普通订阅默认发送 `sing-box`，遇到 HTTP 403 依次尝试 `clash.meta` 和 `clash-flux`。
+桌面和 Android 的普通订阅默认先发送 `ClashMeta/1.19.32; mihomo/1.19.32`，HTTP 403 时
+尝试 `sing-box/1.14.4`；不再发送 Clash-Flux 订阅兜底 UA。设置 → 订阅下载 → UA 尝试顺序
+可交换两者先后，`subscription.ua_order` 保存稳定 ID（`clash,sing-box` 或 `sing-box,clash`）。
+缺省或无效值按默认顺序读取，不因 hydrate 写回。修改只影响之后的下载，不刷新或改写现有订阅。
+兼容版本集中固定在 `src/subscription_user_agents.h`，独立于应用发版和上游最新版；提升固定版本
+须提供转换器/内核兼容回归。Mihomo 1.19.32 是本机双内核对照的源码版本，sing-box 1.14.4 是固定内核版本。
+Java 从 JNI 接收本次请求捕获的完整 UA 数组，不另维护版本或从后台读取 UI 数据库。
+请求成功即停止；不按节点/组数量自动改换成功响应的格式和规则。TLS、传输及候选失败保留原拒绝语义。
 条件头不改变用途，自定义请求头和 Provider 请求沿用各自的设置。
 Android 主订阅保留平台代理策略，Provider 保留 DIRECT；桌面的系统环境/内核代理选项不扩展到手机。
 Android Java 直接写入应用创建的独占暂存文件，JNI 只回传状态、响应头、字节数和错误分类；
@@ -18,8 +25,9 @@ Android Java 直接写入应用创建的独占暂存文件，JNI 只回传状态
 
 规则集与代理集合共用 v1/v2 表示缓存解码；v2 保存 ETag/Last-Modified，v1 继续可读。
 两种 Provider 都支持条件请求、304、正文相等时跳过重复格式校验；候选检查与缓存提交仍独立执行。
-主订阅另在 `subscription-http/<id>.cache` 保存可选表示缓存，完整绑定 ID、URL、默认 UA、来源版本文件及正文。
-旧默认 UA 对应的订阅首次刷新执行完整 GET，成功后记录新表示的校验头。
+主订阅另在 `subscription-http/<id>.cache` 保存可选表示缓存，完整绑定 ID、URL、全部固定 UA 及顺序、来源版本文件及正文。
+UA 版本或顺序变化后的首次刷新执行完整 GET。403 切 UA 时清除条件头，避免跨表示复用校验头；
+只有一次请求成功的首选 UA 响应记录表示缓存，发生兜底或传输重试时不记录本次校验头。
 发送条件头前逐字节核对已接受的来源文件，外部编辑、URL 变化或缓存损坏均回落完整 GET。
 该缓存不参与 SQLite schema，不是订阅记录的替代品，写入失败不影响已接受来源；未知版本保留，
 不进行扫描清理。只在来源提交/应用成功后更新缓存，304 保留缺省的流量/到期/首页元数据，

@@ -635,6 +635,19 @@ void testLogicalRuleResources() {
     for (const auto* source : {
             "OR,((DOMAIN,example.test),(IP-CIDR,192.0.2.0/24,no-resolve)),DIRECT",
             "NOT,((IP-CIDR,192.0.2.0/24,no-resolve)),DIRECT",
+            "NOT,((NOT,((IP-CIDR6,2001:db8::/32,no-resolve)))),DIRECT",
+            "AND,((NETWORK,TCP),(OR,((DOMAIN,example.test),(NOT,((IP-CIDR,192.0.2.0/24,no-resolve)))))),DIRECT"}) {
+        const auto optionalTree = compile(std::format("  - {}\n", source));
+        check(optionalTree.error.empty() && logicalRules(optionalTree).size() == 1 &&
+            std::ranges::none_of(routeRules(optionalTree), [](const auto& rule) {
+                return rule.value("action", "") == "resolve";
+            }) && std::ranges::any_of(optionalTree.fidelity, [](const auto& note) {
+                return note.level == singbox::Fidelity::Approx;
+            }), "logical no-resolve retains OR and nested NOT without querying destination addresses");
+    }
+    for (const auto* source : {
+            "OR,((IP-CIDR,192.0.2.0/24),(IP-CIDR,198.51.100.0/24,no-resolve)),DIRECT",
+            "NOT,((AND,((IP-CIDR6,2001:db8::/32,no-resolve),(IP-CIDR,192.0.2.0/24)))),DIRECT",
             "AND,((IP-CIDR,192.0.2.0/24),(IP-CIDR,198.51.100.0/24,no-resolve)),DIRECT",
             "AND,((IP-CIDR,192.0.2.0/24,no-resolve),(IP-ASN,64512)),DIRECT",
             "AND,((GEOSITE,CN),(IP-CIDR,192.0.2.0/24,no-resolve)),DIRECT"}) {
@@ -648,7 +661,9 @@ void testLogicalRuleResources() {
     singbox::CompileOptions noResolveReplay;
     noResolveReplay.mainConnectionId = "no-resolve-sets";
     noResolveReplay.profileYaml = "rule-providers:\n  local: {type: inline, behavior: ipcidr, payload: [192.0.2.0/24]}\n"
-        "rules: ['RULE-SET,local,DIRECT,no-resolve', 'AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP)),DIRECT', 'MATCH,DIRECT']\n";
+        "rules: ['RULE-SET,local,DIRECT,no-resolve', 'AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP)),DIRECT', "
+        "'OR,((DOMAIN,example.test),(IP-CIDR6,2001:db8::/32,no-resolve)),DIRECT', "
+        "'NOT,((IP-CIDR,192.0.2.0/24,no-resolve)),DIRECT', 'MATCH,DIRECT']\n";
     noResolveReplay.captureTargetSource = true;
     const auto captured = singbox::compileConfig(noResolveReplay);
     noResolveReplay.captureTargetSource = false;
@@ -916,7 +931,9 @@ void testFileRuleProviders() {
           "classical file uses atomic headless logical converter");
     const std::string modifiers = "IP-CIDR,192.0.2.28/32,no-resolve\n"
         "IP-CIDR6,2001:db8::/32,no-resolve\n"
-        "AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP))\n";
+        "AND,((IP-CIDR,198.51.100.0/24,no-resolve),(NETWORK,TCP))\n"
+        "OR,((DOMAIN,example.test),(IP-CIDR,203.0.113.0/24,no-resolve))\n"
+        "NOT,((IP-CIDR6,2001:db8::/32,no-resolve))\n";
     write("rules/modifiers.txt", modifiers);
     const auto modified = compile("rules/modifiers.txt", "classical", "text", "", "RULE-SET,cn,DIRECT");
     const auto resolves = [&routeRules](const auto& result) {
@@ -925,14 +942,14 @@ void testFileRuleProviders() {
         });
     };
     check(modified.error.empty() && sets(modified).size() == 1 &&
-          sets(modified)[0]["rules"].size() == 3 &&
+          sets(modified)[0]["rules"].size() == 5 &&
           sets(modified)[0]["rules"][0]["ip_cidr"] == json{"192.0.2.28/32"} &&
           sets(modified)[0]["rules"][1]["ip_cidr"] == json{"2001:db8::/32"} &&
           sets(modified)[0]["rules"][2]["rules"][0]["ip_cidr"] == json{"198.51.100.0/24"} &&
           std::ranges::count_if(modified.fidelity, [](const auto& note) {
               return note.scope == singbox::FidelityScope::Rule && note.level == singbox::Fidelity::Approx &&
                      note.subject.find("no-resolve") != std::string::npos;
-          }) == 3 && !resolves(modified),
+          }) == 5 && !resolves(modified),
           "classical file with only optional target checks omits ordinary resolve");
     singbox::CompileOptions inlineModifiers;
     inlineModifiers.profileYaml = "rule-providers:\n  sample:\n    type: inline\n    behavior: classical\n"
@@ -955,13 +972,13 @@ void testFileRuleProviders() {
         httpModifiers.captureTargetSource = true;
         const auto httpModified = singbox::compileConfig(httpModifiers);
         check(httpModified.error.empty() && sets(httpModified).size() == 1 &&
-              sets(httpModified)[0]["rules"].size() == 3 && !resolves(httpModified),
+              sets(httpModified)[0]["rules"].size() == 5 && !resolves(httpModified),
               "HTTP candidate skips DNS for a verified all-optional snapshot");
         httpModifiers.captureTargetSource = false;
         httpModifiers.ruleProviderContents[resource.cacheKey] += "IP-CIDR,203.0.113.0/24\n";
         const auto httpMixed = singbox::compileConfig(httpModifiers, {}, httpModified.targetSource.get());
         check(httpModified.targetSource && httpMixed.error.empty() &&
-              sets(httpMixed)[0]["rules"].size() == 4 && resolves(httpMixed),
+              sets(httpMixed)[0]["rules"].size() == 6 && resolves(httpMixed),
               "new HTTP snapshot with a required entry restores resolve during target replay");
         check(!singbox::ValidateHttpRuleProvider(resource,
               "DOMAIN,valid.test\nIP-CIDR,192.0.2.0/24,unknown\n", reason) &&

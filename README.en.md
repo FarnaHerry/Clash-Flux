@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.115 release notes](docs/releases/v0.3.115.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.116 release notes](docs/releases/v0.3.116.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -56,6 +56,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and SS (SIP002/legacy full Base64), VMess JSON, VLESS/Trojan, HY2/TUIC/AnyTLS node subscriptions (plain or Base64, including mixed lists). Card menus share a single-frame QR or the complete config as a QiFi/QRS multi-frame QR sequence. See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
   Selection can change during preparation: repeated clicks are coalesced and only the latest pending target is kept.
   Candidate validation, startup and preview reuse the prepared output.
+- Subscription downloads use pinned Clash (Mihomo) then sing-box identities, trying the next only on HTTP 403. Settings can reverse their order. The pins do not follow upstream releases, and there is no Clash-Flux fallback identity; changing the order leaves saved profiles intact. See [download policy](docs/provider-resource-management.md).
 - Desktop rule targets: search and select groups or nodes from Clash subscriptions,
   including inactive sources; preserve missing references. Mobile, native connections
   and JSON use the default outbound. See [orchestration](docs/desktop-subscription-orchestration.md).

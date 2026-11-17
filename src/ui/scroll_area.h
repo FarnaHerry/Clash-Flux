@@ -335,11 +335,13 @@ huxerui::View ScrollArea(Scrollable scrollable,
             style.thumb_color = theme.colors.on_surface; style.thumb_color.alpha *= 0.55F;
             style.fade_in_duration = theme.motion.reduced_motion ? 0.0F : theme.motion.fast;
             style.fade_out_duration = theme.motion.reduced_motion ? 0.0F : theme.motion.normal;
+            auto railInsets = contentInsets;
+            railInsets.bottom_avoidance = contentInsets.rail_bottom_avoidance.value_or(contentInsets.bottom_avoidance);
             return huxerui::Row {}.With(ScrollRail{controller, style, remembered, wide,
                 selected, theme.colors.primary, route, region, controls,
                 huxerui::UseString(controls.up_label), huxerui::UseString(controls.down_label),
                 huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background, motion,
-                ResolveScrollAreaInsets(theme, contentInsets)})
+                ResolveScrollAreaInsets(theme, railInsets)})
                 .Key("scroll-area-rail");
         }).With(huxerui::Frame{.width = inset});
         const auto viewport = huxerui::Scope([scrollable, controller, route, region, parent, wide, motion, wheel] {

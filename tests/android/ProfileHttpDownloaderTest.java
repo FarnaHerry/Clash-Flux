@@ -11,14 +11,14 @@ final class ProfileHttpDownloaderTest {
     private static void require(boolean value, String message) {
         if (!value) throw new AssertionError(message);
     }
+    static final String[] AGENTS = {"ClashMeta/1.19.32; mihomo/1.19.32", "sing-box/1.14.4"};
     static void run() throws Exception {
         Path root = Files.createTempDirectory("clashflux-http-");
         Path staging = root.resolve("exclusive-staging");
         java.util.List<String> identityAgents = new java.util.concurrent.CopyOnWriteArrayList<>();
         java.util.Map<String, String> acceptedAgents = new java.util.HashMap<>();
-        acceptedAgents.put("/identity-native", "sing-box");
-        acceptedAgents.put("/identity", "clash.meta");
-        acceptedAgents.put("/identity-last", "clash-flux");
+        acceptedAgents.put("/identity-native", "ClashMeta/1.19.32; mihomo/1.19.32");
+        acceptedAgents.put("/identity", "sing-box/1.14.4");
         acceptedAgents.put("/identity-denied", "fixture-not-allowed");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
@@ -35,6 +35,8 @@ final class ProfileHttpDownloaderTest {
                 String acceptedAgent = acceptedAgents.get(path);
                 if (acceptedAgent != null) identityAgents.add(agent);
                 int status = acceptedAgent != null && !acceptedAgent.equals(agent) ? 403 : 200;
+                if ("/identity-native".equals(path) && exchange.getRequestHeaders().getFirst("If-None-Match") != null)
+                    status = 403;
                 exchange.getResponseHeaders().set("ETag", "test-etag");
                 if ("/short".equals(path)) exchange.getResponseHeaders().set("Connection", "close");
                 exchange.sendResponseHeaders(status, body.length + ("/short".equals(path) ? 1 : 0));
@@ -47,46 +49,51 @@ final class ProfileHttpDownloaderTest {
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         try {
             ProfileHttpDownloader.Result good = ProfileHttpDownloader.fetch(base + "/large", 3, 256 * 1024,
-                    true, new String[0], false, staging.toString());
+                    true, new String[0], false, AGENTS, staging.toString());
             require(good.error.isEmpty() && good.bytes == 128 * 1024 && Files.size(staging) == good.bytes,
                     "large resources stream completely into the exclusive staging file");
             byte[] accepted = Files.readAllBytes(staging);
             ProfileHttpDownloader.Result conditional = ProfileHttpDownloader.fetch(base + "/conditional", 3, 1024,
-                    true, new String[]{"If-None-Match", "test-etag"}, true, staging.toString());
+                    true, new String[]{"If-None-Match", "test-etag"}, true, AGENTS, staging.toString());
             require(conditional.status == 304 && conditional.bytes == 0 && Arrays.equals(accepted, Files.readAllBytes(staging)),
                     "304 must not truncate a source or create a representation body");
             ProfileHttpDownloader.Result oversized = ProfileHttpDownloader.fetch(base + "/large", 3, 32,
-                    true, new String[0], false, staging.toString());
+                    true, new String[0], false, AGENTS, staging.toString());
             require(!oversized.error.isEmpty() && Files.size(staging) <= 32 && !oversized.retryable,
                     "decoded size limit stops writes and is not retried");
             ProfileHttpDownloader.Result shortBody = ProfileHttpDownloader.fetch(base + "/short", 3, 1024,
-                    true, new String[0], false, staging.toString());
+                    true, new String[0], false, AGENTS, staging.toString());
             require(!shortBody.error.isEmpty() && shortBody.retryable, "truncated bodies remain explicit retryable failures");
             ProfileHttpDownloader.Result nativeIdentity = ProfileHttpDownloader.fetch(base + "/identity-native", 3, 1024,
-                    true, new String[0], true, staging.toString());
+                    true, new String[0], true, AGENTS, staging.toString());
             require(nativeIdentity.status == 200 && nativeIdentity.attempts == 1, "native subscriptions use one request");
             ProfileHttpDownloader.Result identity = ProfileHttpDownloader.fetch(base + "/identity", 3, 1024,
-                    true, new String[0], true, staging.toString());
+                    true, new String[0], true, AGENTS, staging.toString());
             require(identity.status == 200 && identity.attempts == 2 && Files.size(staging) == "source body".length(),
                     "bounded subscriptions retry identity and truncate only their own staging file");
-            ProfileHttpDownloader.Result lastIdentity = ProfileHttpDownloader.fetch(base + "/identity-last", 3, 1024,
-                    true, new String[0], true, staging.toString());
-            require(lastIdentity.status == 200 && lastIdentity.attempts == 3, "the application identity is the last fallback");
             ProfileHttpDownloader.Result denied = ProfileHttpDownloader.fetch(base + "/identity-denied", 3, 1024,
-                    true, new String[0], true, staging.toString());
-            require(denied.status == 403 && denied.attempts == 3, "persistent denial stops after the last identity");
+                    true, new String[0], true, AGENTS, staging.toString());
+            require(denied.status == 403 && denied.attempts == 2, "persistent denial stops after the last identity");
             ProfileHttpDownloader.Result resource = ProfileHttpDownloader.fetch(base + "/identity", 3, 1024,
-                    true, new String[0], false, staging.toString());
+                    true, new String[0], false, AGENTS, staging.toString());
             require(resource.status == 403 && resource.attempts == 1, "providers never change their user agent implicitly");
-            require(identityAgents.equals(Arrays.asList("sing-box", "sing-box", "clash.meta",
-                    "sing-box", "clash.meta", "clash-flux", "sing-box", "clash.meta", "clash-flux",
-                    "clash-flux/0.1")),
-                    "subscription and resource requests use their expected wire identifiers");
+            require(identityAgents.equals(Arrays.asList(AGENTS[0], AGENTS[0], AGENTS[1],
+                    AGENTS[0], AGENTS[1], "clash-flux/0.1")),
+                    "only the two pinned subscription identities are attempted");
+            String[] reversed = {AGENTS[1], AGENTS[0]};
+            ProfileHttpDownloader.Result reordered = ProfileHttpDownloader.fetch(base + "/identity", 3, 1024,
+                    true, new String[0], true, reversed, staging.toString());
+            require(reordered.status == 200 && reordered.attempts == 1,
+                    "native-supplied order controls the first Java request");
+            ProfileHttpDownloader.Result switched = ProfileHttpDownloader.fetch(base + "/identity-native", 3, 1024,
+                    true, new String[]{"If-None-Match", "first-only"}, true, reversed, staging.toString());
+            require(switched.status == 200 && switched.attempts == 2,
+                    "identity fallback drops the previous representation's validators");
             ProfileHttpDownloader.Result redirect = ProfileHttpDownloader.fetch(base + "/redirect", 3, 1024,
-                    true, new String[]{"Authorization", "test-secret"}, false, staging.toString());
+                    true, new String[]{"Authorization", "test-secret"}, false, AGENTS, staging.toString());
             require(redirect.status == 302 && !redirect.error.isEmpty(), "credential-bearing redirects remain refused");
             require(ProfileHttpDownloader.fetch(base + "/redirect", 3, 1024,
-                    true, new String[0], false, staging.toString()).status == 200, "plain redirects retain existing behavior");
+                    true, new String[0], false, AGENTS, staging.toString()).status == 200, "plain redirects retain existing behavior");
             verifyUntrustedTls(staging);
         } finally {
             server.stop(0); Files.deleteIfExists(staging); Files.deleteIfExists(root);
@@ -125,7 +132,7 @@ final class ProfileHttpDownloaderTest {
             byte[] previous = Files.readAllBytes(staging);
             ProfileHttpDownloader.Result rejected = ProfileHttpDownloader.fetch(
                     "https://127.0.0.1:" + server.getAddress().getPort() + "/", 3, 1024,
-                    true, new String[0], false, staging.toString());
+                    true, new String[0], false, AGENTS, staging.toString());
             require(!rejected.error.isEmpty() && "tls".equals(rejected.failure) && payloads.get() == 0 &&
                     Arrays.equals(previous, Files.readAllBytes(staging)),
                     "untrusted TLS must reject before HTTP payload or file replacement using unchanged system trust");

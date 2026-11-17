@@ -699,6 +699,9 @@ std::function<void()> NodeSelectAction(
     // 桌面悬浮测速按钮存在时，滚动尾部要留出它的净空，否则最后一行节点
     // 会被按钮遮住。
     const bool showSpeedFab = !direct && current != nullptr;
+    auto gridInsets = ScrollAreaInsets::Symmetric(kSectionCardSpacing,
+        compact ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F));
+    gridInsets.rail_bottom_avoidance = 0.0F;
     std::vector<huxerui::View> groupPages;
     groupPages.reserve(rootGroups.size());
     for (std::size_t page = 0; page < rootGroups.size(); ++page) {
@@ -780,8 +783,7 @@ std::function<void()> NodeSelectAction(
                                  .EstimatedRowExtent(52.0F)
                                  .CacheExtent(kProxyGridCacheExtent)
                                  .ColumnSpacing(kSectionCardSpacing), {}, {}, {},
-                                 ScrollAreaInsets::Symmetric(kSectionCardSpacing, compact
-                                     ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F)))
+                                 gridInsets)
                                  .With(huxerui::Grow(1.0F))
                                  .Key("group-grid-" + rootGroup.name);
         groupPages.push_back(huxerui::Column {grid}.With(
@@ -896,7 +898,7 @@ std::function<void()> NodeSelectAction(
         huxerui::View speedDock = huxerui::Column {
             std::move(floatingSpeed),
         }.With(huxerui::Padding(huxerui::EdgeInsets{
-                   .right = theme.spacing.medium,
+                   .right = theme.spacing.medium + (compact ? 0.0F : kScrollBarGutter),
                    .bottom = compact ? kCompactFloatingNavigationInset
                                      : theme.spacing.large,
                    .left = theme.spacing.medium,

@@ -9,8 +9,9 @@
 可能相互等待，但改选不能取消其它订阅的后台更新。
 
 2026-11-02 跨版本订阅回归：v0.3.83 把 Android 默认订阅 UA 改成 `clash.meta`，可能让服务端改返
-不同的 Clash 内容。v0.3.90 恢复 `clash-flux/0.1`，当前普通订阅先用 `sing-box`。
-普通订阅仅在 HTTP 403 时依次尝试 `clash.meta` 和 `clash-flux`。自定义请求头和规则集下载沿用原 UA。共享编译器此前会把尚未支持的
+不同的 Clash 内容。v0.3.90 恢复 `clash-flux/0.1`，后续曾改为无版本的 `sing-box` 优先。
+当前普通订阅改用固定版本的 Clash（Mihomo）→ sing-box，可在设置页调整顺序，只在 HTTP 403
+时切换；原生端传入 UA 数组，版本和缓存边界见[统一下载策略](provider-resource-management.md#2026-11-14下载与编译复用收敛)。自定义请求头和规则集下载沿用原 UA。共享编译器此前会把尚未支持的
 `use` / `include-all-providers` 组仅保留显式成员，空组再补 DIRECT；provider-only 配置因此能以
 `Proxy → DIRECT` 通过校验并启动。现此类组记 Unsupported 并拒绝候选，刷新保留旧文件、选中状态
 和其它订阅。v0.3.90 先提供明确失败与旧数据保护；后续工作区已接入 HTTP proxy-providers

@@ -21,6 +21,7 @@ struct ProfileHttpResponse {
 // Java implementation always uses Android certificate and hostname verification.
 ProfileHttpResponse DownloadProfileToFile(const std::string& url, int timeoutSecs,
     const std::string& destination, std::size_t maxBytes, bool forceDirect,
-    const std::map<std::string, std::string>& headers = {}, bool subscriptionRequest = false);
+    const std::map<std::string, std::string>& headers = {}, bool subscriptionRequest = false,
+    const std::string& userAgentOrder = {});
 
 } // namespace clashflux::android

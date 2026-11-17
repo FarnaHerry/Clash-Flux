@@ -1,8 +1,8 @@
 // Optional HTTP representation cache. The accepted source file and row remain
 // authoritative; a cache miss, damage or write failure only costs a full GET.
-    static std::string remoteIdentity(const model::Profile& profile) {
+    static std::string remoteIdentity(const model::Profile& profile, std::string_view userAgentIdentity) {
         // A source can serve a different representation under a new default UA.
-        return std::to_string(profile.id) + ":" + clashflux::download::kSubscriptionUserAgents.front() +
+        return std::to_string(profile.id) + ":" + std::string{userAgentIdentity} +
             ":" + std::to_string(profile.url.size()) + ":" + profile.url + profile.file;
     }
 
@@ -11,7 +11,7 @@
     }
 
     static std::optional<clashflux::http_cache::Representation> readRemoteCache(
-            const model::Profile& profile, const std::string& accepted) {
+            const model::Profile& profile, const std::string& accepted, std::string_view userAgentIdentity) {
         if (profile.file.empty() || accepted.empty() || accepted.size() > clashflux::download::kSubscriptionMaxBytes)
             return {};
         const auto path = remoteCachePath(profile.id);
@@ -20,7 +20,7 @@
         std::string ignored;
         const auto image = singbox::ReadRuleProviderText(path, clashflux::download::kSubscriptionMaxBytes + 36 * 1024 + 80, ignored);
         if (!image) return {};
-        auto cached = clashflux::http_cache::Decode(*image, "clash-flux-subscription", remoteIdentity(profile),
+        auto cached = clashflux::http_cache::Decode(*image, "clash-flux-subscription", remoteIdentity(profile, userAgentIdentity),
                                                    clashflux::download::kSubscriptionMaxBytes);
         // Full bytes bind the validator to the accepted version, including an
         // external edit that leaves the immutable filename unchanged.
@@ -30,12 +30,13 @@
 
     template<class Headers>
     static void rememberRemoteCache(const model::Profile& profile, const std::string& body,
-            const Headers& headers, const clashflux::http_cache::Representation* previous = nullptr) noexcept {
+            const Headers& headers, std::string_view userAgentIdentity,
+            const clashflux::http_cache::Representation* previous = nullptr) noexcept {
         try {
             std::string etag = previous ? previous->etag : "", modified = previous ? previous->modified : "";
             if (const auto entry = headers.find("etag"); entry != headers.end()) etag = entry->second;
             if (const auto entry = headers.find("last-modified"); entry != headers.end()) modified = entry->second;
-            const auto image = clashflux::http_cache::Encode("clash-flux-subscription", remoteIdentity(profile), body, etag, modified);
+            const auto image = clashflux::http_cache::Encode("clash-flux-subscription", remoteIdentity(profile, userAgentIdentity), body, etag, modified);
             if (image.empty() || body.size() > clashflux::download::kSubscriptionMaxBytes) return;
             const auto path = remoteCachePath(profile.id);
             std::error_code ec;

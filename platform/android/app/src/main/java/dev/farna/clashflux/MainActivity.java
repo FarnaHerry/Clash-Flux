@@ -69,9 +69,9 @@ public final class MainActivity extends HuxerUIActivity {
     /** Worker-only adapter; body bytes stay in the exclusive native staging file. */
     public static Bundle fetchProfile(String address, int timeoutSeconds,
             long maxBytes, boolean forceDirect, String[] requestHeaders,
-            boolean subscriptionRequest, String destination) {
+            boolean subscriptionRequest, String[] userAgents, String destination) {
         ProfileHttpDownloader.Result fetched = ProfileHttpDownloader.fetch(address, timeoutSeconds,
-                maxBytes, forceDirect, requestHeaders, subscriptionRequest, destination);
+                maxBytes, forceDirect, requestHeaders, subscriptionRequest, userAgents, destination);
         Bundle result = new Bundle();
         result.putInt("status", fetched.status);
         result.putInt("attempts", fetched.attempts);

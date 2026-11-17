@@ -110,6 +110,8 @@ public:
     struct DownloadOptions {
         long timeoutSecs = 60;
         bool subscriptionRequest = false;
+        // Stable identity IDs; empty/invalid values use the pinned default order.
+        std::string subscriptionUserAgentOrder;
         unsigned attempts = 1;
         std::string proxyUrl;        // 非空 = 经该代理（如 http://127.0.0.1:7899）
         bool allowProxyEnv = false;  // proxyUrl 为空时是否允许环境变量代理

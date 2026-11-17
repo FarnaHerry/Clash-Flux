@@ -8,13 +8,14 @@
 
 namespace clashflux::ui {
 
-// One request for the scrollable content edges and the rail's end clearance.
-// Floating controls add bottom avoidance without shortening the viewport.
+// Floating controls add content clearance without shortening the viewport.
+// A control beside the rail can keep its content clearance and leave the rail full length.
 struct ScrollAreaInsets {
     std::optional<float> top, bottom;
     float bottom_avoidance = 0.0F;
     bool dense = false;
     bool top_follows_horizontal = false;
+    std::optional<float> rail_bottom_avoidance;
     static ScrollAreaInsets Default() { return {}; }
     static ScrollAreaInsets Dense(float avoidance = 0.0F) {
         return {.bottom_avoidance = avoidance, .dense = true};

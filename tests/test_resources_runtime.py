@@ -141,6 +141,7 @@ def main():
         requests = Counter()
         conditions = {}
         conditional_headers = []
+        subscription_agents = []
         hold = threading.Event()
         reached = threading.Event()
         release = threading.Event()
@@ -166,6 +167,7 @@ def main():
                 body = bodies[self.path]
                 if self.path in conditions:
                     conditional_headers.append((self.path, self.headers.get("If-None-Match")))
+                    if self.path == "/conditional-source": subscription_agents.append(self.headers.get("User-Agent"))
                     tag = conditions[self.path]
                     if self.headers.get("If-None-Match") == tag:
                         self.send_response(304)
@@ -475,7 +477,9 @@ def main():
             assert (profiles / conditional_file).read_bytes() == original_source
             cache_file = data / "subscription-http" / f"{conditional_id}.cache"
             header, identity, cached_body = cache_file.read_bytes().split(b"\n", 2)
-            prefix = f"{conditional_id}:sing-box:".encode()
+            agents = ["ClashMeta/1.19.32; mihomo/1.19.32", "sing-box/1.14.4"]
+            identity_agents = "".join(f"{len(agent)}:{agent}" for agent in agents)
+            prefix = f"{conditional_id}:{identity_agents}:".encode()
             assert identity.startswith(prefix)
             old_identity = f"{conditional_id}:".encode() + identity[len(prefix):]
             cache_file.write_bytes(b"\n".join((header, old_identity, cached_body)))
@@ -483,6 +487,26 @@ def main():
             run("profile", "update", str(conditional_id))
             assert conditional_headers[0] == ("/conditional-source", None), conditional_headers
             assert cache_file.read_bytes().split(b"\n", 2)[1].startswith(prefix)
+            conditional_file = profile_path(conditional_id).name
+            # Saved order survives Runtime reopen, controls the first request,
+            # and cannot reuse validators from a differently ordered request.
+            set_setting("subscription.ua_order", "sing-box,clash")
+            conditional_headers.clear()
+            run("profile", "update", str(conditional_id))
+            assert subscription_agents[-1] == agents[1]
+            assert conditional_headers[0] == ("/conditional-source", None), conditional_headers
+            reversed_identity = "".join(f"{len(agent)}:{agent}" for agent in reversed(agents))
+            assert cache_file.read_bytes().split(b"\n", 2)[1].startswith(
+                f"{conditional_id}:{reversed_identity}:".encode())
+            assert setting("subscription.ua_order") == "sing-box,clash"
+            conditional_headers.clear()
+            run("profile", "update", str(conditional_id))
+            assert conditional_headers[0] == ("/conditional-source", '"source-v1"')
+            set_setting("subscription.ua_order", "clash,sing-box")
+            conditional_headers.clear()
+            run("profile", "update", str(conditional_id))
+            assert subscription_agents[-1] == agents[0]
+            assert conditional_headers[0] == ("/conditional-source", None)
             conditional_file = profile_path(conditional_id).name
             # A local edit invalidates the validator, even with the same filename.
             (profiles / conditional_file).write_bytes(original_source + b"# external local edit\n")

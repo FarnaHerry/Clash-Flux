@@ -654,16 +654,19 @@ private:
         const bool importing = revision == 0;
         p = *initial;
         const auto previousContent = yamlOf(*initial);
+        const auto userAgentOrder = data.setting(std::string{clashflux::subscription_http::kOrderSetting});
+        const auto userAgentIdentity = clashflux::subscription_http::Identity(userAgentOrder);
 #if defined(CLASHFLUX_IOS)
         const std::optional<clashflux::http_cache::Representation> cached;
 #else
-        const auto cached = readRemoteCache(*initial, previousContent);
+        const auto cached = readRemoteCache(*initial, previousContent, userAgentIdentity);
 #endif
         const auto versionFile = std::format("{}.{}.yaml", p.id, cfg::randomSecret());
         api::ClashApi::DownloadOptions opts;
         opts.timeoutSecs = p.timeoutSecs > 0 ? p.timeoutSecs : 60;
         opts.maxBytes = clashflux::download::kSubscriptionMaxBytes;
         opts.subscriptionRequest = true;
+        opts.subscriptionUserAgentOrder = userAgentOrder;
         if (cached) {
             opts.headers = clashflux::download::ConditionalHeaders({}, cached->etag, cached->modified);
             opts.acceptNotModified = clashflux::download::HasCondition(opts.headers);
@@ -725,7 +728,10 @@ private:
         p.file = result.status == 304 ? initial->file : versionFile;
         applyHeaders(p, result.headers, result.status == 304);
         if (!commitPrepared(p, importing ? std::nullopt : initial, revision, std::move(apply))) return false;
-        if (validatedBody) rememberRemoteCache(p, *validatedBody, result.headers, result.status == 304 ? &*cached : nullptr);
+        // A fallback representation cannot supply validators for the first UA.
+        if (validatedBody && result.download.attempts == 1)
+            rememberRemoteCache(p, *validatedBody, result.headers, userAgentIdentity,
+                                result.status == 304 ? &*cached : nullptr);
         return true;
     }
 

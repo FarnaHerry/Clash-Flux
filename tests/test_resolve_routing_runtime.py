@@ -170,6 +170,29 @@ def main(compiler, engine, baseline=False):
             with clash(required_miss, optional_ip) as (_, mixed):
                 exercise(mixed, "previous-required.test", b"echo-ok", True)
 
+        optional_or = "OR,((DOMAIN,inside.test),(IP-CIDR,127.0.0.0/8,no-resolve),(IP-CIDR6,::1/128,no-resolve)),REJECT"
+        optional_not = "NOT,((IP-CIDR,127.0.0.0/8,no-resolve)),REJECT"
+        optional_double_not = "NOT,((NOT,((IP-CIDR,127.0.0.0/8,no-resolve)))),REJECT"
+        with clash(optional_or) as (_, mixed):
+            exercise(mixed, "inside.test", None, False)
+            exercise(mixed, "missing.or.test", b"node-ok", False, "missing.or.test")
+            exercise(mixed, "127.0.0.1", None, False, literal=True)
+            exercise(mixed, "::1", None, False, literal=True)
+        with clash(optional_not) as (_, mixed):
+            exercise(mixed, "missing.not.test", None, False)
+            exercise(mixed, "127.0.0.1", b"node-ok", False, "127.0.0.1", literal=True)
+            exercise(mixed, "192.0.2.1", None, False, literal=True)
+        with clash(optional_double_not) as (_, mixed):
+            exercise(mixed, "missing.double.test", b"node-ok", False, "missing.double.test")
+            exercise(mixed, "127.0.0.1", None, False, literal=True)
+        for optional in (optional_or, optional_double_not):
+            with clash(required_miss, optional) as (_, mixed):
+                exercise(mixed, "prepared.logical.test", None, True)
+        with clash(required_miss, optional_not) as (_, mixed):
+            exercise(mixed, "prepared.not.test", b"node-ok", True, "127.0.0.1")
+        with clash(optional_or, required_miss) as (_, mixed):
+            exercise(mixed, "later.logical.test", b"node-ok", True, "127.0.0.1")
+
         guarded = "AND,((DOMAIN,guarded.test),(DST-PORT,{port}),(IP-CIDR,127.0.0.1/32)),DIRECT"
         guarded = guarded.format(port=echo.server_port)
         with clash(guarded) as (_, mixed):
@@ -227,7 +250,15 @@ def main(compiler, engine, baseline=False):
         with clash("RULE-SET,sample,DIRECT", providers=provider(
                 "classical", "IP-CIDR,192.0.2.0/24,no-resolve", "IP-CIDR,127.0.0.1/32")) as (_, mixed):
             exercise(mixed, "mixed.entry.test", b"echo-ok", True)
-    print("resolve_routing_runtime: node and Clash routing, no-resolve, AND guards and inline sets passed")
+        for logical in (optional_or, optional_not, optional_double_not):
+            entries = provider("classical", logical.removesuffix(",REJECT"))
+            with clash(ordinary_set, providers=entries) as (_, mixed):
+                inverted = logical == optional_not
+                exercise(mixed, "missing.logical-set.test", None if inverted else b"node-ok",
+                         False, None if inverted else "missing.logical-set.test")
+                exercise(mixed, "127.0.0.1", b"node-ok" if inverted else None,
+                         False, "127.0.0.1" if inverted else None, literal=True)
+    print("resolve_routing_runtime: node and Clash routing, logical no-resolve, AND guards and inline sets passed")
 
 
 if __name__ == "__main__":

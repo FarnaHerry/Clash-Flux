@@ -24,6 +24,7 @@
 
 #include "ui.h"
 #include "profile_update_interval.h"
+#include "subscription_ua_setting.h"
 #include "app_resources.h"
 #include "box_cat.h"
 #include "runtime_diagnostics.h"
@@ -3852,6 +3853,7 @@ void testManagedScrollInsets() {
             };
             const auto policies = std::vector<ScrollAreaInsets>{ScrollAreaInsets{}, ScrollAreaInsets::Dense(),
                 ScrollAreaInsets::Symmetric(6.0F), {.top = 12.0F, .bottom = 20.0F, .bottom_avoidance = 56.0F},
+                {.top = 8.0F, .bottom = 8.0F, .bottom_avoidance = 80.0F, .rail_bottom_avoidance = 0.0F},
                 {.dense = true, .top_follows_horizontal = true},
                 ScrollAreaInsets::None()};
             for (const auto& policy : policies) {
@@ -3863,6 +3865,8 @@ void testManagedScrollInsets() {
                 const float top = policy.top_follows_horizontal
                     ? bounds.x - scroll.One().bounds.x : policy.top.value_or(policy.dense ? 8.0F : 14.0F);
                 const float bottom = policy.bottom.value_or(policy.dense ? 4.0F : 14.0F) + policy.bottom_avoidance;
+                const float railBottom = policy.bottom.value_or(policy.dense ? 4.0F : 14.0F) +
+                    policy.rail_bottom_avoidance.value_or(policy.bottom_avoidance);
                 check(bounds.y == header.y + header.height && bounds.height == 360.0F &&
                       std::abs(ui.Find(UiSelector::Key("managed-row-0")).One().bounds.y - bounds.y - top) < 0.01F,
                       "one container request supplies ordinary/list/grid leading whitespace without shrinking the viewport");
@@ -3872,8 +3876,8 @@ void testManagedScrollInsets() {
                     check(up.Exists() && down.Exists() &&
                           std::abs(up.One().bounds.y - bounds.y - std::max(7.0F, top)) < 0.01F &&
                           std::abs(bounds.y + bounds.height - down.One().bounds.y - down.One().bounds.height -
-                              std::max(7.0F, bottom)) < 0.01F,
-                          "rail arrows consume the same top/bottom request and floating-control avoidance exactly once");
+                              std::max(7.0F, railBottom)) < 0.01F,
+                          "rail arrows use their requested clearance while content retains floating-control avoidance");
                 } else check(!up.Exists() && !down.Exists(), "compact content edges do not enable a scrollbar");
                 if (policy.top_follows_horizontal) {
                     const auto first = ui.Find(UiSelector::Key("managed-row-0"));
@@ -7269,6 +7273,69 @@ bool hasSettingsRowLayer(huxerui::testing::UiTest& ui, huxerui::Rect bounds, flo
     return scan(scan, snapshot);
 }
 
+void testHomeSettingsGear() {
+    using namespace clashflux::ui;
+    static bool darkTheme = false;
+    static float cardWidth = 0.0F;
+    static int gearClicks = 0;
+    static int switchChanges = 0;
+    const huxerui::Application fixture{[]() -> huxerui::View {
+        auto theme = darkTheme ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+        ApplyFluxInteractionTheme(theme);
+        return huxerui::MaterialTheme(theme, huxerui::Scope([theme] {
+            auto style = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+            style.indication = ResolveFluxIndication(theme);
+            auto card = HomeCardSurface(theme, huxerui::Column {
+              huxerui::Text("Network").With(huxerui::Frame{.height = 20.0F}).Key("gear-heading"),
+              huxerui::Row {
+                HomeCardLeadingIconButton(app::images::gear, "Network settings", style)
+                    .OnClick([] { ++gearClicks; }).Key("card-gear"),
+                huxerui::Spacer(),
+                huxerui::Switch(false).OnChanged([](bool) { ++switchChanges; }).Key("card-switch"),
+              }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+            }.With(huxerui::Spacing(2.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), "gear", false)
+                .With(huxerui::Frame{.width = cardWidth, .height = 88.0F});
+            return huxerui::ProvideEnvironment(style, card);
+        }));
+    }, {.show_debug_overlay = false}};
+    for (bool dark : {false, true}) for (float width : {360.0F, 960.0F}) {
+        darkTheme = dark;
+        cardWidth = width < 600.0F ? 154.0F : 240.0F;
+        gearClicks = switchChanges = 0;
+        huxerui::testing::UiTest ui(fixture, {.viewport = {width, 200.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto gear = ui.Find(UiSelector::Key("card-gear")).One().bounds;
+        const auto heading = ui.Find(UiSelector::Key("gear-heading")).One().bounds;
+        const huxerui::Point center{gear.x + gear.width * 0.5F, gear.y + gear.height * 0.5F};
+        check(gear.width == 48.0F && std::abs(center.x - (heading.x + 12.0F)) < 0.1F,
+              "gear keeps the standard button width and centers its feedback over the leading icon");
+
+        const huxerui::Rect stateLayer{0.0F, 0.0F, 40.0F, 40.0F};
+        const huxerui::Point gap{gear.x + gear.width + 1.0F, center.y};
+        huxerui::PointerEvent pointer{.type = huxerui::PointerEventType::Move, .pointer_id = 97,
+            .position = gap, .device_kind = huxerui::PointerDeviceKind::Mouse};
+        ui.SendPointer(pointer); ui.PumpAndSettle();
+        check(!hasSettingsRowLayer(ui, stateLayer, kInteractionHoverOpacity),
+              "space beside the gear does not paint its hover effect");
+        pointer.position = center;
+        ui.SendPointer(pointer); ui.PumpAndSettle();
+        check(hasSettingsRowLayer(ui, stateLayer, kInteractionHoverOpacity), "gear hover uses its round state layer");
+        pointer.type = huxerui::PointerEventType::Down;
+        pointer.changed_button = huxerui::PointerButton::Primary;
+        pointer.pressed_buttons = huxerui::PointerButton::Primary;
+        ui.SendPointer(pointer); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
+        check(hasSettingsRowLayer(ui, stateLayer, kInteractionPressOpacity), "gear press uses the same state layer");
+        pointer.type = huxerui::PointerEventType::Up;
+        pointer.pressed_buttons = huxerui::PointerButton::None;
+        ui.SendPointer(pointer); ui.PumpAndSettle();
+
+        ui.TapAt(gap);
+        ui.Find(UiSelector::Key("card-switch")).Tap(); ui.PumpAndSettle();
+        check(gearClicks == 1 && switchChanges == 1, "gear, adjacent space and switch keep independent hit targets");
+    }
+}
+
 void testSettingsRowFeedback() {
     using namespace clashflux::ui;
     for (bool dark : {false, true}) for (float width : {360.0F, 960.0F}) for (bool enabled : {true, false}) {
@@ -8012,6 +8079,55 @@ void testSettingsSelectSizing() {
     }
 }
 
+struct SubscriptionUaFixture {
+    huxerui::State<bool> ready{false};
+    huxerui::State<bool> visible{true};
+    huxerui::State<std::string> order{std::string{clashflux::subscription_http::kOrders[1]}};
+    int changes = 0;
+};
+std::shared_ptr<SubscriptionUaFixture> subscriptionUaFixture;
+huxerui::View SubscriptionUaRoot() {
+    return huxerui::FlatTheme {huxerui::Scope([] {
+        const auto model = huxerui::UseState(std::make_shared<SubscriptionUaFixture>()).Get();
+        subscriptionUaFixture = model;
+        if (!model->visible.Get()) return huxerui::View{huxerui::Text("Hidden")};
+        return clashflux::ui::SubscriptionUserAgentOrderControl(model->ready.Get(), model->order.Get(),
+            [model](std::size_t index) {
+                model->order = std::string{clashflux::subscription_http::kOrders.at(index)};
+                ++model->changes;
+            }).With(huxerui::Padding(16.0F));
+    })};
+}
+
+void testSubscriptionUserAgentOrder() {
+    using namespace clashflux;
+    for (float width : {320.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(huxerui::Application{SubscriptionUaRoot, {.show_debug_overlay = false}},
+            {.viewport = {width, 600.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto model = subscriptionUaFixture;
+        const auto select = ui.Find(UiSelector::Key("subscription-ua-select"));
+        check(!select.Exists() && model->changes == 0,
+              "UA order cannot be edited or written before settings hydration");
+        model->ready = true; ui.PumpAndSettle();
+        check(ui.Find(UiSelector::Text(subscription_http::OrderLabel(1))).Exists() && model->changes == 0,
+              "hydration displays the saved order without rewriting it");
+        const auto bounds = select.One().bounds;
+        check(bounds.x >= 16.0F && bounds.x + bounds.width <= width - 15.9F,
+              "UA order trigger fits both narrow and wide settings");
+        select.Tap(); ui.PumpAndSettle();
+        ui.Find(UiSelector::Text(subscription_http::OrderLabel(0))).Tap(); ui.PumpAndSettle();
+        check(model->order.Get() == subscription_http::kOrders[0] && model->changes == 1,
+              "popup selection publishes the default Clash then sing-box order once");
+        for (const auto agent : subscription_http::kUserAgents)
+            check(ui.Find(UiSelector::Text(std::string{agent})).Exists(), "the actual pinned UA is visible");
+        model->visible = false; ui.PumpAndSettle();
+        model->visible = true; ui.PumpAndSettle();
+        check(select.Exists() && model->order.Get() == subscription_http::kOrders[0] && model->changes == 1,
+              "remounting preserves the chosen order without extra writes");
+    }
+}
+
 struct SettingsReadinessFixture {
     huxerui::State<bool> settingsReady{false};
     huxerui::State<bool> coreReady{false};
@@ -8073,6 +8189,12 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--subscription-ua") {
+        testSubscriptionUserAgentOrder(); return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--home-gear") {
+        testHomeSettingsGear(); return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-node-card") {
         testSingleProxyProbeCard(); return failures == 0 ? 0 : 1;
     }
@@ -8120,7 +8242,7 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    try { testSettingsReadiness(); testSettingsSelectSizing(); testSettingsRowFeedback(); }
+    try { testSubscriptionUserAgentOrder(); testSettingsReadiness(); testSettingsSelectSizing(); testSettingsRowFeedback(); testHomeSettingsGear(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: settings row feedback: %s\n", error.what());
         ++failures;

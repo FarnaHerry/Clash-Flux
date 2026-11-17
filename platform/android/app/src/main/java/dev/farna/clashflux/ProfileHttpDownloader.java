@@ -25,13 +25,19 @@ final class ProfileHttpDownloader {
 
     static Result fetch(String address, int timeoutSeconds,
             long maxBytes, boolean forceDirect, String[] requestHeaders,
-            boolean subscriptionRequest, String destination) {
-        String[] userAgents = ProfileHttpPolicy.SUBSCRIPTION_USER_AGENTS;
+            boolean subscriptionRequest, String[] userAgents, String destination) {
+        // Native code owns the compatibility pins and captures the saved order
+        // once per request. Java never reads the UI process's database.
+        if (subscriptionRequest && (userAgents == null || userAgents.length != 2)) {
+            Result invalid = new Result(); invalid.error = "订阅 UA 顺序无效"; return invalid;
+        }
+        if (!subscriptionRequest) userAgents = new String[]{ProfileHttpPolicy.RESOURCE_USER_AGENT};
         Result result = fetchProfileWithUserAgent(address, timeoutSeconds,
                 maxBytes, forceDirect, requestHeaders, destination,
                 subscriptionRequest ? userAgents[0] : ProfileHttpPolicy.RESOURCE_USER_AGENT);
         for (int index = 1; index < userAgents.length &&
                 ProfileHttpPolicy.shouldTryNextUserAgent(result.status, subscriptionRequest, requestHeaders); index++) {
+            requestHeaders = new String[0]; // never reuse another identity's validators
             Result retried = fetchProfileWithUserAgent(address, timeoutSeconds,
                     maxBytes, forceDirect, requestHeaders, destination, userAgents[index]);
             retried.bytes += result.bytes;

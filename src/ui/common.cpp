@@ -1441,6 +1441,13 @@ void DriveProfilesModel(huxerui::TaskScope tasks,
 
 // ---- 应用级设置：唯一读取点（见 settings_model.h）---------------------------
 
+void SettingsModel::SetSubscriptionUserAgentOrder(std::size_t index) {
+    if (!view.Get().ready || index >= subscription_http::kOrders.size()) return;
+    const std::string order{subscription_http::kOrders[index]};
+    store::coreStore().setSetting(std::string{subscription_http::kOrderSetting}, order);
+    Update([&](SettingsView& next) { next.subscriptionUserAgentOrder = order; });
+}
+
 void SettingsModel::PublishCached() {
     // Never publish fallback settings before the database has hydrated.
     if (!clashflux::data::session().ready()) return;
@@ -1468,6 +1475,8 @@ void SettingsModel::PublishCached() {
     catch (const std::exception& error) { next.networkError = error.what(); }
     next.envShell = core.setting("ui.env_shell", "");
     next.language = core.setting("ui.language", "system");
+    next.subscriptionUserAgentOrder = subscription_http::kOrders[subscription_http::OrderIndex(
+        core.setting(std::string{subscription_http::kOrderSetting}))];
     // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。
     view = std::move(next);
 }

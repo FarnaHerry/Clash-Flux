@@ -498,10 +498,10 @@ std::optional<nlohmann::json> logicalCondition(Context& ctx, std::string_view te
     }
     if (resolution) {
         resolution->hasNoResolve |= cidr && noResolve;
-        if (kind == "or" || kind == "not" || resource || kind == "ip-asn" ||
-            kind == "src-ip-asn" || (cidr && !noResolve)) resolution->canSkipResolve = false;
+        if (resource || kind == "ip-asn" || kind == "src-ip-asn" || (cidr && !noResolve))
+            resolution->canSkipResolve = false;
         if (!headless && resolution->hasNoResolve && !resolution->canSkipResolve) {
-            error = "no-resolve 当前支持纯 AND，且所有目标 CIDR 都必须带该修饰符";
+            error = "逻辑规则中的目标 CIDR 必须全部带 no-resolve，且不能混用资源或 ASN 条件";
             return std::nullopt;
         }
     }

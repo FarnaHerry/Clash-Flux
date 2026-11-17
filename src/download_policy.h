@@ -1,6 +1,7 @@
 #pragma once
 
 #include "http_request_headers.h"
+#include "subscription_user_agents.h"
 #include <cstddef>
 #include <array>
 #include <optional>
@@ -12,7 +13,6 @@
 
 namespace clashflux::download {
 
-inline constexpr std::array kSubscriptionUserAgents{"sing-box", "clash.meta", "clash-flux"};
 inline constexpr std::size_t kSubscriptionMaxBytes = 8 * 1024 * 1024;
 inline constexpr long ResourceTimeout(std::size_t limit) { return limit > kSubscriptionMaxBytes ? 120 : 20; }
 inline constexpr unsigned ResourceAttempts(std::size_t limit, bool android) {

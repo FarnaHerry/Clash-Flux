@@ -16,6 +16,7 @@
 
 #include "app_resources.h"
 #include "ui.h"
+#include "home_card.h"
 #include "action_menu.h"
 #include "task_bridge.h"
 #include "runtime_diagnostics.h"
@@ -27,6 +28,7 @@
 #include "page_layout.h"
 #include "subscription_rule_layout.h"
 #include "refresh_motion.h"
+#include "subscription_ua_setting.h"
 
 import clashflux.config;
 import clashflux.core;
@@ -690,11 +692,8 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const huxerui::StringVariant label = kind == HomeProxySettingsKind::SystemProxy
         ? Localized("系统代理设置") : Localized("虚拟网卡设置");
     const auto style = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
-    // Keep the button's hit area, with the icon on the card heading's leading edge.
-    const float trailingInset = std::max(0.0F, style.minimum_interactive_size - style.icon_size);
-    return huxerui::IconButton(app::images::gear, label)
-        .With(huxerui::Tooltip(label), huxerui::Padding(huxerui::EdgeInsets{.right = trailingInset}),
-              huxerui::Enabled(settings->view.Get().ready))
+    return HomeCardLeadingIconButton(app::images::gear, label, style)
+        .With(huxerui::Tooltip(label), huxerui::Enabled(settings->view.Get().ready))
         .Key(kind == HomeProxySettingsKind::SystemProxy
             ? "home-system-proxy-settings" : "home-tun-settings")
         .OnClick([dialog, navigation, compact, kind] {
@@ -864,6 +863,13 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         onBack, false, false, false, true);
 }
 
+[[huxerui::composable]] huxerui::View SubscriptionDownloadSettings() {
+    const auto model = huxerui::UseService<SettingsModel>();
+    const SettingsView settings = model->view.Get();
+    return SubscriptionUserAgentOrderControl(settings.ready, settings.subscriptionUserAgentOrder,
+        [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); });
+}
+
 [[huxerui::composable]] huxerui::View SettingsPage(
     huxerui::State<int> themeMode, huxerui::State<std::size_t> navPage,
     ProfilesCache profilesCache, bool active) {
@@ -896,6 +902,8 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
       CLASHFLUX_NETWORK_PLATFORM_SECTION(),
     }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .Key("settings-network"));
+    sections.push_back(SettingsSectionCard(Localized("订阅下载"), SubscriptionDownloadSettings())
+        .Key("settings-subscription-download"));
     sections.push_back(SettingsSectionCard(Localized("规则与资源"),
         SettingNavigationItem(Localized("外部资源"), app::images::route,
             [navigation] { navigation.Push(ResourcesPage); })).Key("settings-resources"));

@@ -16,7 +16,7 @@ import time
 GOOD = b"payload: [valid.test]\n"
 # Zstandard MRSv1 IPCIDR fixture: exactly 192.0.2.0/24, including NUL bytes.
 MRS = base64.b64decode("KLUv/SA+HQEAwE1SUwEBAAEAAQABAP//wAACAP//wAAC/wUQALsUPHDGQxE=")
-SUBSCRIPTION_AGENTS = {"/identity-native": "sing-box", "/identity": "clash.meta", "/identity-last": "clash-flux"}
+SUBSCRIPTION_AGENTS = {"/identity-native": "ClashMeta/1.19.32; mihomo/1.19.32", "/identity": "sing-box/1.14.4"}
 
 
 class PoolHandler(http.server.BaseHTTPRequestHandler):
@@ -39,11 +39,13 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
         authorized = self.path not in expected or self.headers.get("Authorization") == expected[self.path]
         if self.path == "/direct-denied":
             authorized = False
-        if self.path in SUBSCRIPTION_AGENTS:
+        if self.path in SUBSCRIPTION_AGENTS or self.path == "/identity-denied":
             agent = self.headers.get("User-Agent")
             with self.lock:
                 self.identity_agents.append(agent)
-            authorized = agent == SUBSCRIPTION_AGENTS[self.path]
+            authorized = agent == SUBSCRIPTION_AGENTS.get(self.path)
+            if self.path == "/identity-native" and self.headers.get("If-None-Match"):
+                authorized = False
         if (self.path == "/reuse" or self.path.startswith("/concurrent-")) and self.headers.get("Authorization"):
             authorized = False
         if self.path == "/no-validator":
@@ -100,8 +102,10 @@ def pool_test(binary, folder, key=None, cert=None):
         assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
         assert PoolHandler.peak >= 2, "pool serialized independent transfers"
         assert PoolHandler.identity_agents == [
-            "sing-box", "sing-box", "clash.meta", "sing-box", "clash.meta", "clash-flux",
-            "explicit-test-agent", "clash-flux/0.1"]
+            "ClashMeta/1.19.32; mihomo/1.19.32", "ClashMeta/1.19.32; mihomo/1.19.32", "sing-box/1.14.4",
+            "ClashMeta/1.19.32; mihomo/1.19.32", "sing-box/1.14.4",
+            "explicit-test-agent", "clash-flux/0.1", "sing-box/1.14.4",
+            "sing-box/1.14.4", "ClashMeta/1.19.32; mihomo/1.19.32"]
         print(result.stdout, end="")
         print(f"download pool: observed concurrent HTTP handlers={PoolHandler.peak}")
     finally:

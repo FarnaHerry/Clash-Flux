@@ -19,6 +19,7 @@
 #include "inbound_settings.h"
 #include "../tun_settings.h"
 #include "../network_settings.h"
+#include "../subscription_user_agents.h"
 
 namespace clashflux::ui {
 
@@ -44,6 +45,7 @@ struct SettingsView {
     bool tunStrictRoute = true;
     std::string envShell;         // ui.env_shell（空 = 未保存，用探测值）
     std::string language = "system"; // ui.language: system / zh / en
+    std::string subscriptionUserAgentOrder{subscription_http::kOrders.front()};
 
     bool operator==(const SettingsView&) const = default;
 };
@@ -61,6 +63,7 @@ struct SettingsModel {
     // UI-thread publication immediately after hydration; only reads the memory cache.
     void PublishCached();
     void SetEnvShell(std::string shell);
+    void SetSubscriptionUserAgentOrder(std::size_t index);
     void PublishNetwork(const clashflux::network::Settings& value) {
         Update([&](SettingsView& next) {
             next.network = value;

@@ -5,6 +5,14 @@
 - 复杂 AND/OR/NOT 和混合解析需求保持保守记账；未验 Windows TUN、Android 真机、桌面 GUI、平台签名/安装或发布产物。CI 发布门禁待运行。
 # L1 / L2 / L3 开发完成度复核
 
+
+## 2026-11-18 v0.3.116 发布快照验收
+
+- 发布快照基于 `v0.3.115`（`29b7f873c787d4fcdc45221db932a3e0556a96c9`），设置订阅 UA 固定为 `ClashMeta/1.19.32; mihomo/1.19.32` 与 `sing-box/1.14.4`，只在 HTTP 403 时切换；切换清空条件头。UA 顺序作为稳定设置保存，来源正文不自动刷新或改写。
+- Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 的隔离发布树完成 HuxerUI codegen、主目标与全目标构建。`run.sh --version` 输出 v0.3.116，`clashflux-required` CTest 38/38 通过（245.79 秒累计测试时间），`git diff --check` 通过。发布 HuxerUI 源码和 CI 均固定 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`；sing-box 为 1.14.4。
+- Android 宿主 UA 策略/JVM 测试、Java 实际编译与 JNI 数组签名检查通过。冻结根代码快照另以 CMake 4.4.2 / Ninja 1.13.2 / NDK 29 完成 arm64 Debug 主目标编译和链接；Git 长路径选项仅对构建进程启用。没有据此声称 Android 真机下载/VPN、签名 APK 安装、Windows 原生 GUI 或正式发布已通过；这些由发布 CI 与独立设备验收确认。
+
+
 ## 2026-11-17 路由解析后续
 
 - 顶层 `RULE-SET`、`GEOIP`、`IP-ASN` 的 `no-resolve` 进入解析规划。纯 AND 树可使用带修饰符的目标 CIDR 子条件。反向 GeoIP 先验证已有目标地址。固定 sing-box 1.14.4 与 Mihomo 对照覆盖字面 IP、未解析域名和前序已解析路径。编译支持与仍需近似的范围见 [后续修饰符支持](resolve-granularity-plan.md#10-后续修饰符支持)。

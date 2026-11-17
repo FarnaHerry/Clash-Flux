@@ -14,6 +14,14 @@ namespace clashflux::ui {
 
 inline constexpr double kHomeCardRevealDuration = 0.20;
 
+inline huxerui::IconButton HomeCardLeadingIconButton(
+    huxerui::ImageVariant icon, huxerui::StringVariant label, const huxerui::IconButtonStyle& style) {
+    // Align the glyph with the heading by moving the entire button together with its interaction layer.
+    const float inset = std::max(0.0F, (style.minimum_interactive_size - style.icon_size) * 0.5F);
+    return huxerui::IconButton(std::move(icon), std::move(label))
+        .With(huxerui::Offset(huxerui::Point{-inset, 0.0F}));
+}
+
 // Build the dashboard surface on its own node so its fill and hover layer share
 // the same rounded geometry. A passive card does not acquire a click action.
 inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,

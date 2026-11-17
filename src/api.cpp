@@ -651,9 +651,9 @@ bool WriteFileAtomically(const std::filesystem::path& file, const std::string& c
 
 ApiResult ClashApi::downloadToFile(const std::string& url, const std::filesystem::path& dest,
                                  const DownloadOptions& inputOptions) {
-    const auto options = inputOptions;
+    auto options = inputOptions;
     const auto transportAttempts = std::clamp(options.attempts, 1u, 3u);
-    const auto& userAgents = clashflux::download::kSubscriptionUserAgents;
+    const auto userAgents = clashflux::subscription_http::UserAgents(options.subscriptionUserAgentOrder);
     std::size_t userAgentIndex = 0;
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
     const bool allowUserAgentFallback = options.subscriptionRequest &&
@@ -665,7 +665,7 @@ ApiResult ClashApi::downloadToFile(const std::string& url, const std::filesystem
     DownloadMetrics totals;
     ApiResult result;
     for (unsigned attempt = 0; attempt < transportAttempts;) {
-        const char* userAgent = options.subscriptionRequest ? userAgents[userAgentIndex] : "clash-flux/0.1";
+        const char* userAgent = options.subscriptionRequest ? userAgents[userAgentIndex].data() : "clash-flux/0.1";
         result = downloadOnce(url, dest, options, userAgent);
         totals.attempts += std::max(1u, result.download.attempts);
         totals.networkMicros += result.download.networkMicros;
@@ -674,6 +674,9 @@ ApiResult ClashApi::downloadToFile(const std::string& url, const std::filesystem
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
         if (allowUserAgentFallback && result.status == 403 && userAgentIndex + 1 < userAgents.size()) {
             ++userAgentIndex;
+            // Validators belong to the first identity's representation only.
+            options.headers.clear();
+            options.acceptNotModified = false;
             continue;
         }
 #endif
@@ -723,7 +726,8 @@ ApiResult ClashApi::downloadOnce(const std::string& url,
     const auto began = std::chrono::steady_clock::now();
     const auto response = clashflux::android::DownloadProfileToFile(url,
         options.timeoutSecs > 0 ? static_cast<int>(options.timeoutSecs) : 60,
-        temp.string(), options.maxBytes, !options.allowProxyEnv, options.headers, options.subscriptionRequest);
+        temp.string(), options.maxBytes, !options.allowProxyEnv, options.headers, options.subscriptionRequest,
+        options.subscriptionUserAgentOrder);
     result.status = response.status; result.error = response.error; result.download.bytes = response.bytes;
     result.download.retryable = response.retryable;
     result.download.attempts = response.attempts;

@@ -176,8 +176,8 @@ Windows TUN 和 Android 真机转发留待实机验证。
 
 - 顶层 `RULE-SET,...,no-resolve` 只禁止当前引用触发查询。同一个集合的域名条件仍可命中，其他引用按各自规则处理。固定 Mihomo 基线的外层规则通过清空本次匹配的解析函数实现该语义。 [Mihomo RULE-SET 匹配](https://github.com/MetaCubeX/mihomo/blob/88dcbf7f1614a67c3b36b848ee3592dfa92ada36/rules/provider/rule_set.go#L21-L33)
 - 顶层 `GEOIP`、`IP-ASN` 支持同一修饰符。GeoIP 集合先检查目标地址是否存在，防止反向集合匹配未解析域名。范围包括同一候选生成的 Geo DAT/MMDB 快照。
-- Clash 路由的纯 AND 树支持带 `no-resolve` 的目标 CIDR 子条件，要求所有目标 CIDR 都带该修饰符。混合查询需求、OR、NOT 和资源引用的嵌套修饰符仍拒绝整条规则。
-- classical provider 的 inline、file 和 HTTP 快照中，所有目标判断都来自带 `no-resolve` 的 CIDR 时，顶层普通引用也省略前置解析。集合可包含域名、来源 IP 和纯 AND 条件。混入需解析的条目或 OR/NOT 时仍以整个引用保守规划，继续按近似记账。
+- Clash 路由的 AND、OR、NOT 树支持带 `no-resolve` 的目标 CIDR 子条件，要求所有目标 CIDR 都带该修饰符。混合查询需求及资源/ASN 引用的嵌套修饰符仍拒绝整条规则。NOT 保留完整取反层级，未解析域名可命中否定 IP 条件。
+- classical provider 的 inline、file 和 HTTP 快照中，所有目标判断都来自带 `no-resolve` 的 CIDR 时，顶层普通引用也省略前置解析。集合可包含域名、来源 IP 及 AND/OR/NOT 条件。混入需解析的条目时仍以整个引用保守规划，继续按近似记账。
 - 资源相关规则在目标快照重放时重新使用当前候选的规则集内容。普通 CIDR 可复用已有快照，实际索引随最终装配确定。原生 JSON 路由继续走原生路径。
 
 固定 sing-box 1.14.4 在环回实际验证了已有/未解析目标、字面 IPv4/IPv6、混合规则集的域名分支及同一
@@ -188,3 +188,6 @@ Windows TUN 和 Android 真机转发留待实机验证。
 重新生成解析计划，目标快照重放按新内容插入 `resolve`。
 发布前的双内核对照覆盖了 AND 子条件的两种顺序。CIDR 在前时，未命中的 AND 仍会留下已解析地址，
 后续带修饰符的规则集可以命中拒绝。未命中的域名在前时，两内核均直接走后续代理规则，目标 DNS 查询为零。
+v0.3.115 后续使用固定两内核探测 OR、NOT 和双重否定，共 16 个请求，核对域名、字面 IP、
+实际出口和零目标查询。生产回归另覆盖前序已有解析、后续必需解析、字面 IPv6 和 classical 集合引用。
+多地址匹配继续按已有差异记账，混合查询需求和资源引用仍在上述边界内处理。
