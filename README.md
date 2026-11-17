@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.113 发布说明](docs/releases/v0.3.113.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.114 发布说明](docs/releases/v0.3.114.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -418,7 +418,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码固定 `e2afd8a3`，本机与 CI 统一，在 `89359f43`（Windows 文本方向、编辑动作、多格式剪贴板、独立资源包和既有 Pager 修复）基础上集成上游跨窗口拖放、Dock 自定义标签栏与跨窗口停靠、桌面浮动窗口选项及 Win7/macOS 窗口修复，并移除被 `WindowHandle::Capabilities()` 取代的旧 WindowSupport 查询。CodeEditor 同步到 fork `ee5b0cf8`，文档与挂载控制器分离；Media 同步到官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
+当前源码固定 `89359f43`，本机与 CI 统一，包含 Windows 文本方向、编辑动作、多格式剪贴板、独立资源包和既有 Pager 修复。2026-11-16 的 `e2afd8a3` 候选因 macOS AppKit 重复方法定义而未通过发布构建，因此这版保持上次完整通过发布门禁的框架 pin。CodeEditor 固定 fork `ee5b0cf8`，文档与挂载控制器分离；Media 固定官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码固定 `e2afd8a3ca68bd7729ef084b11e741580237f252`，在 `89359f43`（保留既有平台/Pager 修复，合入官方文本方向、编辑动作、多格式剪贴板与资源包更新）之上集成上游跨窗口拖放、Dock 自定义标签栏与跨窗口停靠、桌面浮动窗口选项及 Win7/macOS 窗口修复，并移除旧 WindowSupport 查询；CodeEditor 已同步兼容接口，升级边界见上述记录。下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码固定 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`，包含 Windows 文本方向、编辑动作、多格式剪贴板、独立资源包与 Pager 修复。`e2afd8a3` 候选因 macOS AppKit 重复定义而未通过发布构建，桌面/Android/iOS CI 和本地消费 checkout 均回到上次通过完整发布门禁的 pin。下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 

@@ -4,7 +4,7 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `e2afd8a3ca68bd7729ef084b11e741580237f252`，各平台 CI 共用
+Clash-Flux 当前固定 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
@@ -21,6 +21,12 @@ job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` �
 Win7 DirectComposition 声明与 macOS 启动失败附件释放修复；移除被 `WindowHandle::Capabilities()`
 取代的旧 WindowSupport 查询。保留既有 Pager 和图表兼容修复。
 本机独立消费 checkout、CI 和 Android Java/native 统一该身份；宿主 HCG/HRC、锁定的 0.4.0 CLI 与内核版本保持。
+
+2026-11-17 发布验证发现 `e2afd8a3` 的 `platform/macos/appkit_adapter.mm` 重复定义
+`canBecomeKeyWindow` / `canBecomeMainWindow`，并在辅助方法处引用未定义的 `huxeruiWindow`，
+导致 macOS Release 构建失败。修复尚未进入已发布 fork 提交；因此应用源码、CI 与 Android
+Java/native 暂时恢复到上次通过完整发布矩阵的 `89359f43`。跨窗口拖放、Dock 与浮动窗口候选
+保留在 fork 维护任务中，不由应用仓库复制框架补丁。
 
 Lib-CodeEditor fork 已发布 [`ee5b0cf8`](https://github.com/FarnaHerry/Lib-CodeEditor/commit/ee5b0cf8ac53f23f9816c1aedd52a6b90c3d696c)，
 包含官方 `4e67fd0c33a927f49727f22b90b02862ddd7d3ab` 和当前 HUI 的编辑动作适配。
