@@ -93,3 +93,15 @@ gdb -q -batch -x tests/scroll_work_counts.gdb ./build/test_page_transition
 降为 3,855 次、p50 401.0 ms。3 列时同样由 13,719 次降至 771 次。夹具已补齐生产
 `ColumnSpacing(8pt)`，旧证据中缺参数的 15 列数字不再引用。方法、数字与边界见
 [证据](evidence/2026-11-16-proxy-grid-scroll.md)。
+
+同日继续收紧 `ProxyNodeTile` 与 `ProxiesPage`：静态卡片去掉无条件 `Lifecycle` 二次重组、外层冗余 `SelectableTile`/`Column` 包装、每卡 `ProvideEnvironment`/`ResolveFluxIndication` 分配，以及未激活测速按钮（未悬停/未获焦/未测速）的 `Tooltip`/`Indication`/`PointerCursor` 与 `Rotation` 扩展；内层文本列隐藏重复无障碍子节点，滚轮平滑过渡期间静止指针掠过卡片抑制悬停重组，节点标题改为 `SingleLineEllipsisText`（复用 `MeasureRun`/`DrawTextRun` 缓存与每线程字宽省略表，避免超长 CJK 节点名跨越虚拟网格边界时反复触发无缓存 DirectWrite `FitParagraph` 二分排版）；页面将 `CoreModel` 1Hz 轮询和悬浮测速进度隔离到独立子组件，避免流量刷新清空 `VirtualGrid` 条目声明。Windows x64 / MSVC 19.52 / Release / 固定 HuxerUI `d2c9781` 无窗口 `UiTest` 同输入对比（`./build/test_page_transition.exe --proxy-grid-profile`，含语义与快照捕获，非原生 GPU/真机帧率）：
+
+- `w=800, cache=c200`：挂载 `672.82 → 538.38 ms`（-20.0%），每帧 P50 `34.51 → 27.54 ms`（-20.2%），P95 `38.68 → 30.62 ms`（-20.8%）。
+- `w=3200, cache=c200`：挂载 `3,317.63 → 2,563.95 ms`（-22.7%），每帧 P50 `177.55 → 135.19 ms`（-23.9%），P95 `186.30 → 141.18 ms`（-24.2%）。
+
+## 2026-11-18 日志页宽屏虚拟化与段落缓存
+
+`LogsPage` 与 `src/ui/log_row_view.h` 使用以下设计优化宽屏日志滚动与排版稳定性：
+- **流合并与稳定标识**：日志条目分配单调递增 `LogEntry::id` 作为 `VirtualList` 行键；流增量按 120ms 批处理合入。
+- **平台段落排版缓存（方案 A）**：首帧未获知真实行内容宽度（`widthPx == 0`）时不按猜测宽度入缓存，直接由框架 `huxerui::Text` 排版并挂载每行共享去重（`postedPx`）的 `ObserveLogTextWidth`；获知真实宽度后通过 `TextMeasurer::CreateTextLayout` 生成 `LogParagraph`，仅当 `line_count > 0` 且测量高度不小于 `font.Size() * 0.8F`（有效高度，排除无窗口或异常 0 度量）时按 `(entryId, widthPx, fontSize, resolvedLineHeight)` 写入每 UI 线程最多 2,048 条缓存，由 `LogParagraphPaint` 调用 `PaintContext::DrawText(Point, const TextLayout&)` 绘制；无头测试或度量异常时自动回落到框架 `Text` 且不缓存无效高度。
+- **结构一致与预渲染边界**：缓存命中与未命中行共用同一 `Column -> Row` 节点骨架（不包裹额外的 `huxerui::Scope`），避免后续批次刷新撕裂重建可见行；`EstimatedItemExtent` 按减半卡片内边距 ×2 + 实测单行字高 + 底部间距估算，`CacheExtent(180pt)` 控制预创建范围。

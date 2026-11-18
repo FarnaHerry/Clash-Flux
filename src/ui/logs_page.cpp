@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <memory>
 #include <random>
@@ -18,6 +20,7 @@
 #include "empty_state.h"
 #include "search_text.h"
 #include "log_actions.h"
+#include "log_row_view.h"
 #include "task_bridge.h"
 
 import clashflux.config;
@@ -32,6 +35,7 @@ namespace clashflux::ui {
 namespace {
 
 constexpr std::size_t kMaxLines = 800;
+constexpr float kLogsCacheExtent = 180.0F;
 
 // 过滤级别：0=全部 1=信息 2=警告 3=错误 4=调试。
 
@@ -79,58 +83,16 @@ int levelRank(const std::string& level) {
     return 1;
 }
 
-// 行首等级标签：rank 反解回等级名（levelRank 的逆映射，未知/silent 归 info），
-// 按等级着色——info 灰、warning 警示色、error 错误色、debug 更弱。
-std::string_view levelName(int rank) {
-    switch (rank) {
-    case 2: return "warning";
-    case 3: return "error";
-    case 4: return "debug";
-    default: return "info";
-    }
-}
+struct LogFeedBuffer {
+    std::vector<LogEntry> entries;
+    std::uint64_t revision = 0;
+    bool flushScheduled = false;
 
-huxerui::Color levelColor(const huxerui::ThemeSpec& theme, int rank) {
-    switch (rank) {
-    case 3: return theme.colors.error;
-    case 2: return SemanticWarningColor(theme);
-    case 4: return theme.colors.outline;
-    default: return theme.colors.on_surface_variant;
-    }
-}
-
-// 终端式填充：URL、selector 名、哈希这类超长 token 在 UAX-14 里没有断行
-// 机会，词法换行会把整块挪到下一行、上一行提前留白。仅在渲染层给 token
-// 内补零宽空格断点（分隔符后至少 6 字符，纯哈希每 24 字符强制一个），
-// 导出/复制仍消费原始文本。
-std::string BreakableLogText(std::string_view text) {
-    constexpr std::string_view kBreakAfter = "/\\:;,=])}>|#?!&%~-_.@";
-    std::string out;
-    out.reserve(text.size() + 16);
-    std::size_t sinceBreak = 0;
-    for (std::size_t i = 0; i < text.size();) {
-        const unsigned char lead = static_cast<unsigned char>(text[i]);
-        std::size_t length = 1;
-        if (lead >= 0xF0) length = 4;
-        else if (lead >= 0xE0) length = 3;
-        else if (lead >= 0xC0) length = 2;
-        length = std::min(length, text.size() - i);
-        out.append(text.substr(i, length));
-        const char c = text[i];
-        i += length;
-        if (c == ' ' || c == '\t' || length > 1) {
-            sinceBreak = 0;
-            continue;
-        }
-        ++sinceBreak;
-        const bool candidate = kBreakAfter.find(c) != std::string_view::npos;
-        if (sinceBreak >= 24 || (candidate && sinceBreak >= 6)) {
-            out.append("\xE2\x80\x8B");
-            sinceBreak = 0;
-        }
-    }
-    return out;
-}
+    std::uint64_t cachedRevision = 0;
+    std::size_t cachedFilter = 0;
+    std::string cachedQuery;
+    std::shared_ptr<const std::vector<LogEntry>> cachedVisible;
+};
 
 } // namespace
 
@@ -141,89 +103,180 @@ std::string BreakableLogText(std::string_view text) {
     auto clipboard = huxerui::UseApplication().Clipboard();
     auto picker = huxerui::UseService<huxerui::FilePicker>();
     auto exporting = huxerui::UseState(false);
-    auto entries = huxerui::UseStateList<LogEntry>();
+    const auto feed = huxerui::UseState(std::make_shared<LogFeedBuffer>()).Get();
+    auto revision = huxerui::UseState<std::uint64_t>(0);
     auto filter = huxerui::UseState<std::size_t>(0);
     auto logSearch = huxerui::UseState(huxerui::TextEditingValue{});
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    auto textWidthPx = huxerui::UseState<int>(0);
+    auto postedWidthPx = huxerui::UseState(std::make_shared<int>(0)).Get();
     const auto scroll = huxerui::UseScrollController();
 
     huxerui::Lifecycle(
-        [tasks, entries] {
-            const auto append = [entries](const stream::LogLine& line) {
-                AppendLogEntry(entries, LogEntry{
+        [tasks, feed, revision] {
+            const auto insertLine = [feed](const stream::LogLine& line) {
+                InsertLogEntry(feed->entries, LogEntry{
                     .text = std::format("[{}] {}", formatClock(line.at), line.payload),
                     .level = levelRank(line.level),
                     .at = line.at,
                 }, kMaxLines);
             };
+            feed->entries.clear();
+            feed->entries.reserve(kMaxLines);
             // 历史读取同时消费 pending，避免首个推送重复显示旧行。
-            for (const auto& line : stream::logHistory()) append(line);
+            for (const auto& line : stream::logHistory()) insertLine(line);
+            ++feed->revision;
+            revision = feed->revision;
+
             const std::uint64_t subscription = SubscribeStreamUpdates(
-                tasks, [entries, append](stream::StreamKind kind) {
+                tasks, [tasks, feed, revision, insertLine](stream::StreamKind kind) {
                     if (kind != stream::StreamKind::Logs) return;
-                    for (const auto& line : stream::drainLogs()) append(line);
+                    const bool wasEmpty = feed->entries.empty();
+                    bool added = false;
+                    for (const auto& line : stream::drainLogs()) {
+                        insertLine(line);
+                        added = true;
+                    }
                     // stdout/stderr 无结构化时间，按本次接收时间插入统一列表。
                     for (auto& line : store::coreStore().process().drainOutput()) {
-                        AppendLogEntry(entries, LogEntry{
-                            .text = std::move(line), .level = 1, .at = nowUnix(),
+                        InsertLogEntry(feed->entries, LogEntry{
+                            .text = std::move(line),
+                            .level = 1,
+                            .at = nowUnix(),
                         }, kMaxLines);
+                        added = true;
                     }
+                    if (!added) return;
+                    ++feed->revision;
+                    if (wasEmpty) {
+                        revision = feed->revision;
+                        return;
+                    }
+                    if (feed->flushScheduled) return;
+                    feed->flushScheduled = true;
+                    tasks.Launch([feed, revision]() -> huxerui::Task<void> {
+                        co_await huxerui::Delay(std::chrono::milliseconds{120});
+                        feed->flushScheduled = false;
+                        if (revision.Get() != feed->revision) {
+                            revision = feed->revision;
+                        }
+                    });
                 });
-            return [subscription] { UnsubscribeStreamUpdates(subscription); };
+            return [feed, subscription] {
+                feed->flushScheduled = false;
+                UnsubscribeStreamUpdates(subscription);
+            };
         },
         0);
 
-    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     if (!active) return huxerui::View{huxerui::Row{}}.Key("logs-idle");
 
+    const std::uint64_t currentRevision = revision.Get();
+    const std::size_t currentFilter = filter.Get();
     const std::string query = logSearch.Get().text;
-    // 展示顺序最新在顶：内部仍按时间升序存储（AppendLogEntry 二分插入、
-    // 800 行环形淘汰、导出/复制保持正序），仅显示时倒序遍历——打开页面
-    // 第一眼就是刚发生的日志，新行到达时出现在顶部，无需滚动跟随。
-    std::vector<std::size_t> visible;
-    for (std::size_t i = entries.Size(); i-- > 0;) {
-        if ((filter.Get() == 0 || entries[i].level == static_cast<int>(filter.Get())) &&
-            SearchTextMatches(entries[i].text, query)) {
-            visible.push_back(i);
+
+    // 展示顺序最新在顶：内部仍按时间升序存储（InsertLogEntry 二分插入、
+    // 800 行淘汰、导出/复制保持正序），仅显示时倒序生成不可变快照；
+    // 无关重组（如搜索框焦点/窗口尺寸变化）直接复用同一份 shared_ptr。
+    if (!feed->cachedVisible || feed->cachedRevision != currentRevision ||
+        feed->cachedFilter != currentFilter || feed->cachedQuery != query) {
+        auto nextVisible = std::make_shared<std::vector<LogEntry>>();
+        nextVisible->reserve(feed->entries.size());
+        for (std::size_t i = feed->entries.size(); i-- > 0;) {
+            const LogEntry& entry = feed->entries[i];
+            if ((currentFilter == 0 || entry.level == static_cast<int>(currentFilter)) &&
+                SearchTextMatches(entry.text, query)) {
+                nextVisible->push_back(entry);
+            }
         }
+        feed->cachedRevision = currentRevision;
+        feed->cachedFilter = currentFilter;
+        feed->cachedQuery = query;
+        feed->cachedVisible = std::move(nextVisible);
     }
+
+    const auto visible = feed->cachedVisible;
     huxerui::View body = EmptyState(
-        Localized(entries.Empty() ? "暂无日志" : "没有匹配的日志"), app::images::logs);
-    if (!visible.empty()) {
-        const std::size_t visibleCount = visible.size();
+        Localized(feed->entries.empty() ? "暂无日志" : "没有匹配的日志"), app::images::logs);
+    if (visible && !visible->empty()) {
+        const std::size_t visibleCount = visible->size();
+        const IslandTheme islands = ResolveIslandTheme(theme);
+        const bool flat = huxerui::UseEnvironment<DialogSurfaceContext>().flat;
+        const huxerui::Color cardSurface = flat ? huxerui::Color::Transparent() : islands.raised;
+        const float halfPadding = islands.island_padding * 0.5F;
+        const float denseRadius = islands.dense_radius;
+        const float rowGap = PageScrollInset(theme, true);
+        const huxerui::Font monoFont = huxerui::Font::Monospace(font_size::kMonoBody);
+        const huxerui::Color bodyColor = theme.colors.on_surface;
+        // 0 until a row reports its real text width; rows use framework Text
+        // until then, so no paragraph is cached for a guessed width.
+        const int currentWidthPx = textWidthPx.Get();
+        huxerui::TextMeasurer* measurer = &huxerui::UseTextMeasurer();
+        const float rawLineHeight = measurer->Metrics(monoFont).LineHeight();
+        const float lineHeight = std::max(std::ceil(rawLineHeight),
+                                          std::ceil(monoFont.Size() * 1.3F));
+
         auto insets = ScrollAreaInsets::Dense(compact && !onBack ? kCompactFloatingNavigationInset : 0.0F);
         insets.top_follows_horizontal = true;
         body = ScrollArea(PageVirtualList(
             visibleCount,
-            [entries, visible, theme, compact, visibleCount](std::size_t index) -> huxerui::View {
-                const std::size_t sourceIndex = visible[index];
-                const LogEntry& entry = entries[sourceIndex];
-                // 等级/时间戳/消息融为单一段落（text 已含时间戳）：换行在整段
-                // 内自然流动，不存在固定标签列与消息列各自的断行错位。等级
-                // 前缀按等级着色，消息体保持常规前景色。
-                const auto attributed = huxerui::AttributedText{
-                    huxerui::TextSpan(std::string(levelName(entry.level)) + " ")
-                        .Style(huxerui::TextSpanStyle{
-                            .foreground = levelColor(theme, entry.level)}),
-                    huxerui::TextSpan(BreakableLogText(entry.text)),
+            [visible, visibleCount, theme, cardSurface, halfPadding, denseRadius,
+             rowGap, monoFont, bodyColor, currentWidthPx, rawLineHeight, measurer,
+             tasks, textWidthPx, postedWidthPx](std::size_t index) -> huxerui::View {
+                if (index >= visibleCount) return huxerui::Row{};
+                const LogEntry& entry = (*visible)[index];
+                const huxerui::Color lvlColor = LogLevelColor(theme, entry.level);
+                const float bottomGap = index + 1 == visibleCount ? 0.0F : rowGap;
+                const ObserveLogTextWidth observeWidth{tasks, textWidthPx, postedWidthPx};
+
+                // Framework-laid-out paragraph: the correct but slower path,
+                // used before the width is known or if a layout is untrusted.
+                const auto textContent = [&](int level, const std::string& text) {
+                    return huxerui::View{huxerui::Text(LogAttributedText(level, text, lvlColor))
+                        .Style(huxerui::TextStyle{monoFont, bodyColor})
+                        .With(huxerui::Grow(1.0F), observeWidth)};
                 };
-                // 每条日志一张密集卡片：dense 圆角 + 减半内边距，底部外边距
-                // 提供行间距（VirtualList 无行间距修饰符），与 4pt 档圆角同阶。
-                return DenseCard(huxerui::Text(attributed)
-                                     .Style(huxerui::TextStyle{
-                                         huxerui::Font::Monospace(font_size::kMonoBody),
-                                         theme.colors.on_surface}))
-                    .With(huxerui::Padding(huxerui::EdgeInsets{
-                        .bottom = index + 1 == visibleCount ? 0.0F : PageScrollInset(theme, true)}))
-                    .Key(std::format("log-{}", sourceIndex));
+                const auto paragraphContent = [&](std::shared_ptr<const LogParagraph> paragraph) {
+                    // Read the height before moving the pointer into the modifier.
+                    const float height = paragraph->height;
+                    return huxerui::View{huxerui::Row{}
+                        .With(huxerui::Grow(1.0F), huxerui::Frame{.height = height},
+                              LogParagraphPaint{std::move(paragraph)}, observeWidth)};
+                };
+                const auto surface = [&](huxerui::View content) {
+                    return huxerui::Row{std::move(content)}
+                        .With(huxerui::Padding(halfPadding),
+                              huxerui::Background(cardSurface),
+                              huxerui::CornerRadius(denseRadius),
+                              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+                };
+
+                std::shared_ptr<const LogParagraph> paragraph =
+                    FindLogParagraph(entry.id, currentWidthPx, monoFont.Size(),
+                                     rawLineHeight, lvlColor, bodyColor);
+                if (!paragraph && currentWidthPx > 0) {
+                    paragraph = BuildLogParagraph(
+                        *measurer, entry.id, entry.level, entry.text,
+                        monoFont, rawLineHeight, lvlColor, bodyColor, currentWidthPx);
+                }
+                huxerui::View card = surface(
+                    paragraph ? paragraphContent(std::move(paragraph))
+                              : textContent(entry.level, entry.text));
+                return huxerui::Column{std::move(card)}
+                    .With(huxerui::Padding(huxerui::EdgeInsets{.bottom = bottomGap}),
+                          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+                          huxerui::Semantics{
+                              .label = std::string{LogLevelPrefix(entry.level)} + entry.text})
+                    .Key(entry.id);
             })
-            // 密集卡片行高估算：减半内边距（8×2）+ 单行文本 + 底部外边距。
-            .EstimatedItemExtent(compact ? 44.0F : 42.0F)
+            // 密集卡片行高估算：减半内边距 ×2 + 实测单行字高 + 底部外边距。
+            .EstimatedItemExtent(2.0F * halfPadding + lineHeight + rowGap)
+            .CacheExtent(kLogsCacheExtent)
             .Controller(scroll), scroll, {}, {}, insets)
                 .With(huxerui::Grow(1.0F));
     }
-    const auto exportText = [filter, logSearch, entries] {
-        std::vector<LogEntry> snapshot(entries.begin(), entries.end());
-        return ExportLogText(snapshot, filter.Get(), logSearch.Get().text);
+    const auto exportText = [feed, filter, logSearch] {
+        return ExportLogText(feed->entries, filter.Get(), logSearch.Get().text);
     };
     const auto copy = [clipboard, toast, exportText] {
         toast.Show(Localized(clipboard->WriteText(exportText()) ? "已复制到剪贴板" : "复制失败"));
@@ -250,11 +303,14 @@ std::string BreakableLogText(std::string_view text) {
             exporting = false;
         });
     };
-    const auto clear = [entries] {
-        entries.Clear();
+    const auto clear = [feed, revision] {
+        feed->entries.clear();
+        feed->cachedVisible.reset();
         // 丢弃已排队的旧行，避免清空后马上被补回来。
         store::coreStore().process().drainOutput();
         stream::clearLogs();
+        ++feed->revision;
+        revision = feed->revision;
     };
     huxerui::View actions = LogActionsMenu(filter.Get(),
         [filter](std::size_t index) { filter = index; }, copy, exportFile, clear,

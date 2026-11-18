@@ -44,6 +44,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -200,9 +201,9 @@ std::vector<std::string> resolvePath(
 // letters. Draw only the leading flag from the packaged atlas; keep the
 // original UTF-8 name for proxy identity, search and accessibility.
 huxerui::View NodeTitle(const std::string& name, huxerui::Color foreground) {
+    const huxerui::TextStyle style{huxerui::Font::System(font_size::kBodySmall), foreground};
     const auto plain = [&] {
-        return huxerui::Text(name).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
-            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall), foreground});
+        return SingleLineEllipsisText(name, style);
     };
 #ifdef _WIN32
     if (name.size() < 8) return plain();
@@ -247,9 +248,7 @@ huxerui::View NodeTitle(const std::string& name, huxerui::Color foreground) {
     }).With(huxerui::Frame{.width = 20.0F, .height = 15.0F});
     return huxerui::Row {
       flag,
-      huxerui::Text(name.substr(8)).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
-          .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall), foreground})
-          .With(huxerui::Grow(1.0F)),
+      SingleLineEllipsisText(std::string_view{name}.substr(8), style).With(huxerui::Grow(1.0F)),
     }.With(huxerui::Spacing(4.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 #else
     return plain();
@@ -360,14 +359,31 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
     });
 }
 
+// 页面级「乐观选中意图」：点击后渲染立刻读到目标节点。以前直接改 `groups`
+// （StateList）——那会让整张 VirtualGrid 失效并重排，大订阅下点一下卡一下；
+// 现在只写这个小 State，只有可见的卡片重组。模型快照追平后清掉意图。
+struct SelectionIntent {
+    std::string group;
+    std::string node;
+
+    bool operator==(const SelectionIntent&) const = default;
+};
+
+struct ProxySyncCache {
+    std::map<std::string, std::string> labels;
+    std::string body;
+    std::uint64_t ticket = 0;
+};
+
 // 左侧两行显示节点名和协议或组信息，右侧共用延迟和单节点测速位置。
 [[huxerui::composable]] huxerui::View NodeCard(
-    const ProxyNode& node, bool selected, bool selectable, std::function<void()> onActivate) {
+    const ProxyNode& node, std::string groupName, std::string groupNow,
+    huxerui::State<SelectionIntent> selectionIntent, bool selectable,
+    huxerui::TaskScope appTasks, CoreControl control, FluxToastHandle toast,
+    std::shared_ptr<ProxyTestModel> tests, std::function<void()> onActivate) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto tasks = huxerui::UseApplicationTaskScope();
-    const auto control = UseCoreControl();
-    const auto toast = *control.toast;
-    const auto tests = huxerui::UseService<ProxiesModel>()->tests;
+    const SelectionIntent pending = selectionIntent.Get();
+    const bool selected = node.name == (pending.group == groupName ? pending.node : groupNow);
     static_cast<void>(tests->generation.Get()); // Rebind after a runtime-plan change.
     const auto entry = tests->Get(node.name, node.delay, node.timeout, node.urlTestTime);
     const auto probe = entry->value;
@@ -376,6 +392,7 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
             entry->value = ProbeState{nodeDelay > 0 ? nodeDelay : 0, nodeDelay <= 0, false};
             entry->baselineTime = nodeTestTime;
         }
+        return [] {};
     }, node.delay, node.urlTestTime);
 
     const ProbeState currentProbe = probe.Get();
@@ -391,39 +408,29 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
                         : huxerui::StringVariant{Localized("超时")};
         const auto color = selected ? tile.fg : currentProbe.testing ? tile.muted
             : delay > 0 ? DelayLevelColor(theme, delay, false) : theme.colors.error;
-        delayView = huxerui::Text(text).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+        delayView = huxerui::Text(text)
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
     }
-    const auto startProbe = [tasks, control, tests, tag = node.name, delay = node.delay,
+    const auto startProbe = [appTasks, control, tests, tag = node.name, delay = node.delay,
                              timeout = node.timeout, testTime = node.urlTestTime, toast] {
         if (tests->progress.Get().busy) return;
         RunProxyTestWhenReady(control, tests, toast,
-                [tasks, model = control.model, tests, tag, delay, timeout, testTime]() -> huxerui::Task<void> {
+                [appTasks, model = control.model, tests, tag, delay, timeout, testTime]() -> huxerui::Task<void> {
             const auto valid = BindProxyTest(model, *tests);
             if (!valid()) co_return;
             const auto probe = tests->Get(tag, delay, timeout, testTime);
-            LaunchSingleProxyProbe(tasks, tests, tag, probe, MeasureProxyDelay, valid);
+            LaunchSingleProxyProbe(appTasks, tests, tag, probe, MeasureProxyDelay, valid);
             co_return;
         });
     };
     return ProxyNodeTile(NodeTitle(node.displayName, tile.fg),
-        huxerui::Text(node.detail).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+        huxerui::Text(node.detail)
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), detailColor}),
         delayView, selected, node.displayName, std::move(onActivate),
         selectable ? SelectableTileInteraction::Selectable : SelectableTileInteraction::ReadOnly,
         !node.isGroup && !ProxyTestUsesNativeGroup(), currentProbe.testing,
         tests->preparing.Get() || tests->progress.Get().busy, startProbe);
 }
-
-// 页面级「乐观选中意图」：点击后渲染立刻读到目标节点。以前直接改 `groups`
-// （StateList）——那会让整张 VirtualGrid 失效并重排，大订阅下点一下卡一下；
-// 现在只写这个小 State，只有可见的卡片重组。模型快照追平后清掉意图。
-struct SelectionIntent {
-    std::string group;
-    std::string node;
-
-    bool operator==(const SelectionIntent&) const = default;
-};
 
 // 节点点击动作：**所有成员都只是"选中当前线路"**。成员本身是策略组时（订阅里
 // 的 url-test 组，如「自动选择」）表示"这条线路交给它自动挑最快"，与 Clash
@@ -456,60 +463,69 @@ std::function<void()> NodeSelectAction(
     };
 }
 
-} // namespace
+std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core) {
+    std::set<std::string> degraded;
+    if (core.fidelity.empty()) return degraded;
+    const auto isDegraded = [&](const std::string& source, const std::string& object) {
+        return std::ranges::any_of(core.fidelity, [&](const singbox::FidelityNote& note) {
+            return note.scope == singbox::FidelityScope::Group &&
+                   note.subject == object && note.sourceId == source;
+        });
+    };
+    if (core.sourceObjects) {
+        for (const auto& entry : *core.sourceObjects) {
+            if (isDegraded(entry.sourceId, entry.objectId)) {
+                degraded.insert(entry.tag);
+            }
+        }
+    }
+    for (const auto& note : core.fidelity) {
+        if (note.scope == singbox::FidelityScope::Group && note.sourceId.empty()) {
+            degraded.insert(note.subject);
+        }
+    }
+    return degraded;
+}
 
-[[huxerui::composable]] huxerui::View ProxiesPage(bool active) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
-    auto toast = UseFluxToast();
-    // 策略组快照 / 内核状态的全局唯一来源（见 *_model.h）。
-    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
-    const auto coreModel = huxerui::UseService<CoreModel>();
-    const auto control = UseCoreControl();
-    auto groups = huxerui::UseStateList<ProxyGroup>();
-    auto coreState = huxerui::UseState<core::CoreState>(core::CoreState::Stopped);
-    auto mode = huxerui::UseState<std::string>("rule");
-    auto proxySearch = huxerui::UseState(huxerui::TextEditingValue{});
-    auto sectionMotion = UseSectionTabMotion();
-    const auto testTasks = huxerui::UseApplicationTaskScope();
+// 隔离高频 CoreModel 1Hz 流量/健康轮询：仅在加载态、出站模式、保真度角标或
+// 代理快照内容真正改变时更新页面 State，避免每秒重建 VirtualGrid 并清空卡片缓存。
+[[huxerui::composable]] huxerui::View ProxyPageSync(
+    huxerui::TaskScope tasks,
+    std::shared_ptr<ProxiesModel> proxiesModel,
+    std::shared_ptr<CoreModel> coreModel,
+    std::shared_ptr<ProxySyncCache> syncCache,
+    huxerui::StateList<ProxyGroup> groups,
+    huxerui::State<bool> loaded,
+    huxerui::State<std::string> mode,
+    huxerui::State<std::set<std::string>> degradedGroups,
+    huxerui::State<SelectionIntent> selectionIntent) {
     const auto testModel = proxiesModel->tests;
-    const auto testProgress = testModel->progress;
-    // 分支路径按模式独立（互不共享）：规则模式 path[0] = 标签栏选中的订阅组，
-    // 全局模式 path[0] = GLOBAL 或平台返回的实际可选组；后续元素 = 逐级点入的嵌套子组。
-    auto rulePath = huxerui::UseState<std::vector<std::string>>({});
-    auto globalPath = huxerui::UseState<std::vector<std::string>>({});
-    // 已经投影过的快照原文：只在内容变化时重新投影（模型的 State 去重已保证
-    // 通知只在内容变化时发生）。
-    auto parsedLabels = huxerui::UseState<std::map<std::string, std::string>>({});
-    auto parsedBody = huxerui::UseState<std::string>("");
-    auto projectionGeneration = huxerui::UseState<std::uint64_t>(0);
-    // 乐观选中意图（见 SelectionIntent）：只写这个小组 State，不动 groups。
-    auto selectionIntent = huxerui::UseState<SelectionIntent>(SelectionIntent{});
-
-    // 数据流完全由模型驱动（见 *_model.h）：内核状态、策略组快照任一变化才
-    // 重新投影嵌套分组，**没有定时器**。唯一数据泵已完成 JSON 解码，
-    // 页面在任务线程投影普通 DTO，UI 线程只发布模型。
     huxerui::Lifecycle(
-        [tasks, groups, coreState, mode, proxiesModel, coreModel, testModel,
-         parsedLabels, parsedBody, projectionGeneration, selectionIntent] {
-            const store::CoreSnapshot core = coreModel->view.Get().core;
-            coreState = core.state;
-            testModel->ObserveContext(core.state == core::CoreState::Running, core.planRevision, core.runtimeEpoch);
-            // Stopped previews use saved intent; live pages show the actual core mode.
-            mode = coreModel->view.Get().Mode();
+        [tasks, proxiesModel, coreModel, testModel, syncCache, groups,
+         loaded, mode, degradedGroups, selectionIntent] {
+            const CoreView& coreView = coreModel->view.Get();
+            const store::CoreSnapshot& core = coreView.core;
+            testModel->ObserveContext(core.state == core::CoreState::Running,
+                                      core.planRevision, core.runtimeEpoch);
+            const std::string nextMode = coreView.Mode();
+            if (mode.Get() != nextMode) mode = nextMode;
+            auto nextDegraded = ResolveDegradedProxyGroups(core);
+            if (degradedGroups.Get() != nextDegraded) {
+                degradedGroups = std::move(nextDegraded);
+            }
             const ProxiesSnapshot& current = proxiesModel->snapshot.Get();
-            if (current.body != parsedBody.Get() || current.labels != parsedLabels.Get()) {
-                parsedLabels = current.labels;
-                parsedBody = current.body;
-                const auto ticket = projectionGeneration.Get() + 1;
-                projectionGeneration = ticket;
-                tasks.Launch([groups, selectionIntent, projectionGeneration, ticket,
+            if (loaded.Get() != current.loaded) loaded = current.loaded;
+            if (current.body != syncCache->body || current.labels != syncCache->labels) {
+                syncCache->labels = current.labels;
+                syncCache->body = current.body;
+                const auto ticket = ++syncCache->ticket;
+                tasks.Launch([groups, selectionIntent, syncCache, ticket,
                               snapshot = current.proxies, labels = current.labels]() -> huxerui::Task<void> {
                     auto parsed = co_await RunOnTaskThread(
-                        [snapshot = std::move(snapshot), labels = std::move(labels)] { return parseProxies(snapshot, labels); });
-                    if (projectionGeneration.Get() != ticket) co_return;
-                    // 未确认的乐观选中：模型追平就清意图，否则继续用意图值
-                    // 覆盖解析结果（点击立刻上屏，不等 2s 那拍）。
+                        [snapshot = std::move(snapshot), labels = std::move(labels)] {
+                            return parseProxies(snapshot, labels);
+                        });
+                    if (syncCache->ticket != ticket) co_return;
                     const SelectionIntent pending = selectionIntent.Get();
                     if (!pending.node.empty()) {
                         for (ProxyGroup& parsedGroup : parsed) {
@@ -528,6 +544,91 @@ std::function<void()> NodeSelectAction(
             return [] {};
         },
         coreModel->view, proxiesModel->snapshot);
+    return huxerui::Row{};
+}
+
+[[huxerui::composable]] huxerui::View ProxySpeedFloatingAction(
+    std::string groupName, bool compact,
+    std::shared_ptr<ProxyTestModel> testModel,
+    std::function<void(const std::string&)> triggerGroupTest) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const GroupTestProgress progress = testModel->progress.Get();
+    const bool testing = progress.busy || testModel->preparing.Get();
+    huxerui::View floatingSpeed =
+        huxerui::IconButton(app::images::speed, Localized("测速"))
+            .With(huxerui::Tooltip(Localized("测试当前分组延迟")),
+                  huxerui::Frame{.width = 56.0F, .height = 56.0F},
+                  huxerui::Enabled(!testing && testModel->singlePending.Get() == 0),
+                  huxerui::Opacity(testing ? 0.0F : 1.0F),
+                  huxerui::Foreground(theme.colors.on_primary),
+                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                     .label = huxerui::UseString(Localized("测速"))})
+            .OnClick([triggerGroupTest, groupName] {
+                triggerGroupTest(groupName);
+            });
+    floatingSpeed = WithoutIconButtonOutlines(floatingSpeed);
+    floatingSpeed = huxerui::Stack {
+        std::move(floatingSpeed),
+        testing ? huxerui::View{huxerui::ProgressCircle().With(
+                      huxerui::Frame{.width = 28.0F, .height = 28.0F})}
+                : huxerui::View{huxerui::Row{}},
+    }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
+           huxerui::Align(huxerui::HorizontalAlignment::Center,
+                          huxerui::VerticalAlignment::Center),
+           huxerui::Background(testing ? theme.colors.primary_container
+                                       : theme.colors.primary),
+           huxerui::Foreground(testing ? theme.colors.on_primary_container
+                                       : theme.colors.on_primary),
+           huxerui::CornerRadius(kFloatingActionCornerRadius),
+           kPageTitlesInWindow ? ResolveFluxShadows(theme).floating_action
+               : huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
+           huxerui::Scale(huxerui::AnimateTo(
+               testing ? 0.94F : 1.0F,
+               huxerui::TweenSpec{.duration = 0.18,
+                                  .easing = huxerui::Easing::EaseOut})),
+           huxerui::Semantics{.label = huxerui::UseString(
+               Localized(testing ? "测速中…" : "测速"))});
+    return huxerui::Column {
+        std::move(floatingSpeed),
+    }.With(huxerui::Padding(huxerui::EdgeInsets{
+               .right = theme.spacing.medium + (compact ? 0.0F : kScrollBarGutter),
+               .bottom = compact ? kCompactFloatingNavigationInset
+                                 : theme.spacing.large,
+               .left = theme.spacing.medium,
+           }),
+           huxerui::MainAlign(huxerui::MainAxisAlignment::End),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
+}
+
+} // namespace
+
+[[huxerui::composable]] huxerui::View ProxiesPage(bool active) {
+    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    auto tasks = huxerui::UseTaskScope();
+    auto toast = UseFluxToast();
+    // 策略组快照 / 内核状态的全局唯一来源（见 *_model.h）。
+    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
+    const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto control = UseCoreControl();
+    auto groups = huxerui::UseStateList<ProxyGroup>();
+    auto loaded = huxerui::UseState(proxiesModel->snapshot.Get().loaded);
+    auto mode = huxerui::UseState<std::string>("rule");
+    auto degradedGroups = huxerui::UseState<std::set<std::string>>({});
+    auto proxySearch = huxerui::UseState(huxerui::TextEditingValue{});
+    auto sectionMotion = UseSectionTabMotion();
+    const auto testTasks = huxerui::UseApplicationTaskScope();
+    const auto testModel = proxiesModel->tests;
+    // 分支路径按模式独立（互不共享）：规则模式 path[0] = 标签栏选中的订阅组，
+    // 全局模式 path[0] = GLOBAL 或平台返回的实际可选组；后续元素 = 逐级点入的嵌套子组。
+    auto rulePath = huxerui::UseState<std::vector<std::string>>({});
+    auto globalPath = huxerui::UseState<std::vector<std::string>>({});
+    const auto syncCache = huxerui::UseState(std::make_shared<ProxySyncCache>()).Get();
+    huxerui::Lifecycle([syncCache] { return [syncCache] { ++syncCache->ticket; }; }, 0);
+    // 乐观选中意图（见 SelectionIntent）：只写这个小组 State，不动 groups。
+    auto selectionIntent = huxerui::UseState<SelectionIntent>(SelectionIntent{});
+    const huxerui::View sync = ProxyPageSync(
+        tasks, proxiesModel, coreModel, syncCache, groups,
+        loaded, mode, degradedGroups, selectionIntent).Key("proxies-sync");
 
     // 组测速触发：桌面统一走内核 /group/{name}/delay（URLTest 组保留订阅的
     // url-test.url，内核内部并发 10）；Android 调用 libbox urlTest，UI 只消费
@@ -684,13 +785,19 @@ std::function<void()> NodeSelectAction(
     // 四个一级页同时挂载，隐藏页即使不重组，其已挂载子树仍随每一帧被重新测量。
     // 真机实测（代理页大分组）：四页同挂时每帧 1443 次测量请求 / ~20ms，
     // 只留当前页后降到 28 次 / ~0ms；因此不可见页必须返回空占位。
-    if (!active) return huxerui::View{huxerui::Row{}}.Key("proxies-idle");
+    if (!active) return huxerui::Row { sync }.Key("proxies-idle");
 
-    if (!proxiesModel->snapshot.Get().loaded) {
-        if (kPageTitlesInWindow && !compact)
-            return PageLoadingScaffold(Localized("代理"), theme);
-        return PageScaffold(Localized("代理"), huxerui::View{}, ProxyLoadingSkeleton(theme),
-                            false, true, true);
+    if (!loaded.Get()) {
+        huxerui::View loading = (kPageTitlesInWindow && !compact)
+            ? PageLoadingScaffold(Localized("代理"), theme)
+            : PageScaffold(Localized("代理"), huxerui::View{}, ProxyLoadingSkeleton(theme),
+                           false, true, true);
+        return huxerui::Stack {
+            sync,
+            std::move(loading),
+        }.With(huxerui::Grow(1.0F),
+               huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                              huxerui::VerticalAlignment::Stretch));
     }
 
     // 一个根分组一页。VirtualGrid 直接用索引读取组节点，不再为所有组预先
@@ -703,6 +810,12 @@ std::function<void()> NodeSelectAction(
     auto gridInsets = ScrollAreaInsets::Symmetric(kSectionCardSpacing,
         compact ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F));
     gridInsets.rail_bottom_avoidance = 0.0F;
+    const std::function<void()> onSelectFailure = [toast] {
+        toast.Show(Localized("线路切换失败，请查看日志"));
+    };
+    const std::function<void()> onSelectReadOnly = [toast] {
+        toast.Show(Localized("此分组不支持手动切换节点，仅作展示"));
+    };
     std::vector<huxerui::View> groupPages;
     groupPages.reserve(rootGroups.size());
     for (std::size_t page = 0; page < rootGroups.size(); ++page) {
@@ -712,11 +825,12 @@ std::function<void()> NodeSelectAction(
         const ProxyGroup* contentGroup =
             (selectedPage && current != nullptr) ? current : &rootGroup;
 
-        const std::string contentGroupName = contentGroup->name;
+        const auto groupSnapshot = std::make_shared<const ProxyGroup>(*contentGroup);
         const std::string query = proxySearch.Get().text;
         std::vector<std::size_t> visibleNodes;
-        for (std::size_t index = 0; index < contentGroup->nodes.size(); ++index) {
-            const ProxyNode& node = contentGroup->nodes[index];
+        visibleNodes.reserve(groupSnapshot->nodes.size());
+        for (std::size_t index = 0; index < groupSnapshot->nodes.size(); ++index) {
+            const ProxyNode& node = groupSnapshot->nodes[index];
             if (SearchTextMatches(node.name, query) ||
                 SearchTextMatches(node.displayName, query) ||
                 SearchTextMatches(node.type, query) ||
@@ -735,43 +849,30 @@ std::function<void()> NodeSelectAction(
         }
         huxerui::View grid = ScrollArea(PageVirtualGrid(
                                  nodeCount,
-                                 [groups, visibleNodes = std::move(visibleNodes),
-                                  tasks, toast, contentGroupName,
-                                  nodeCount, compact, proxiesModel,
+                                 [groupSnapshot, visibleNodes = std::move(visibleNodes),
+                                  tasks, testTasks, control, toast, testModel,
+                                  onSelectFailure, onSelectReadOnly,
+                                  nodeCount, proxiesModel,
                                   selectionIntent](std::size_t index)
                                      -> huxerui::View {
-                                     const ProxyGroup* group =
-                                         findGroup(groups, contentGroupName);
-                                     if (group == nullptr || index >= nodeCount ||
-                                         visibleNodes[index] >= group->nodes.size()) {
+                                     if (index >= nodeCount ||
+                                         visibleNodes[index] >= groupSnapshot->nodes.size()) {
                                          return huxerui::View{};
                                      }
                                      const ProxyNode& node =
-                                         group->nodes[visibleNodes[index]];
-                                     const std::string nodeName = node.name;
-                                     // 乐观意图优先于模型快照里的 now。
-                                     const SelectionIntent pending =
-                                         selectionIntent.Get();
-                                     const std::string currentNow =
-                                         pending.group == group->name
-                                             ? pending.node
-                                             : group->now;
+                                         groupSnapshot->nodes[visibleNodes[index]];
+                                     const std::string& nodeName = node.name;
                                      return NodeCard(
-                                                node, nodeName == currentNow,
-                                                group->selectable,
+                                                node, groupSnapshot->name, groupSnapshot->now,
+                                                selectionIntent, groupSnapshot->selectable,
+                                                testTasks, control, toast, testModel,
                                                 NodeSelectAction(
                                                     selectionIntent, tasks,
                                                     proxiesModel,
-                                                    [toast] {
-                                                        toast.Show(
-                                                            Localized("线路切换失败，请查看日志"));
-                                                    },
-                                                    [toast] {
-                                                        toast.Show(Localized(
-                                                            "此分组不支持手动切换节点，仅作展示"));
-                                                    },
-                                                    *group, node))
-                                         .Key(group->name + "::" + nodeName);
+                                                    onSelectFailure,
+                                                    onSelectReadOnly,
+                                                    *groupSnapshot, node))
+                                         .Key(groupSnapshot->name + "::" + nodeName);
                                  }, kSectionCardSpacing)
                                  .Columns(compact
                                               ? huxerui::GridColumns::Fixed(2)
@@ -812,25 +913,11 @@ std::function<void()> NodeSelectAction(
         // 保真度角标：这份订阅编译时被降级 / 跳过的组，在标签上带一个 "!"。这里只
         // 做「哪个组有问题」的定位，明细在设置页「配置保真度」
         // （见 docs/singbox-layers-and-fidelity.md §2）。
-        const std::vector<singbox::FidelityNote> fidelity =
-            coreModel->view.Get().core.fidelity;
-        const auto catalog = coreModel->view.Get().core.sourceObjects;
-        const auto groupHasFidelityNote = [&fidelity, &catalog](const std::string& name) {
-            std::string source, object = name;
-            if (catalog) for (const auto& entry : *catalog) if (entry.tag == name) {
-                source = entry.sourceId; object = entry.objectId; break;
-            }
-            return std::any_of(
-                fidelity.begin(), fidelity.end(),
-                [&source, &object](const singbox::FidelityNote& note) {
-                    return note.scope == singbox::FidelityScope::Group &&
-                           note.subject == object && note.sourceId == source;
-                });
-        };
+        const std::set<std::string> degraded = degradedGroups.Get();
         for (const std::string& name : tabNames) {
             groupTabs.push_back(SectionTab{
                 name, findGroup(all, name) ? findGroup(all, name)->displayName : name,
-                groupHasFidelityNote(name) ? std::string{"!"} : std::string{}});
+                degraded.contains(name) ? std::string{"!"} : std::string{}});
         }
         columnChildren.push_back(
             SectionTabBar(groupTabs, selectedRoot, selectGroup, sectionMotion,
@@ -853,67 +940,20 @@ std::function<void()> NodeSelectAction(
     huxerui::View page = PageScaffold(Localized("代理"), huxerui::View{},
                                       std::move(content), false, true, true,
                                       std::nullopt, {}, std::move(searchField));
+    std::vector<huxerui::View> layers;
+    layers.reserve(3);
+    layers.push_back(sync);
+    layers.push_back(std::move(page));
     // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开
     // 悬浮底部导航，桌面只留常规外边距。
     if (!direct && current != nullptr) {
-        const std::string groupName = current->name;
-        const GroupTestProgress progress = testProgress.Get();
-        const bool testing = progress.busy || testModel->preparing.Get();
-        huxerui::View floatingSpeed =
-            huxerui::IconButton(app::images::speed, Localized("测速"))
-                .With(huxerui::Tooltip(Localized("测试当前分组延迟")),
-                      huxerui::Frame{.width = 56.0F, .height = 56.0F},
-                      huxerui::Enabled(!testing && testModel->singlePending.Get() == 0),
-                      huxerui::Opacity(testing ? 0.0F : 1.0F),
-                      huxerui::Foreground(theme.colors.on_primary),
-                      huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                         .label = huxerui::UseString(
-                                             Localized("测速"))})
-                .OnClick([triggerGroupTest, groupName] {
-                    triggerGroupTest(groupName);
-                });
-        floatingSpeed = WithoutIconButtonOutlines(floatingSpeed);
-        floatingSpeed = huxerui::Stack {
-            std::move(floatingSpeed),
-            testing ? huxerui::View{huxerui::ProgressCircle().With(
-                          huxerui::Frame{.width = 28.0F, .height = 28.0F})}
-                    : huxerui::View{huxerui::Row{}},
-        }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
-               huxerui::Align(huxerui::HorizontalAlignment::Center,
-                              huxerui::VerticalAlignment::Center),
-               huxerui::Background(testing ? theme.colors.primary_container
-                                           : theme.colors.primary),
-               huxerui::Foreground(testing ? theme.colors.on_primary_container
-                                           : theme.colors.on_primary),
-               huxerui::CornerRadius(kFloatingActionCornerRadius),
-               kPageTitlesInWindow ? ResolveFluxShadows(theme).floating_action
-                   : huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
-               huxerui::Scale(huxerui::AnimateTo(
-                   testing ? 0.94F : 1.0F,
-                   huxerui::TweenSpec{.duration = 0.18,
-                                      .easing = huxerui::Easing::EaseOut})),
-               huxerui::Semantics{.label = huxerui::UseString(
-                   Localized(testing ? "测速中…" : "测速"))});
-        // 与 Android 底部悬浮导航栏相同：按钮放在独立的全屏覆盖层中，
-        // 由覆盖层的 Column 在主轴末端、交叉轴末端定位，不依赖页面内容容器。
-        huxerui::View speedDock = huxerui::Column {
-            std::move(floatingSpeed),
-        }.With(huxerui::Padding(huxerui::EdgeInsets{
-                   .right = theme.spacing.medium + (compact ? 0.0F : kScrollBarGutter),
-                   .bottom = compact ? kCompactFloatingNavigationInset
-                                     : theme.spacing.large,
-                   .left = theme.spacing.medium,
-               }),
-               huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
-        return huxerui::Stack {
-            std::move(page),
-            std::move(speedDock),
-        }.With(huxerui::Grow(1.0F),
-               huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                              huxerui::VerticalAlignment::Stretch));
+        layers.push_back(ProxySpeedFloatingAction(
+            current->name, compact, testModel, triggerGroupTest));
     }
-    return page;
+    return huxerui::Stack(std::move(layers)).With(
+        huxerui::Grow(1.0F),
+        huxerui::Align(huxerui::HorizontalAlignment::Stretch,
+                       huxerui::VerticalAlignment::Stretch));
 }
 
 } // namespace clashflux::ui

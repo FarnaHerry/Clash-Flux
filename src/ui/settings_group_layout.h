@@ -20,11 +20,12 @@ inline huxerui::View SettingsContentRow(huxerui::View content, std::optional<flo
     return huxerui::Scope([content, verticalPadding]() -> huxerui::View {
         const auto insets = huxerui::UseEnvironment<SettingsRowInsets>();
         if (insets == SettingsRowInsets{}) return content;
-        return huxerui::Column {content}.With(
+        return huxerui::Row {
+          huxerui::View{content}.With(huxerui::Grow(1.0F)),
+        }.With(
             huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal, verticalPadding.value_or(insets.vertical))),
             huxerui::Frame{.min_height = insets.minimum_height},
-            huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     });
 }
 

@@ -45,6 +45,8 @@
 #include "home_easter_eggs.h"
 #include "home_mode_choices.h"
 #include "empty_state.h"
+#include "home_network_model.h"
+#include "public_ip_lookup.h"
 #include "task_bridge.h"
 
 import clashflux.api;
@@ -62,6 +64,8 @@ import clashflux.utils;
 #include "core_control.h"
 #include "home_vpn_status.h"
 #include "profiles_model.h"
+#include "proxies_model.h"
+#include "proxy_node_tile.h"
 #include "settings_model.h"
 #include "stream_updates.h"
 #include "wire_codec.h"
@@ -399,25 +403,36 @@ huxerui::XYChartData BuildTrafficChartData(
     const std::int64_t download = std::max<std::int64_t>(0, s.totalDown);
     const double total = static_cast<double>(upload) + static_cast<double>(download);
     const auto shareText = [total](std::int64_t value) {
-        if (total <= 0.0) return std::string("—");
+        if (total <= 0.0) return std::string{};
         const int percent = static_cast<int>(static_cast<double>(value) / total * 100.0 + 0.5);
         return std::to_string(percent) + "%";
     };
-    const auto shareMetric = [](std::string direction, huxerui::Color color,
-                                const std::string& share) {
-        return huxerui::Text(direction + " " + share).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kCaption)
-                .WithWeight(huxerui::FontWeight::SemiBold), color});
+    const auto shareFont = huxerui::Font::System(font_size::kCaption)
+                               .WithWeight(huxerui::FontWeight::SemiBold);
+    const auto shareMetric = [shareFont](std::string direction, huxerui::Color color,
+                                         const std::string& share) {
+        if (share.empty()) {
+            return huxerui::View{huxerui::Row {
+                huxerui::Text(std::move(direction))
+                    .Style(huxerui::TextStyle{shareFont, color}),
+                PlaceholderText(shareFont, 24.0F),
+            }.With(huxerui::Spacing(4.0F),
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))};
+        }
+        return huxerui::View{huxerui::Text(direction + " " + share)
+            .Style(huxerui::TextStyle{shareFont, color})};
     };
-    const auto amountMetric = [&theme](std::string direction, huxerui::Color color,
-                                       const std::string& value) {
+    const auto amountFont = huxerui::Font::System(font_size::kBody)
+                                .WithWeight(huxerui::FontWeight::SemiBold);
+    const auto amountMetric = [&theme, amountFont](std::string direction, huxerui::Color color,
+                                                   std::optional<std::string> value) {
         return huxerui::Row {
-            huxerui::Text(direction).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody).WithWeight(huxerui::FontWeight::SemiBold),
-                color}),
-            huxerui::Text(value).Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kBody).WithWeight(huxerui::FontWeight::SemiBold),
-                theme.colors.on_surface}),
+            huxerui::Text(std::move(direction))
+                .Style(huxerui::TextStyle{amountFont, color}),
+            value
+                ? huxerui::View{huxerui::Text(*value)
+                      .Style(huxerui::TextStyle{amountFont, theme.colors.on_surface})}
+                : PlaceholderText(amountFont, 36.0F),
         }.With(huxerui::Spacing(6.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     };
@@ -448,8 +463,10 @@ huxerui::XYChartData BuildTrafficChartData(
                huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Column {
-            amountMetric("↑", upColor, s.coreReady ? formatBytes(upload) : "—"),
-            amountMetric("↓", downColor, s.coreReady ? formatBytes(download) : "—"),
+            amountMetric("↑", upColor,
+                         s.coreReady ? std::optional{formatBytes(upload)} : std::nullopt),
+            amountMetric("↓", downColor,
+                         s.coreReady ? std::optional{formatBytes(download)} : std::nullopt),
         }.With(huxerui::Spacing(4.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(8.0F),
@@ -467,17 +484,26 @@ huxerui::XYChartData BuildTrafficChartData(
     const huxerui::Color upColor = trafficColors.upload;
     huxerui::Color fillDown = downColor;
     fillDown.alpha = 0.18F;  // 与旧手绘面积填充同一透明度
+    const auto rateFont = huxerui::Font::System(font_size::kCaption);
+    const auto rateLabel = [fresh, rateFont](std::string arrow, std::int64_t rate,
+                                             huxerui::Color color) {
+        if (fresh) {
+            return huxerui::View{huxerui::Text(arrow + " " + formatRate(rate))
+                .Style(huxerui::TextStyle{rateFont, color})};
+        }
+        return huxerui::View{huxerui::Row {
+            huxerui::Text(std::move(arrow)).Style(huxerui::TextStyle{rateFont, color}),
+            PlaceholderText(rateFont, 28.0F),
+        }.With(huxerui::Spacing(4.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))};
+    };
 
     return huxerui::Column {
         huxerui::Row {
             HomeCardHeading(app::images::speed, Localized("流量")),
             huxerui::Spacer(),
-            huxerui::Text(fresh ? "↑ " + formatRate(s.latest.up) : "↑ —")
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption), upColor}),
-            huxerui::Text(fresh ? "↓ " + formatRate(s.latest.down) : "↓ —")
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption), downColor}),
+            rateLabel("↑", s.latest.up, upColor),
+            rateLabel("↓", s.latest.down, downColor),
         }.With(huxerui::Spacing(12.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::AreaChart(BuildTrafficChartData(
@@ -534,17 +560,23 @@ huxerui::XYChartData BuildTrafficChartData(
 }
 
 // 当前订阅卡：标题直接用订阅名（不再放「当前订阅」标签；哪张订阅在用由订阅页
-// 的选中态表达，首页只汇报这份订阅自身的状态）。流量行只在解析到
-// subscription-userinfo 数据时显示——total 未知（不限量）时进度条摆满；
+// 的选中态表达，首页只汇报这份订阅自身的状态），并展示当前出站实际落到的具体节点。
+// 流量行只在解析到 subscription-userinfo 数据时显示——total 未知（不限量）时进度条摆满；
 // 到期时间只在订阅提供了 expire 时显示，否则整行不占位。
 [[huxerui::composable]] huxerui::View HomeProfileCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const ProxiesSnapshot& proxiesSnapshot =
+        huxerui::UseService<ProxiesModel>()->snapshot.Get();
+    const std::string mode = huxerui::UseService<CoreModel>()->view.Get().Mode();
     const bool hasProfile = s.profileId != 0;
     const huxerui::Color muted = theme.colors.on_surface_variant;
     const std::string profileName =
-        !s.profilesReady ? "—" : s.profileName == "未启用订阅"
+        !s.profilesReady ? std::string{} : s.profileName == "未启用订阅"
             ? huxerui::UseString(Localized("未启用订阅"))
             : s.profileName;
+    const ActiveProxySelection activeNode =
+        hasProfile ? ResolveActiveProxySelection(proxiesSnapshot, mode)
+                   : ActiveProxySelection{};
     const huxerui::StringVariant profileUpdated = [&] {
         if (s.profileUpdated == "未拉取") return Localized("未拉取");
         if (s.profileUpdated == "拉取失败") return Localized("拉取失败");
@@ -581,7 +613,65 @@ huxerui::XYChartData BuildTrafficChartData(
     const bool hasExpiry = hasProfile && s.profileExpireAt > 0;
 
     std::vector<huxerui::View> children;
-    children.push_back(HomeCardHeading(app::images::request, profileName));
+    if (!s.profilesReady) {
+        children.push_back(huxerui::Row {
+            huxerui::Image(app::images::request)
+                .Fit(huxerui::ImageFit::Contain)
+                .Tint(theme.colors.primary)
+                .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+            PlaceholderText(huxerui::Font::System(font_size::kBody)
+                                .WithWeight(huxerui::FontWeight::SemiBold),
+                            64.0F),
+        }.With(huxerui::Spacing(8.0F),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
+    } else {
+        children.push_back(HomeCardHeading(app::images::request, profileName));
+    }
+    if (hasProfile) {
+        if (!proxiesSnapshot.loaded) {
+            children.push_back(
+                huxerui::Row {
+                    huxerui::Image(app::images::proxies)
+                        .Fit(huxerui::ImageFit::Contain)
+                        .Tint(muted)
+                        .With(huxerui::Frame{.width = 14.0F, .height = 14.0F}),
+                    PlaceholderText(huxerui::Font::System(font_size::kChip), 56.0F),
+                }.With(huxerui::Spacing(6.0F),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+                    .Key("home-profile-node"));
+        } else if (activeNode.directMode || !activeNode.displayName.empty()) {
+            const std::string nodeText = activeNode.directMode
+                ? huxerui::UseString(Localized("直连"))
+                : activeNode.displayName;
+            const huxerui::TextStyle nodeStyle{
+                huxerui::Font::System(font_size::kChip),
+                theme.colors.on_surface};
+            const auto flagPrefix = ExtractLeadingRegionalFlag(nodeText);
+            huxerui::View leading = flagPrefix
+                ? CountryFlag(flagPrefix->first, 16.0F, 12.0F)
+                : huxerui::View{huxerui::Image(app::images::proxies)
+                                    .Fit(huxerui::ImageFit::Contain)
+                                    .Tint(theme.colors.primary)
+                                    .With(huxerui::Frame{.width = 14.0F,
+                                                         .height = 14.0F})};
+            const std::string_view shownName =
+                flagPrefix && !flagPrefix->second.empty()
+                    ? flagPrefix->second
+                    : std::string_view{nodeText};
+            const auto nodeLabel = LocalizedFormat("当前节点：{}", nodeText);
+            children.push_back(
+                huxerui::Row {
+                    std::move(leading),
+                    SingleLineEllipsisText(shownName, nodeStyle)
+                        .With(huxerui::Grow(1.0F)),
+                }.With(huxerui::Spacing(6.0F),
+                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+                       huxerui::Tooltip(nodeLabel),
+                       huxerui::Semantics{
+                           .label = huxerui::UseString(nodeLabel)})
+                    .Key("home-profile-node"));
+        }
+    }
     if (!s.profileUpdated.empty()) {
         children.push_back(
             huxerui::Text(profileUpdated)
@@ -608,27 +698,31 @@ huxerui::XYChartData BuildTrafficChartData(
     }
 
     return huxerui::Column(std::move(children))
-        .With(huxerui::Spacing(6.0F),
+        .With(huxerui::Spacing(5.0F),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // ---- 网络信息卡片（双平台共用）--------------------------------------------
 
-// 内网 IP：只展示当前默认路由使用的接口和地址，每 5 秒刷新一次
-// （路由选择的系统调用仍按约定放任务线程）。
+// 内网 IP：只展示当前默认路由使用的接口和地址。首页可见时每 5 秒请求一次刷新；
+// 结果归应用级 HomeNetworkModel，同一时刻最多一个读取在途，到达后直接替换，
+// 重新进入首页立即显示上次结果（路由选择的系统调用仍按约定放任务线程）。
+huxerui::Task<std::optional<std::string>> FetchLanAddress() {
+    auto active = co_await RunOnTaskThread([] { return netinfo::activeLanIpv4Address(); });
+    if (!active) co_return std::nullopt;
+    co_return active->address;
+}
+
 [[huxerui::composable]] huxerui::View HomeLanIpCard() {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     auto tasks = huxerui::UseTaskScope();
-    auto address = huxerui::UseState<std::optional<netinfo::LanAddress>>(std::nullopt);
-    auto addressesReady = huxerui::UseState(false);
+    const auto appTasks = huxerui::UseApplicationTaskScope();
+    const auto model = huxerui::UseService<HomeNetworkModel>();
     huxerui::Lifecycle(
-        [tasks, address, addressesReady] {
-            tasks.Launch([address, addressesReady]() -> huxerui::Task<void> {
+        [tasks, appTasks, model] {
+            tasks.Launch([appTasks, model]() -> huxerui::Task<void> {
                 for (;;) {
-                    auto active = co_await RunOnTaskThread(
-                        [] { return netinfo::activeLanIpv4Address(); });
-                    address = std::move(active);
-                    addressesReady = true;
+                    model->RefreshLan(appTasks, [] { return FetchLanAddress(); });
                     co_await huxerui::Delay(std::chrono::duration<double>{5.0});
                 }
             });
@@ -636,23 +730,23 @@ huxerui::XYChartData BuildTrafficChartData(
         },
         0);
 
-    const std::optional<netinfo::LanAddress> current = address.Get();
+    const std::optional<std::string> current = model->lanAddress.Get();
     huxerui::View line;
     if (current) {
-        line = huxerui::Text(current->address)
+        line = huxerui::Text(*current)
             .LineLimit(1)
             .Overflow(huxerui::TextOverflow::Ellipsis)
             .Style(huxerui::TextStyle{
                 huxerui::Font::Monospace(font_size::kChip),
                 theme.colors.on_surface})
             .Key("home-lan-ip-current");
-    } else {
-        line = huxerui::Text(addressesReady.Get()
-                                 ? Localized("未检测到内网地址")
-                                 : huxerui::StringVariant("—"))
+    } else if (model->lanReady.Get()) {
+        line = huxerui::Text(Localized("未检测到内网地址"))
                    .Style(huxerui::TextStyle{
                        huxerui::Font::System(font_size::kCaption),
                        theme.colors.on_surface_variant});
+    } else {
+        line = PlaceholderText(huxerui::Font::System(font_size::kCaption));
     }
 
     return huxerui::Column {
@@ -664,12 +758,7 @@ huxerui::XYChartData BuildTrafficChartData(
 }
 
 // ---- 网络检测（公网出口 IP）-----------------------------------------------
-
-constexpr std::array<std::string_view, 2> kPublicIpLookupUrls{
-    // 两个服务都返回 IP 与 ISO 国家码；首选国外，失败后再用国内出口检测。
-    "https://api.country.is",
-    "https://api.mir6.com/api/ip_json",
-};
+// 回显服务列表见 public_ip_lookup.h（与网站测试的出站核实共用）。
 
 #if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
 // 手机：应用自身流量不经过本应用的 TUN，直连回显服务即设备出口。
@@ -716,58 +805,38 @@ huxerui::Task<wire::PublicIpLookup> FetchPublicIp(std::shared_ptr<AppHttpClient>
 }
 #endif
 
-// 网络检测：挂载、内核代理启停或 mixed 端口变化时自动检测，右上按钮可重测。
-[[huxerui::composable]] huxerui::View HomeNetCheckCard() {
+// 网络检测：挂载、内核代理启停、入站端口、出站模式、启用订阅或出口节点变化时异步检测；
+// 结果归应用级 HomeNetworkModel：同一时刻只有一个检测在途，新路由覆盖旧请求，
+// 未取得首份结果前使用空白占位，检测期间继续显示上次结果，到达后直接替换；
+// 失败时按退避间隔自动重试，不提供手动刷新按钮。
+[[huxerui::composable]] huxerui::View HomeNetCheckCard(std::int64_t profileId) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    auto tasks = huxerui::UseTaskScope();
+    const auto appTasks = huxerui::UseApplicationTaskScope();
     const auto http = huxerui::UseService<AppHttpClient>();
     const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto proxiesModel = huxerui::UseService<ProxiesModel>();
+    const auto model = huxerui::UseService<HomeNetworkModel>();
     const CoreView core = coreModel->view.Get();
     const bool proxyActive = core.ProxyActive();
     const std::string mixedPort = std::to_string(core.core.mixedPort);
-    auto location = huxerui::UseState(wire::PublicIpLookup{});
-    auto loading = huxerui::UseState(true);
-    auto failed = huxerui::UseState(false);
-    auto serial = huxerui::UseState<std::uint64_t>(0);
-
-    const auto detect = [tasks, http, proxyActive, mixedPort, location, loading,
-                         failed, serial] {
-        const auto ticket = serial.Get() + 1;
-        serial = ticket;
-        location = wire::PublicIpLookup{};
-        loading = true;
-        failed = false;
-        tasks.Launch([http, proxyActive, mixedPort, location, loading, failed, serial,
-                      ticket]() -> huxerui::Task<void> {
-            wire::PublicIpLookup result;
-            try {
-                result = co_await FetchPublicIp(http, proxyActive, mixedPort);
-            } catch (...) {
-                result = {};
-            }
-            if (ticket != serial.Get()) co_return;
-            loading = false;
-            if (result.ip.empty()) {
-                failed = true;
-            } else {
-                location = std::move(result);
-                failed = false;
-            }
+    const std::string mode = core.Mode();
+    const std::string activeNodeTag =
+        ResolveActiveProxySelection(proxiesModel->snapshot.Get(), mode).tag;
+    const std::string routeKey = std::to_string(proxyActive ? 1 : 0) + "|" +
+        mixedPort + "|" + mode + "|" + std::to_string(profileId) + "|" +
+        activeNodeTag;
+    huxerui::Lifecycle([model, appTasks, http, proxyActive, mixedPort, routeKey] {
+        model->RequestPublic(appTasks, routeKey, [http, proxyActive, mixedPort] {
+            return FetchPublicIp(http, proxyActive, mixedPort);
         });
-    };
-    huxerui::Lifecycle([detect] {
-        detect();
         return [] {};
-    }, proxyActive, mixedPort);
+    }, routeKey);
 
-    const wire::PublicIpLookup current = location.Get();
+    const wire::PublicIpLookup current = model->publicIp.Get();
     huxerui::View status;
-    if (loading.Get()) {
-        status = huxerui::Text(Localized("检测中…"))
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kChip),
-                theme.colors.on_surface_variant});
-    } else if (failed.Get()) {
+    if (!model->publicReady.Get()) {
+        status = PlaceholderText(huxerui::Font::System(font_size::kChip));
+    } else if (model->publicFailed.Get()) {
         status = huxerui::Text(Localized("检测失败"))
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kChip),
@@ -782,27 +851,12 @@ huxerui::Task<wire::PublicIpLookup> FetchPublicIp(std::shared_ptr<AppHttpClient>
             .With(huxerui::Tooltip(current.ip));
     }
 
-    huxerui::View refresh = huxerui::IconButton(
-        app::images::refresh, Localized("重新检测"))
-        .OnClick(detect)
-        .With(huxerui::Enabled(!loading.Get()),
-              huxerui::Semantics{
-                  .role = huxerui::SemanticRole::Button,
-                  .label = huxerui::UseString(Localized("重新检测"))});
-    refresh = WithoutIconButtonOutlines(std::move(refresh));
-
     return huxerui::Column {
-        huxerui::Row {
-            huxerui::Column {
-                HomeCardFlagHeading(current.countryCode, Localized("网络检测")),
-                std::move(status),
-            }.With(huxerui::Spacing(4.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-                .With(huxerui::Grow(1.0F)),
-            std::move(refresh),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        HomeCardFlagHeading(current.countryCode, Localized("网络检测")),
+        std::move(status),
         huxerui::Spacer(),
-    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }.With(huxerui::Spacing(4.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // ---- 平台专属卡片（整个函数由编译宏在调用点选择）---------------------------
@@ -1077,7 +1131,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     }
     if (kind == HomeCardKind::Profile) return HomeProfileCard(s);
     if (kind == HomeCardKind::LanIp) return HomeLanIpCard();
-    if (kind == HomeCardKind::NetCheck) return HomeNetCheckCard();
+    if (kind == HomeCardKind::NetCheck) return HomeNetCheckCard(s.profileId);
     return CLASHFLUX_HOME_PLATFORM_CARD(s, state, kind);
 }
 

@@ -28,6 +28,24 @@ inline std::optional<std::size_t> CountryFlagAtlasIndex(std::string_view code,
     return position / 3;
 }
 
+inline std::optional<std::pair<std::string, std::string_view>> ExtractLeadingRegionalFlag(
+    std::string_view text) {
+    if (text.size() < 8) return std::nullopt;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(text.data());
+    if (bytes[0] != 0xF0U || bytes[1] != 0x9FU || bytes[2] != 0x87U ||
+        bytes[4] != 0xF0U || bytes[5] != 0x9FU || bytes[6] != 0x87U ||
+        bytes[3] < 0xA6U || bytes[3] > 0xBFU ||
+        bytes[7] < 0xA6U || bytes[7] > 0xBFU) {
+        return std::nullopt;
+    }
+    std::string code{
+        static_cast<char>('a' + bytes[3] - 0xA6U),
+        static_cast<char>('a' + bytes[7] - 0xA6U)};
+    std::string_view rest = text.substr(8);
+    if (!rest.empty() && rest.front() == ' ') rest.remove_prefix(1);
+    return std::pair{std::move(code), rest};
+}
+
 // Uses the packaged flag atlas. HUI text fallback does not consistently render
 // regional-indicator pairs on Windows, so the card must not rely on emoji text.
 [[huxerui::composable]] inline huxerui::View CountryFlag(

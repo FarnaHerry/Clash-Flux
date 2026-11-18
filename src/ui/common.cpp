@@ -22,6 +22,7 @@
 #include "app_resources.h"
 #include "proxies_model.h"
 #include "website_test_model.h"
+#include "home_network_model.h"
 #include "task_bridge.h"
 #include "ui.h"
 #include "page_layout.h"
@@ -527,6 +528,7 @@ void InstallClashFluxUiModels(huxerui::ApplicationContext& context) {
     context.Provide(std::make_shared<VpnModel>());
     context.Provide(std::make_shared<SettingsModel>());
     context.Provide(std::make_shared<WebsiteTestModel>());
+    context.Provide(std::make_shared<HomeNetworkModel>());
 }
 
 void DriveProxiesModel(huxerui::TaskScope tasks,

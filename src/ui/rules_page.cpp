@@ -395,12 +395,12 @@ const std::vector<std::string> kPersonalViews{"修改后的规则", "订阅原�
         menu.Show(std::move(entries));
     };
     if (!editable) {
-        return DenseCard(SubscriptionRuleContent(label, rule.terminal ? "—" : displayPattern,
+        return DenseCard(SubscriptionRuleContent(label, rule.terminal ? std::string{} : displayPattern,
             rule.target, status, huxerui::Row{}, rule.enabled && !record))
             .With(huxerui::Padding(huxerui::EdgeInsets{
                 .bottom = last ? 0.0F : ResolveIslandTheme(theme).dense_radius}));
     }
-    return DenseCard(SubscriptionRuleContent(label, rule.terminal ? "—" : displayPattern, rule.target, status,
+    return DenseCard(SubscriptionRuleContent(label, rule.terminal ? std::string{} : displayPattern, rule.target, status,
         huxerui::IconButton(app::images::more_vertical, Localized("规则操作"))
             .With(menu.Target()).OnClick(actions), rule.enabled && !record))
         .With(huxerui::Padding(huxerui::EdgeInsets{

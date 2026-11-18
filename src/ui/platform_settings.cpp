@@ -215,7 +215,7 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
     bool service_installed, huxerui::TaskScope, FluxToastHandle toast) {
     const auto control = UseCoreControl();
     if (!control.model->view.Get().ready)
-        return SettingRow(Localized("内核服务"), "—", SettingsValue(false, {}), app::images::gear);
+        return SettingRow(Localized("内核服务"), {}, SettingsValue(false, {}), app::images::gear);
     return SettingRow(
         Localized("内核服务"),
         service_installed
@@ -234,7 +234,7 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
     bool service_installed, huxerui::TaskScope, FluxToastHandle toast) {
     const auto control = UseCoreControl();
     if (!control.model->view.Get().ready)
-        return SettingRow(Localized("内核服务"), "—", SettingsValue(false, {}), app::images::gear);
+        return SettingRow(Localized("内核服务"), {}, SettingsValue(false, {}), app::images::gear);
     return SettingRow(
         Localized("内核服务"),
         Localized("Windows 系统服务托管内核、TUN 与 PPTP；启动后自动检查更新，手动安装或更新需要管理员授权"),
@@ -471,7 +471,7 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
     const bool running = view.core.state == core::CoreState::Running;
     const auto version = view.core.version.empty() ? cfg::singboxFallbackLabel()
                                                    : view.core.version;
-    const auto status = !view.ready ? huxerui::StringVariant{"—"} :
+    const auto status =
         view.core.state == core::CoreState::Starting ? Localized("启动中") :
         view.core.state == core::CoreState::Failed ? Localized("启动失败") :
         running ? Localized("运行中") : Localized("已停止");
@@ -481,7 +481,8 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
                 .With(huxerui::Enabled(view.ready && running && !control.Busy()))
                 .OnClick([control] { control.Run({.action = CoreAction::Restart}); })),
             app::images::bolt),
-        SettingRow(Localized("运行状态"), {}, huxerui::Text(status), app::images::info),
+        SettingRow(Localized("运行状态"), {},
+            SettingsValue(view.ready, huxerui::Text(status)), app::images::info),
         view.core.lastError.empty() ? huxerui::View{} :
             SettingRow(Localized("错误信息"), view.core.lastError, {}, app::images::info),
         CLASHFLUX_DESKTOP_SERVICE_ROW(view.serviceInstalled, tasks, toast),

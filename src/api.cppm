@@ -60,6 +60,11 @@ export ApiResult probeThroughProxy(const std::string& target, int mixedPort, std
 // Synchronous; callers must run it on a task thread.
 export ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
                            long timeoutSec);
+// fetchText that runs observe() after a successful transfer, before the
+// connection is released, so the caller can inspect the kernel's live route
+// for this request. observe runs on the calling task thread.
+export ApiResult fetchTextObserved(const std::string& url, const std::string& proxyUrl,
+                                   long timeoutSec, const std::function<void()>& observe);
 
 export struct NativeRuntime {
     bool ok = false;

@@ -75,6 +75,7 @@ private:
 } // namespace
 
 huxerui::View FittedSingleLineLabel(std::string text, huxerui::TextStyle style, huxerui::TextAlign align) {
+    const bool placeholder = text.empty();
     return huxerui::Scope([text, style, align] {
         // Explicit source line breaks must not turn a regex/name into extra rows.
         std::string line = text;
@@ -87,7 +88,9 @@ huxerui::View FittedSingleLineLabel(std::string text, huxerui::TextStyle style, 
             FittedRuleLabel{line, style, align});
         if (!text.empty()) label = std::move(label).With(huxerui::Tooltip(text));
         return label;
-    }).With(huxerui::Semantics{.role = huxerui::SemanticRole::Text, .label = text});
+    }).With(placeholder
+                ? ValuePlaceholderSemantics()
+                : huxerui::Semantics{.role = huxerui::SemanticRole::Text, .label = text});
 }
 
 huxerui::View SubscriptionRulesToolbar(std::vector<std::string> sources, std::size_t source,

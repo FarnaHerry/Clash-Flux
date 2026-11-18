@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.118 release notes](docs/releases/v0.3.118.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.119 release notes](docs/releases/v0.3.119.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -41,7 +41,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
 
 ## Features
 
-- Website access tests: cards show the outbound country flag, country code and completion time, with batch tests, individual retries and editable temporary sites. Wide cards use a context menu; compact cards retain the overflow button. Tests follow the actual system network with a ten-second timeout. Country is shown only when the tested site provides its own exit-location trace. See [website tests](docs/website-tests.md).
+- Website access tests: cards show the outbound country flag, country code and completion time, with batch tests, individual retries and editable temporary sites. Wide cards use a context menu; compact cards retain the overflow button. Tests follow the actual system network with a ten-second timeout. Country uses the tested origin's own exit trace first, then on desktop correlates with Clash-Flux's active kernel leaf outbound or verified pure-direct egress, showing "Reachable" when the exit country cannot be confirmed. See [website tests](docs/website-tests.md).
 
 - Subscription sources, rule-set JSON, compiled JSON and diagnostic reports share CodeEditor, with worker-prepared documents and no full-document copy on each keystroke.
 

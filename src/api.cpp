@@ -348,8 +348,9 @@ ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_
     return result;
 }
 
-ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
-                    long timeoutSec) {
+namespace {
+ApiResult fetchTextImpl(const std::string& url, const std::string& proxyUrl,
+                        long timeoutSec, const std::function<void()>* observe) {
     ApiResult result;
     CurlHandle handle;
     if (!handle) {
@@ -394,12 +395,25 @@ ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
         curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
         result.ok = result.status >= 200 && result.status < 300;
         if (!result.ok) result.error = "HTTP " + std::to_string(result.status);
+        // The easy handle still owns the connection here; CurlHandle closes it on return.
+        if (result.ok && observe && *observe) (*observe)();
     } else {
         result.error = errorDetail[0] != '\0'
                            ? std::string(errorDetail)
                            : std::string(curl_easy_strerror(code));
     }
     return result;
+}
+} // namespace
+
+ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
+                    long timeoutSec) {
+    return fetchTextImpl(url, proxyUrl, timeoutSec, nullptr);
+}
+
+ApiResult fetchTextObserved(const std::string& url, const std::string& proxyUrl,
+                            long timeoutSec, const std::function<void()>& observe) {
+    return fetchTextImpl(url, proxyUrl, timeoutSec, &observe);
 }
 
 struct ClashApi::Impl {

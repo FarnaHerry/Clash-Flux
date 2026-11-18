@@ -125,7 +125,6 @@ std::optional<ConnectionsSnapshot> parseConnections(const std::string& body,
         row.rule = connection.rule;
         if (!connection.rulePayload.empty()) row.rule += "(" + connection.rulePayload + ")";
         if (row.host.empty()) row.host = "未知目标";
-        if (row.network.empty()) row.network = "—";
         if (row.chains.empty()) row.chains = "DIRECT";
         if (row.rule.empty()) row.rule = "未匹配规则";
         snap.rows.push_back(std::move(row));
@@ -570,7 +569,10 @@ huxerui::XYChartData ConnectionChartData(
             huxerui::Text(std::move(title)).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant})
                 .With(huxerui::Frame{.width = 82.0F}),
-            huxerui::Text(std::move(value)).With(huxerui::Grow(1.0F)),
+            (value.empty()
+                 ? PlaceholderText(huxerui::Font::System(font_size::kBody))
+                 : huxerui::View{huxerui::Text(std::move(value))})
+                .With(huxerui::Grow(1.0F)),
         }.With(huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
     };
@@ -615,7 +617,8 @@ huxerui::XYChartData ConnectionChartData(
 
     huxerui::View sections = huxerui::Column{
         IslandSurface(huxerui::Column{
-            huxerui::Text(row.network + "  " + row.host, huxerui::TextRole::Title),
+            huxerui::Text(row.network.empty() ? row.host : row.network + "  " + row.host,
+                          huxerui::TextRole::Title),
             huxerui::Text(Localized(ended.Get() ? "已结束" : "活动中"))
                 .With(huxerui::Foreground(ended.Get()
                     ? theme.colors.on_surface_variant : theme.colors.primary)),
@@ -633,14 +636,14 @@ huxerui::XYChartData ConnectionChartData(
                       IslandLevel::Raised),
         IslandSurface(huxerui::Column{
             label(Localized("目标地址"), row.host),
-            label(Localized("目标 IP"), row.destinationIP.empty() ? "—" : row.destinationIP),
-            label(Localized("入站类型"), row.inboundType.empty() ? "—" : row.inboundType),
-            label(Localized("入站标签"), row.inbound.empty() ? "—" : row.inbound),
+            label(Localized("目标 IP"), row.destinationIP),
+            label(Localized("入站类型"), row.inboundType),
+            label(Localized("入站标签"), row.inbound),
             label(Localized("链路"), row.chains),
             label(Localized("规则类型"), ConnectionRuleTypes(row.rule)),
             label(Localized("规则"), row.rule),
             ConnectionTraceContent(row),
-            label(Localized("开始时间"), row.start.empty() ? "—" : row.start),
+            label(Localized("开始时间"), row.start),
         }.With(huxerui::Spacing(10.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
                       IslandLevel::Raised),

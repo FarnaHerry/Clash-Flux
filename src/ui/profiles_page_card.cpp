@@ -110,7 +110,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
         ? (profile.nativeRoutes.empty()
                ? huxerui::UseString(Localized("未设置内网路由"))
                : huxerui::UseString(LocalizedFormat("路由：{}", profile.nativeRoutes)))
-        : (profile.description.empty() ? "—" : profile.description);
+        : profile.description;
     const std::string statusLine = nativeVpn
         ? "PPTP"
         : profile.selected ? huxerui::UseString(Localized("主订阅"))
@@ -158,9 +158,11 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
             FittedSingleLineLabel(primaryLine, huxerui::TextStyle{
                 huxerui::Font::Monospace(font_size::kChip), colors.muted}),
-            huxerui::Text(truncateOneLine(detailLine, 52))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption), colors.muted}),
+            detailLine.empty()
+                ? PlaceholderText(huxerui::Font::System(font_size::kCaption))
+                : huxerui::View{huxerui::Text(truncateOneLine(detailLine, 52))
+                      .Style(huxerui::TextStyle{
+                          huxerui::Font::System(font_size::kCaption), colors.muted})},
             huxerui::Row {
                 huxerui::Text(statusLine)
                     .Style(huxerui::TextStyle{
@@ -724,19 +726,20 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         FittedSingleLineLabel(primaryLine, huxerui::TextStyle{
             huxerui::Font::Monospace(font_size::kChip), muted}),
-        huxerui::Text(truncateOneLine(
-                          nativeVpn
-                              ? (profile.nativeRoutes.empty()
-                                     ? huxerui::UseString(
-                                           Localized("未设置内网路由"))
-                                     : huxerui::UseString(LocalizedFormat(
-                                           "路由：{}", profile.nativeRoutes)))
-                              : (profile.description.empty() ? "—"
-                                                              : profile.description),
-                          52))
-            .Style(huxerui::TextStyle{
-                huxerui::Font::System(font_size::kCaption),
-                nativeVpn || profile.description.empty() ? faint : muted}),
+        (!nativeVpn && profile.description.empty())
+            ? PlaceholderText(huxerui::Font::System(font_size::kCaption))
+            : huxerui::View{huxerui::Text(truncateOneLine(
+                                nativeVpn
+                                    ? (profile.nativeRoutes.empty()
+                                           ? huxerui::UseString(
+                                                 Localized("未设置内网路由"))
+                                           : huxerui::UseString(LocalizedFormat(
+                                                 "路由：{}", profile.nativeRoutes)))
+                                    : profile.description,
+                                52))
+                  .Style(huxerui::TextStyle{
+                      huxerui::Font::System(font_size::kCaption),
+                      nativeVpn ? faint : muted})},
         // 平台能力如实展示：Windows RAS 客户端只有一条 PPTP 会话槽位。
         profile.type == "pptp" && vpn::PptpSingleSession()
             ? huxerui::View{huxerui::Text(huxerui::UseString(Localized(

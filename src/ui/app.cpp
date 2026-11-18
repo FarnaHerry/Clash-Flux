@@ -923,6 +923,18 @@ huxerui::PageTransition SecondaryPageTransition(
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
 }
 
+[[huxerui::composable]] huxerui::View NetworkDnsEditorPage() {
+    const auto navigation = huxerui::UseNavigation();
+    return NetworkDnsEditor([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
+[[huxerui::composable]] huxerui::View SubscriptionUserAgentRoutePage() {
+    const auto navigation = huxerui::UseNavigation();
+    return SubscriptionUserAgentPage([navigation] { static_cast<void>(navigation.Pop()); })
+        .With(SecondaryPageTransition(huxerui::UseTheme().motion));
+}
+
 [[huxerui::composable]] huxerui::View ThemeColorEditorRoutePage(
     std::string initialHex, std::optional<std::string> editingId) {
     const auto navigation = huxerui::UseNavigation();

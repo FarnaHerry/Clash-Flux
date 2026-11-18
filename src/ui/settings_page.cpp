@@ -554,11 +554,18 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
 [[huxerui::composable]] huxerui::View NetworkDnsEntry() {
     const auto navigation = huxerui::UseNavigation();
+    const auto dialog = huxerui::UseDialog();
     const auto settings = huxerui::UseService<SettingsModel>();
-    return SettingNavigationItem(Localized("DNS 设置"), app::images::globe, [navigation, settings] {
-        if (!settings->view.Get().ready) return;
-        navigation.Push(NetworkDnsEditorPage);
-    }).With(huxerui::Enabled(settings->view.Get().ready)).Key("settings-network-dns");
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    return SettingNavigationItem(Localized("DNS 设置"), app::images::globe,
+        [navigation, dialog, settings, compact] {
+            if (!settings->view.Get().ready) return;
+            if (compact) {
+                navigation.Push(NetworkDnsEditorPage);
+                return;
+            }
+            ShowNetworkDnsDialog(dialog);
+        }).With(huxerui::Enabled(settings->view.Get().ready)).Key("settings-network-dns");
 }
 
 [[huxerui::composable]] huxerui::View NetworkSettingsEntry(HomeProxySettingsKind kind) {
@@ -867,26 +874,23 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 }
 
 [[huxerui::composable]] huxerui::View SubscriptionUserAgentPage(std::function<void()> onBack) {
+    const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     const auto model = huxerui::UseService<SettingsModel>();
     const SettingsView settings = model->view.Get();
-    return SecondaryPageScaffold(huxerui::Text(Localized("UA 尝试顺序"), huxerui::TextRole::Title),
+    return SecondaryPageScaffold(
+        huxerui::Text(Localized("UA 尝试顺序"), huxerui::TextRole::Title),
         huxerui::View{},
-        FormPageContent(PageScrollView(huxerui::ProvideEnvironment(
-            SettingsRowInsets{16.0F, 10.0F, 48.0F},
-            SubscriptionUserAgentChoices(settings.ready, settings.subscriptionUserAgentOrder,
-                [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); })))),
+        SubscriptionUserAgentPageBody(settings.ready, settings.subscriptionUserAgentOrder,
+            [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); }, scroll),
         std::move(onBack), false, false, true).Key("settings-subscription-ua-page");
 }
 
 [[huxerui::composable]] huxerui::View SubscriptionUserAgentDialog(huxerui::DialogContext context) {
     const auto model = huxerui::UseService<SettingsModel>();
     const SettingsView settings = model->view.Get();
-    return DialogScaffold(DialogHeader(Localized("UA 尝试顺序")),
-        huxerui::ProvideEnvironment(SettingsRowInsets{16.0F, 10.0F, 48.0F},
-            SubscriptionUserAgentChoices(settings.ready, settings.subscriptionUserAgentOrder,
-                [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); })),
-        DialogActions({DialogAction(Localized("关闭"), [context] { context.Dismiss(); }, false)}),
-        DialogSize::Form);
+    return SubscriptionUserAgentDialogView(settings.ready, settings.subscriptionUserAgentOrder,
+        [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); },
+        [context] { context.Dismiss(); });
 }
 
 [[huxerui::composable]] huxerui::View SubscriptionDownloadSettings() {
@@ -898,11 +902,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         [model, dialog, navigation, compact] {
             if (!model->view.Get().ready) return;
             if (compact) {
-                navigation.Push([navigation] {
-                    return SubscriptionUserAgentPage([navigation] {
-                        static_cast<void>(navigation.Pop());
-                    });
-                });
+                navigation.Push(SubscriptionUserAgentRoutePage);
                 return;
             }
             dialog.Show([](huxerui::DialogContext context) { return SubscriptionUserAgentDialog(context); });

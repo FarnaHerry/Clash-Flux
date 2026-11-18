@@ -1,5 +1,12 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-19 v0.3.119 补丁发布
+
+- 基于 `eb8077e`（`v0.3.118` 发布记录之后）发布补丁：首页「内网 IP」与「网络检测」迁移至应用级 `HomeNetworkModel`，移除手动刷新按钮与「检测中…」加载态并在各自独立单飞下异步就地替换；首页订阅卡展示当前具体生效节点；网站测试保留同源 `/cdn-cgi/trace` 优先并增加桌面内核 `/connections` 出站核实、Windows 纯直连兜底与「可访问」状态；DNS 宽屏改为弹窗，优化代理网格单行截断与日志 `TextLayout` 段落缓存，全项目占位符统一改为空白槽位并写入 UI 规范。Android versionName 0.3.119、versionCode 197，HuxerUI 保持 `d2c9781c`，sing-box/libbox 保持 1.14.4。
+- Windows / MSVC 14.52 / CMake 4.4.2 Release 全目标构建通过；`./run.ps1 --version` 输出 v0.3.119；无特权本地 Windows CTest **17/17 通过（63.31 秒实际耗时）**；UI 资源清单校验通过（618 条）；`git diff --check` 通过。
+- 需管理员权限的 `windows_service` / `windows_physical_dns_wfp`、`CLASHFLUX_REQUIRE_PROJECT_TESTS=ON` 运行门禁与 JDK 17 Android 构建/正式签名由标签 CI 执行；桌面/Android 真机与真实 VPN 路由需独立设备验收。
+- 发布标签、CI 与资产结果待推送后回写 [发布记录](evidence/2026-11-19-v0.3.119-release.md)。
+
 ## 2026-11-18 v0.3.118 补丁发布
 
 - 基于 `3a2802b`（`v0.3.117` 发布记录之后）发布补丁：修复 sing-box Clash `/configs` 将 mixed 入站报告为 `mixed-port: 0` 导致首页网络检测、运行诊断和经 mixed 的订阅下载使用端口 0；首页与网站测试改用打包国旗图集，订阅 UA 顺序改为两条完整序列，首页宽屏悬浮猫咪让出滚动条槽。Android versionName 0.3.118、versionCode 196，HuxerUI 保持 `d2c9781c`，sing-box/libbox 保持 1.14.4。

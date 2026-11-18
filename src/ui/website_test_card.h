@@ -24,13 +24,13 @@ inline huxerui::View WebsiteTestAction(bool active, huxerui::StringVariant label
 }
 
 inline std::string WebsiteTestTime(std::int64_t value, bool full = false) {
-    if (value <= 0) return "—";
+    if (value <= 0) return {};
     const auto time = static_cast<std::time_t>(value);
     std::tm local{};
 #ifdef _WIN32
-    if (localtime_s(&local, &time) != 0) return "—";
+    if (localtime_s(&local, &time) != 0) return {};
 #else
-    if (!localtime_r(&time, &local)) return "—";
+    if (!localtime_r(&time, &local)) return {};
 #endif
     char text[32]{};
     std::strftime(text, sizeof(text), full ? "%Y-%m-%d %H:%M:%S" : "%H:%M:%S", &local);
@@ -79,18 +79,26 @@ inline huxerui::View WebsiteTestCard(
         if (result.phase == WebsiteTestPhase::Failed || (result.phase == WebsiteTestPhase::Responded && !success)) {
             status = Localized("失败"); color = theme.colors.error;
         }
-        if (success) { status = Localized("位置未知"); color = theme.colors.on_surface_variant; }
+        if (success) { status = Localized("可访问"); color = theme.colors.on_surface_variant; }
+        const bool located = success && !result.country.empty();
+        const auto locatedHint = result.locationSource == WebsiteLocationSource::CoreOutbound
+            ? LocalizedFormat("出口位置 {}，经本应用内核出站核实", result.country)
+            : result.locationSource == WebsiteLocationSource::DirectEgress
+            ? LocalizedFormat("出口位置 {}，经直连出口核实", result.country)
+            : LocalizedFormat("出口位置 {}，来自网站同源检测", result.country);
         const auto hint = !result.error.empty() ? huxerui::StringVariant{result.error} :
-            success && !result.country.empty() ? huxerui::StringVariant{result.country} : status;
+            located ? locatedHint :
+            success ? Localized("网站可访问，未能确认出口位置") : status;
         const auto showMenu = [edit, confirmDelete] {
             return std::vector<ActionMenuEntry>{
                 ActionMenuItem(app::images::edit, Localized("编辑"), edit),
                 ActionMenuItem(app::images::trash, Localized("删除"), confirmDelete).Danger(),
             };
         };
+        const std::string completedTime = WebsiteTestTime(result.completedAt);
         auto content = huxerui::Column {
           huxerui::Row {
-            huxerui::Image(app::images::globe).Tint(theme.colors.primary).With(huxerui::Frame{.width = 20, .height = 20}),
+            huxerui::Image(app::images::globe).Tint(theme.colors.primary).With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             huxerui::Text(site.name, huxerui::TextRole::Title).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis).With(huxerui::Grow(1.0F)),
             WebsiteTestAction(ownActive, testLabel, start)
                 .Key("website-test-" + std::to_string(site.id)),
@@ -100,12 +108,15 @@ inline huxerui::View WebsiteTestCard(
                 .Key("website-menu-" + std::to_string(site.id))} : huxerui::View{},
           }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
           huxerui::Row {
-            (success && !result.country.empty() ? WebsiteCountry(result.country) : huxerui::View{huxerui::Text(status)})
+            (located ? WebsiteCountry(result.country) : huxerui::View{huxerui::Text(status)})
                 .With(huxerui::Foreground(color), huxerui::Grow(1.0F), huxerui::Tooltip(hint))
                 .Key("website-result-" + std::to_string(site.id)),
-            huxerui::Text(WebsiteTestTime(result.completedAt))
-                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant})
-                .With(huxerui::Tooltip(WebsiteTestTime(result.completedAt, true)))
+            (completedTime.empty()
+                 ? PlaceholderText(huxerui::Font::System(font_size::kCaption), 44.0F)
+                 : huxerui::View{huxerui::Text(completedTime)
+                       .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
+                                                 theme.colors.on_surface_variant})
+                       .With(huxerui::Tooltip(WebsiteTestTime(result.completedAt, true)))})
                 .Key("website-time-" + std::to_string(site.id)),
           }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

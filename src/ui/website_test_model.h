@@ -8,7 +8,9 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <huxerui/huxerui.h>
@@ -17,12 +19,15 @@
 namespace clashflux::ui {
 
 enum class WebsiteTestPhase { Idle, Queued, Running, Responded, Failed, Cancelled };
+// Where a confirmed country came from. Unconfirmed results keep None.
+enum class WebsiteLocationSource { None, SiteTrace, CoreOutbound, DirectEgress };
 struct WebsiteTestResult {
     WebsiteTestPhase phase = WebsiteTestPhase::Idle;
     int status = 0;
     std::string error;
     std::string country;
     std::int64_t completedAt = 0;
+    WebsiteLocationSource locationSource = WebsiteLocationSource::None;
     bool operator==(const WebsiteTestResult&) const = default;
 };
 struct WebsiteTestSite {
@@ -107,14 +112,65 @@ inline std::optional<std::string> WebsiteOrigin(const std::string& url) {
     return std::string(parsed->Scheme()) + "://" + std::string(*parsed->Authority());
 }
 
+// Lowercase host of an absolute HTTP(S) URL, without port, brackets or a trailing dot.
+inline std::string WebsiteHost(const std::string& url) {
+    const auto parsed = huxerui::Uri::Parse(url);
+    if (!parsed || !parsed->Authority()) return {};
+    std::string host(*parsed->Authority());
+    if (const auto at = host.rfind('@'); at != std::string::npos) host.erase(0, at + 1);
+    if (host.starts_with('[')) {
+        const auto end = host.find(']');
+        host = end == std::string::npos ? std::string{} : host.substr(1, end - 1);
+    } else if (const auto port = host.find(':'); port != std::string::npos) {
+        host.resize(port);
+    }
+    while (!host.empty() && host.back() == '.') host.pop_back();
+    std::transform(host.begin(), host.end(), host.begin(),
+        [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 'a' - 'A') : c; });
+    return host;
+}
+
 struct WebsiteHttpReply {
     int status = 0;
-    std::string url, body, error;
+    std::string url, body, error, routeLeaf;
 };
 class AppHttpClient;
-huxerui::Task<WebsiteHttpReply> SendWebsiteRequest(std::shared_ptr<AppHttpClient> http, huxerui::HttpRequest request);
+using WebsiteStreamObserver = std::function<huxerui::Task<std::string>(std::string finalUrl)>;
+huxerui::Task<WebsiteHttpReply> SendWebsiteRequest(
+    std::shared_ptr<AppHttpClient> http, huxerui::HttpRequest request,
+    WebsiteStreamObserver observeRoute = {});
 using WebsiteHttpExchange = std::function<huxerui::Task<WebsiteHttpReply>(huxerui::HttpRequest)>;
-huxerui::Task<WebsiteTestResult> ProbeWebsiteNetwork(WebsiteHttpExchange exchange, std::string url);
+
+// Connections already known to this application's running kernel before the
+// website request. identity pins the exact runtime instance/plan/listener.
+struct WebsiteRouteBaseline {
+    std::string identity;
+    int proxyPort = 0;
+    bool tunEnabled = false;
+    std::vector<std::string> connectionIds;
+};
+struct WebsiteRouteResolution {
+    std::string country;
+    WebsiteLocationSource source = WebsiteLocationSource::None;
+};
+// Optional correlation with this application's own kernel or verified pure-
+// direct egress. begin() returns nullopt when the kernel does not carry
+// traffic; observe() inspects live connections while the HEAD stream is still
+// open; locate() resolves a confirmed ISO country. Blocking work runs off UI.
+struct WebsiteRouteLocator {
+    std::function<huxerui::Task<std::optional<WebsiteRouteBaseline>>()> begin;
+    std::function<huxerui::Task<std::string>(WebsiteRouteBaseline, std::string finalUrl)> observe;
+    std::function<huxerui::Task<WebsiteRouteResolution>(
+        std::optional<WebsiteRouteBaseline>, std::string observedLeaf,
+        std::string host, std::chrono::milliseconds budget)> locate;
+};
+huxerui::Task<WebsiteTestResult> ProbeWebsiteNetwork(WebsiteHttpExchange exchange, std::string url,
+                                                     WebsiteRouteLocator locator = {});
+// Pure attribution over a Clash /connections body: the single leaf outbound
+// shared by connections to host. New connections (not in baseline) take
+// precedence; disagreement, missing chains or no match yield an empty tag.
+std::string WebsiteRouteLeaf(std::string_view connectionsBody,
+                             const std::vector<std::string>& baseline, std::string_view host);
 
 // UI-thread application service: each site owns its own request and result, at
 // most three asynchronous HTTP requests run at once, no page lifetime or timer.
@@ -234,7 +290,66 @@ struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
         Pump();
     }
 
+    // UI-thread cache and single-flight deduplication for verified exits:
+    // runtime identity + leaf outbound (or pure direct) -> country.
+    static constexpr auto kEgressCacheTtl = std::chrono::minutes{5};
+    class EgressFlightGuard {
+    public:
+        EgressFlightGuard() = default;
+        EgressFlightGuard(std::weak_ptr<WebsiteTestModel> owner, std::string key)
+            : owner_(std::move(owner)), key_(std::move(key)) {
+            if (!key_.empty()) {
+                if (const auto model = owner_.lock()) model->egressInFlight_.insert(key_);
+            }
+        }
+        ~EgressFlightGuard() { Release(); }
+        EgressFlightGuard(EgressFlightGuard&& other) noexcept
+            : owner_(std::move(other.owner_)), key_(std::move(other.key_)) {
+            other.owner_.reset();
+            other.key_.clear();
+        }
+        EgressFlightGuard& operator=(EgressFlightGuard&& other) noexcept {
+            if (this != &other) {
+                Release();
+                owner_ = std::move(other.owner_);
+                key_ = std::move(other.key_);
+                other.owner_.reset();
+                other.key_.clear();
+            }
+            return *this;
+        }
+        EgressFlightGuard(const EgressFlightGuard&) = delete;
+        EgressFlightGuard& operator=(const EgressFlightGuard&) = delete;
+    private:
+        void Release() {
+            if (key_.empty()) return;
+            if (const auto model = owner_.lock()) model->egressInFlight_.erase(key_);
+            owner_.reset();
+            key_.clear();
+        }
+        std::weak_ptr<WebsiteTestModel> owner_;
+        std::string key_;
+    };
+    [[nodiscard]] bool IsEgressInFlight(const std::string& key) const {
+        return egressInFlight_.contains(key);
+    }
+    [[nodiscard]] EgressFlightGuard AcquireEgressFlight(std::string key) {
+        return EgressFlightGuard(weak_from_this(), std::move(key));
+    }
+    [[nodiscard]] std::optional<std::string> CachedEgress(const std::string& key) const {
+        const auto found = egressCache.find(key);
+        if (found == egressCache.end() ||
+            std::chrono::steady_clock::now() - found->second.second > kEgressCacheTtl) return std::nullopt;
+        return found->second.first;
+    }
+    void StoreEgress(const std::string& key, std::string country) {
+        if (egressCache.size() >= 64) egressCache.clear();
+        egressCache[key] = {std::move(country), std::chrono::steady_clock::now()};
+    }
+
 private:
+    std::unordered_map<std::string, std::pair<std::string, std::chrono::steady_clock::time_point>> egressCache;
+    std::unordered_set<std::string> egressInFlight_;
     std::size_t nextId = sites.Get().size();
     std::uint64_t nextGeneration = 0;
     static std::vector<WebsiteTestSite>::iterator Find(std::vector<WebsiteTestSite>& rows, std::size_t id) {

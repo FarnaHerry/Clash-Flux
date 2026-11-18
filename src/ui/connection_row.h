@@ -54,14 +54,28 @@ inline huxerui::View ConnectionTraceContent(ConnectionRow row) {
               huxerui::Text(value).With(huxerui::Grow(1.0F)),
             }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
         };
+        const auto optionalField = [&theme](huxerui::StringVariant title, std::string value) {
+            return huxerui::Row {
+              huxerui::Text(title).Style(huxerui::TextStyle{
+                  huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant})
+                  .With(huxerui::Frame{.width = 82.0F}),
+              (value.empty()
+                   ? PlaceholderText(huxerui::Font::System(font_size::kBody))
+                   : huxerui::View{huxerui::Text(std::move(value))})
+                  .With(huxerui::Grow(1.0F)),
+            }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
+        };
         const bool matched = row.trace.status == clashflux::connection_trace::Status::Matched;
         const std::string source = row.trace.sourceName.empty() ? row.trace.sourceId :
             row.trace.sourceName + " · " + row.trace.sourceId;
         return huxerui::Column {
           field(Localized("追溯状态"), ConnectionTraceStatus(row.trace.status)),
-          field(Localized("目标来源"), matched && !source.empty() ? source : "—"),
-          field(Localized("编排规则 ID"), matched ? row.trace.ruleId : "—"),
-          field(Localized("运行计划版本"), row.trace.revision && row.trace.status != clashflux::connection_trace::Status::PriorPlan ? std::to_string(row.trace.revision) : "—"),
+          optionalField(Localized("目标来源"), matched ? source : std::string{}),
+          optionalField(Localized("编排规则 ID"), matched ? row.trace.ruleId : std::string{}),
+          optionalField(Localized("运行计划版本"),
+                        row.trace.revision && row.trace.status != clashflux::connection_trace::Status::PriorPlan
+                            ? std::to_string(row.trace.revision)
+                            : std::string{}),
         }.With(huxerui::Spacing(10.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     });
 }
@@ -105,7 +119,7 @@ inline std::string ConnectionRuleTypes(std::string_view rule) {
     if (!result.empty()) return result;
     if (rule.find("&&") != std::string_view::npos ||
         rule.find("||") != std::string_view::npos) return "LOGICAL";
-    return "—";
+    return {};
 }
 
 inline std::string ConnectionPreviewText(const std::string& text,
@@ -129,6 +143,9 @@ inline huxerui::View ConnectionRowContent(ConnectionRow row, std::string upRate,
         const std::string host = row.host == "未知目标"
             ? huxerui::UseString(Localized("未知目标")) : row.host;
         const std::string ruleTypes = ConnectionRuleTypes(row.rule);
+        const std::string routeSummary = row.direct
+            ? (ruleTypes.empty() ? std::string{"DIRECT"} : "DIRECT · " + ruleTypes)
+            : ruleTypes;
         const auto mono = [&theme](std::string value, float width) {
             return huxerui::Text(std::move(value)).Style(huxerui::TextStyle{
                 huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface_variant})
@@ -140,14 +157,15 @@ inline huxerui::View ConnectionRowContent(ConnectionRow row, std::string upRate,
             huxerui::Row{mono("↓ " + downRate, 90.0F),
                          mono("↓ " + downTotal, 75.0F)}.With(huxerui::Spacing(4.0F)),
         }.With(huxerui::Spacing(2.0F));
-        const auto summary = [&theme](std::string value) {
+        const auto summaryFont = huxerui::Font::Monospace(font_size::kCaption);
+        const auto summary = [&theme, summaryFont](std::string value) -> huxerui::View {
+            if (value.empty()) return PlaceholderText(summaryFont);
             return huxerui::Text(std::move(value)).Style(huxerui::TextStyle{
-                huxerui::Font::Monospace(font_size::kCaption), theme.colors.on_surface_variant});
+                summaryFont, theme.colors.on_surface_variant});
         };
         huxerui::View metadata = huxerui::Column{
-            summary(row.inboundType.empty() ? "—" : row.inboundType),
-            summary(ConnectionPreviewText(
-                row.direct ? "DIRECT · " + ruleTypes : ruleTypes, compact ? 20 : 30)),
+            summary(row.inboundType),
+            summary(ConnectionPreviewText(routeSummary, compact ? 20 : 30)),
         }.With(huxerui::Spacing(2.0F),
                huxerui::Frame{.width = compact ? 120.0F : 160.0F},
                huxerui::MainAlign(huxerui::MainAxisAlignment::End),
@@ -157,11 +175,13 @@ inline huxerui::View ConnectionRowContent(ConnectionRow row, std::string upRate,
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
         return huxerui::View{huxerui::Column{
             huxerui::Row{
-                huxerui::Text(row.network).Style(huxerui::TextStyle{
-                    huxerui::Font::Monospace(font_size::kCaption), theme.colors.primary})
-                    .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(5.0F, 2.0F)),
-                          huxerui::Background(theme.colors.primary_container),
-                          huxerui::CornerRadius(4.0F)),
+                row.network.empty()
+                    ? PlaceholderSlot(0.0F, 18.0F)
+                    : huxerui::View{huxerui::Text(row.network).Style(huxerui::TextStyle{
+                          huxerui::Font::Monospace(font_size::kCaption), theme.colors.primary})
+                          .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(5.0F, 2.0F)),
+                                huxerui::Background(theme.colors.primary_container),
+                                huxerui::CornerRadius(4.0F))},
                 huxerui::Text(ConnectionPreviewText(host, compact ? 34 : 50)).Style(huxerui::TextStyle{
                     huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface})
                     .With(huxerui::Grow(1.0F)),

@@ -30,11 +30,11 @@ constexpr float ProfileCardRowSpacing(bool compact) {
 
 inline std::string ProfileSubscriptionAddress(std::string_view url) {
     const auto uri = huxerui::Uri::Parse(url);
-    if (!uri || !uri->Authority()) return "—";
+    if (!uri || !uri->Authority()) return {};
     auto authority = *uri->Authority();
     if (const auto userInfo = authority.rfind('@'); userInfo != std::string_view::npos)
         authority.remove_prefix(userInfo + 1);
-    return authority.empty() ? "—" : std::string(authority);
+    return authority.empty() ? std::string{} : std::string(authority);
 }
 
 constexpr float CompactProfileCardHeadingHeight(bool nativeVpn) {

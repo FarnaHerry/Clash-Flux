@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "wire_codec.h"
+#include "active_proxy_selection.h"
 #include "proxy_test_model.h"
 #include "ui.h" // ProxyGroupSnapshot
 
@@ -52,6 +53,13 @@ struct ProxiesSnapshot {
                error == other.error;
     }
 };
+
+inline ActiveProxySelection ResolveActiveProxySelection(const ProxiesSnapshot& snapshot,
+                                                        std::string_view mode) {
+    return ResolveActiveProxySelection(snapshot.loaded,
+                                       snapshot.source == ProxiesSource::Preview,
+                                       snapshot.groups, snapshot.labels, mode);
+}
 
 // 应用级单例：在 application_hooks 里 Provide，组件用 UseService<ProxiesModel>()。
 struct ProxiesModel {

@@ -26,18 +26,37 @@ struct LogEntry {
     std::string text;
     int level = 1;
     std::int64_t at = 0;
+    std::uint64_t id = 0;
 };
+
+inline std::uint64_t NextLogEntryId() noexcept {
+    static std::uint64_t counter = 0;
+    return ++counter;
+}
 
 // 两种来源共用按时间升序存储的日志列表；同秒条目按接收顺序插入，保留最新行。
 // 展示层（logs_page）倒序遍历实现「最新在顶」，导出/复制仍按此正序输出。
 inline void AppendLogEntry(huxerui::StateList<LogEntry> entries, LogEntry entry,
                            std::size_t maxLines) {
+    if (entry.id == 0) entry.id = NextLogEntryId();
     const auto position = std::upper_bound(entries.begin(), entries.end(), entry.at,
         [](std::int64_t at, const LogEntry& existing) { return at < existing.at; });
     const auto index = static_cast<std::size_t>(position - entries.begin());
     if (index == entries.Size()) entries.PushBack(std::move(entry));
     else entries.Insert(index, std::move(entry));
     while (entries.Size() > maxLines) entries.Erase(0);
+}
+
+inline void InsertLogEntry(std::vector<LogEntry>& entries, LogEntry entry,
+                           std::size_t maxLines) {
+    if (entry.id == 0) entry.id = NextLogEntryId();
+    const auto position = std::upper_bound(entries.begin(), entries.end(), entry.at,
+        [](std::int64_t at, const LogEntry& existing) { return at < existing.at; });
+    entries.insert(position, std::move(entry));
+    if (entries.size() > maxLines) {
+        entries.erase(entries.begin(),
+                      entries.begin() + static_cast<std::ptrdiff_t>(entries.size() - maxLines));
+    }
 }
 
 // 导出与可见列表共用级别过滤，按原始顺序保留时间戳与文本。

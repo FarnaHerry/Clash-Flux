@@ -19,6 +19,7 @@
 #include "../runtime_health.h"
 #include "app_http_client.h"
 #include "theme_colors.h"
+#include "placeholder_value.h"
 #include "toast_stack.h"
 
 namespace clashflux::ui {
@@ -501,7 +502,11 @@ huxerui::View RuntimeDiagnosticsRoutePage();
 enum class HomeProxySettingsKind { SystemProxy, Tun };
 huxerui::View NetworkSettingsEditor(bool tun, std::function<void()> onClose, bool fullPage,
     std::shared_ptr<std::function<void()>> dismissRequest = {});
+huxerui::View NetworkDnsEditor(std::function<void()> onClose, bool fullPage = true);
 huxerui::View NetworkDnsEditorPage();
+void ShowNetworkDnsDialog(huxerui::DialogHandle dialog);
+huxerui::View SubscriptionUserAgentPage(std::function<void()> onBack);
+huxerui::View SubscriptionUserAgentRoutePage();
 void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun);
 huxerui::View HomeProxySettingsAction(HomeProxySettingsKind kind);
 huxerui::View HomeProxySettingsPage(HomeProxySettingsKind kind, std::function<void()> onBack);

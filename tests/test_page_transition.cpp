@@ -25,6 +25,7 @@
 #include "ui.h"
 #include "profile_update_interval.h"
 #include "subscription_ua_setting.h"
+#include "network_dns_layout.h"
 #include "app_resources.h"
 #include "box_cat.h"
 #include "runtime_diagnostics.h"
@@ -36,11 +37,14 @@
 #include "country_flag.h"
 #include "home_easter_eggs.h"
 #include "home_mode_choices.h"
+#include "home_network_model.h"
 #include "interaction_theme.h"
 #include "home_vpn_status.h"
 #include "../src/runtime_plan_state.h"
 #include "rule_target_picker.h"
 #include "log_actions.h"
+#include "log_row_view.h"
+#include "active_proxy_selection.h"
 #include "filtered_indices.h"
 #include "profile_file_picker.h"
 #include "profile_import_task.h"
@@ -598,8 +602,8 @@ void testWebsiteTests() {
         shared->sites = std::move(located); ui.Pump(kSettle);
         check(ui.Find(UiSelector::Text("GB")).Exists() && !ui.Find(UiSelector::Text("HTTP 200")).Exists(),
               "successful website results render their measured country code and packaged flag");
-        located = shared->sites.Get(); located[0].result.country.clear(); shared->sites = std::move(located); ui.Pump(kSettle);
-        check(ui.Find(UiSelector::Text("位置未知")).Exists(), "successful HTTP without location evidence is not reported as a connection failure");
+        located = shared->sites.Get(); located[0].result.country.clear(); located[0].result.locationSource = WebsiteLocationSource::None; shared->sites = std::move(located); ui.Pump(kSettle);
+        check(ui.Find(UiSelector::Text("可访问")).Exists(), "successful HTTP without location evidence shows reachable instead of failure or unknown location");
         shared->Start(*websiteTasks, [](std::string) -> huxerui::Task<WebsiteTestResult> {
             throw std::runtime_error("injected probe failure"); co_return WebsiteTestResult{};
         }, {0});
@@ -725,7 +729,207 @@ void testWebsiteNetworkAndTimeout() {
     ui.Pump(std::chrono::seconds{11});
     check(model->sites.Get()[0].result.phase == WebsiteTestPhase::Responded && !model->AnyActive(),
           "old watchdogs cannot overwrite successful retries or leave a new test busy");
+
+    check(WebsiteHost("https://WWW.Example.COM.:8443/Path") == "www.example.com" &&
+          WebsiteHost("http://[2001:db8::1]:8080/") == "2001:db8::1" &&
+          WebsiteHost("https://1.1.1.1/cdn-cgi/trace") == "1.1.1.1",
+          "WebsiteHost extracts lowercase host without brackets, ports or trailing dot");
+    {
+        const std::string body =
+            R"({"connections":[)"
+            R"({"id":"c1","chains":["HK-Node","PROXY"],"metadata":{"host":"www.youtube.com","destinationPort":"443"}},)"
+            R"({"id":"c2","chains":["US-Node","PROXY"],"metadata":{"host":"www.youtube.com:443","destinationPort":"443"}},)"
+            R"({"id":"c3","chains":["HK-Node","PROXY"],"metadata":{"host":"www.google.com","destinationPort":"443"}},)"
+            R"({"id":"c4","chains":["JP-Node","PROXY"],"metadata":{"host":"www.google.com","destinationPort":"443"}})"
+            R"(]})";
+        check(WebsiteRouteLeaf(body, {"c1"}, "www.youtube.com") == "US-Node",
+              "WebsiteRouteLeaf prefers fresh non-baseline connections and strips Android host:port");
+        check(WebsiteRouteLeaf(body, {"c1", "c2"}, "www.youtube.com").empty(),
+              "WebsiteRouteLeaf rejects conflicting historical leaves on the same host");
+        check(WebsiteRouteLeaf(body, {"c1"}, "www.google.com").empty(),
+              "WebsiteRouteLeaf rejects disagreeing fresh leaves on the same host");
+        const std::string sameBody =
+            R"({"connections":[)"
+            R"({"id":"c1","chains":["HK-Node","PROXY"],"metadata":{"host":"www.baidu.com","destinationPort":"443"}},)"
+            R"({"id":"c2","chains":["HK-Node","PROXY"],"metadata":{"host":"www.baidu.com","destinationPort":"443"}})"
+            R"(]})";
+        check(WebsiteRouteLeaf(sameBody, {"c1", "c2"}, "www.baidu.com") == "HK-Node",
+              "WebsiteRouteLeaf keeps agreed pooled connections when all match baseline");
+    }
+    {
+        auto flight = model->AcquireEgressFlight("runtime|1|1|7899\nUS-Node");
+        check(model->IsEgressInFlight("runtime|1|1|7899\nUS-Node"),
+              "AcquireEgressFlight marks egress key in flight");
+        auto moved = std::move(flight);
+        check(model->IsEgressInFlight("runtime|1|1|7899\nUS-Node"),
+              "moving EgressFlightGuard preserves ownership without early release");
+    }
+    check(!model->IsEgressInFlight("runtime|1|1|7899\nUS-Node"),
+          "destroying EgressFlightGuard clears in-flight key");
+    model->StoreEgress("runtime|1|1|7899\nUS-Node", "US");
+    check(model->CachedEgress("runtime|1|1|7899\nUS-Node") == std::optional<std::string>{"US"},
+          "WebsiteTestModel caches verified egress country per runtime and outbound");
+
+    for (int mode = 0; mode < 4; ++mode) {
+        const WebsiteHttpExchange nonCfExchange = [mode](huxerui::HttpRequest request) -> huxerui::Task<WebsiteHttpReply> {
+            if (request.method == huxerui::HttpMethod::Head) {
+                co_return WebsiteHttpReply{200, "https://www.youtube.com/", "", "",
+                                            mode == 0 ? "US-Node" : ""};
+            }
+            co_return WebsiteHttpReply{404, request.url, "", ""};
+        };
+        WebsiteRouteLocator locator;
+        locator.begin = [mode]() -> huxerui::Task<std::optional<WebsiteRouteBaseline>> {
+            if (mode == 2) co_return std::nullopt;
+            co_return WebsiteRouteBaseline{"runtime|1|1|7899", 7899, false, {"old"}};
+        };
+        locator.observe = [mode](WebsiteRouteBaseline, std::string finalUrl) -> huxerui::Task<std::string> {
+            check(finalUrl == "https://www.youtube.com/", "fallback route observer receives final URL");
+            co_return mode == 1 ? std::string{"JP-Node"} : std::string{};
+        };
+        locator.locate = [mode](std::optional<WebsiteRouteBaseline> base, std::string leaf,
+                                std::string host, std::chrono::milliseconds) -> huxerui::Task<WebsiteRouteResolution> {
+            check(host == "www.youtube.com", "locator receives normalized host");
+            if (mode == 0) {
+                check(base && leaf == "US-Node", "stream-observed leaf reaches locate");
+                co_return WebsiteRouteResolution{"US", WebsiteLocationSource::CoreOutbound};
+            }
+            if (mode == 1) {
+                check(base && leaf == "JP-Node", "fallback-observed leaf reaches locate");
+                co_return WebsiteRouteResolution{"JP", WebsiteLocationSource::CoreOutbound};
+            }
+            if (mode == 2) {
+                check(!base && leaf.empty(), "pure direct path invokes locate with nullopt baseline");
+                co_return WebsiteRouteResolution{"CN", WebsiteLocationSource::DirectEgress};
+            }
+            co_return WebsiteRouteResolution{};
+        };
+        model->Start(*websiteTasks, [nonCfExchange, locator](std::string url) {
+            return ProbeWebsiteNetwork(nonCfExchange, std::move(url), locator);
+        }, {0});
+        ui.Pump(std::chrono::milliseconds{1});
+        ui.Pump(std::chrono::milliseconds{20});
+        const auto& result = model->sites.Get()[0].result;
+        if (mode == 0) check(result.country == "US" && result.locationSource == WebsiteLocationSource::CoreOutbound,
+                             "non-Cloudflare site resolves US from stream-observed outbound");
+        else if (mode == 1) check(result.country == "JP" && result.locationSource == WebsiteLocationSource::CoreOutbound,
+                                  "non-Cloudflare site resolves JP from fallback-observed outbound");
+        else if (mode == 2) check(result.country == "CN" && result.locationSource == WebsiteLocationSource::DirectEgress,
+                                  "confirmed pure-direct desktop resolves CN with DirectEgress source");
+        else check(result.country.empty() && result.phase == WebsiteTestPhase::Responded &&
+                   result.locationSource == WebsiteLocationSource::None,
+                   "unconfirmed non-Cloudflare route leaves country empty");
+    }
     websiteFixture.reset(); websiteTasks.reset(); websiteProbe.reset();
+}
+
+std::shared_ptr<clashflux::ui::HomeNetworkModel> homeNetFixture;
+std::optional<huxerui::TaskScope> homeNetTasks;
+huxerui::View HomeNetFixtureRoot() {
+    homeNetFixture = huxerui::UseService<clashflux::ui::HomeNetworkModel>();
+    homeNetTasks = huxerui::UseApplicationTaskScope();
+    return huxerui::Row{};
+}
+const huxerui::Application kHomeNetFixtureApp{HomeNetFixtureRoot,
+    huxerui::AppOptions{.application_hooks = {[](huxerui::ApplicationContext& context) {
+        context.Provide(std::make_shared<clashflux::ui::HomeNetworkModel>());
+    }}}};
+
+void testHomeNetworkModel() {
+    using namespace clashflux::ui;
+    huxerui::testing::UiTest ui(kHomeNetFixtureApp, {.viewport = {400, 300}});
+    ui.PumpAndSettle();
+    const auto model = homeNetFixture;
+    const auto tasks = *homeNetTasks;
+    check(!model->lanReady.Get() && !model->publicReady.Get(),
+          "HomeNetworkModel stays unready with empty slots before initial async fetch completes");
+
+    struct Counts {
+        int lanCalls = 0, lanActive = 0, lanMax = 0;
+        int publicCalls = 0, publicActive = 0, publicMax = 0;
+    };
+    const auto counts = std::make_shared<Counts>();
+    const auto lanOk = [counts](std::string addr) -> HomeNetworkModel::LanFetch {
+        return [counts, addr]() -> huxerui::Task<std::optional<std::string>> {
+            ++counts->lanCalls;
+            counts->lanMax = std::max(counts->lanMax, ++counts->lanActive);
+            co_await huxerui::Delay(std::chrono::milliseconds{100});
+            --counts->lanActive;
+            co_return std::optional<std::string>{addr};
+        };
+    };
+    // Delivering a virtual timer queues its coroutine resume onto the next frame.
+    const auto advance = [&](std::chrono::milliseconds duration) {
+        ui.Pump(duration);
+        ui.Pump();
+    };
+    model->RefreshLan(tasks, lanOk("192.168.1.10"));
+    ui.Pump(std::chrono::milliseconds{10});
+    model->RefreshLan(tasks, lanOk("192.168.1.99"));
+    check(counts->lanCalls == 1 && counts->lanMax == 1 && !model->lanReady.Get(),
+          "LAN IP card coalesces overlapping refreshes to at most one in-flight probe");
+    advance(std::chrono::milliseconds{120});
+    check(model->lanReady.Get() && model->lanAddress.Get() == std::optional<std::string>{"192.168.1.10"},
+          "LAN IP card updates directly in place once async probe finishes");
+    model->RefreshLan(tasks, []() -> huxerui::Task<std::optional<std::string>> {
+        throw std::runtime_error("transient netlink error");
+        co_return std::nullopt;
+    });
+    ui.PumpAndSettle();
+    check(model->lanAddress.Get() == std::optional<std::string>{"192.168.1.10"},
+          "transient LAN refresh failure preserves previous displayed address");
+
+    const auto makePublicFetch = [counts](clashflux::wire::PublicIpLookup out) -> HomeNetworkModel::PublicFetch {
+        return [counts, out]() -> huxerui::Task<clashflux::wire::PublicIpLookup> {
+            ++counts->publicCalls;
+            counts->publicMax = std::max(counts->publicMax, ++counts->publicActive);
+            co_await huxerui::Delay(std::chrono::milliseconds{100});
+            --counts->publicActive;
+            co_return out;
+        };
+    };
+    model->RequestPublic(tasks, "1|7899|rule|1|HK", makePublicFetch({"198.51.100.1", "HK"}));
+    ui.Pump(std::chrono::milliseconds{20});
+    model->RequestPublic(tasks, "1|7899|rule|1|HK", makePublicFetch({"198.51.100.2", "HK"}));
+    check(counts->publicCalls == 1 && !model->publicReady.Get(),
+          "same-route public IP call while in flight keeps the single running probe");
+    advance(std::chrono::milliseconds{110});
+    check(model->publicReady.Get() && !model->publicFailed.Get() &&
+          model->publicIp.Get().ip == "198.51.100.1" && model->publicIp.Get().countryCode == "HK",
+          "initial public IP result replaces blank placeholder directly");
+
+    const int beforeFresh = counts->publicCalls;
+    model->RequestPublic(tasks, "1|7899|rule|1|HK", makePublicFetch({"198.51.100.3", "HK"}));
+    check(counts->publicCalls == beforeFresh, "same-route remount within freshness reuses published public IP");
+
+    // Supersede an in-flight route without concurrent execution or loading reset.
+    model->RequestPublic(tasks, "1|7899|rule|1|US", makePublicFetch({"198.0.2.1", "US"}));
+    ui.Pump(std::chrono::milliseconds{20});
+    check(model->publicReady.Get() && model->publicIp.Get().ip == "198.51.100.1",
+          "route change keeps showing previous public IP while new async probe runs");
+    model->RequestPublic(tasks, "1|7899|rule|1|SG", makePublicFetch({"203.0.113.9", "SG"}));
+    check(counts->publicActive == 1 && counts->publicMax == 1,
+          "superseding public IP request never runs more than one probe concurrently");
+    advance(std::chrono::milliseconds{110});
+    check(model->publicIp.Get().ip == "198.51.100.1",
+          "superseded route result is ignored instead of briefly flashing on screen");
+    advance(std::chrono::milliseconds{110});
+    check(counts->publicMax == 1 && !model->publicFailed.Get() &&
+          model->publicIp.Get().ip == "203.0.113.9" && model->publicIp.Get().countryCode == "SG",
+          "latest route result directly replaces previous public IP on completion");
+
+    model->RequestPublic(tasks, "0|7899|direct|1|DIRECT", makePublicFetch({}));
+    ui.Pump(std::chrono::milliseconds{20});
+    advance(std::chrono::milliseconds{110});
+    check(model->publicFailed.Get() && model->publicIp.Get().ip.empty(),
+          "failed new route clears stale previous-route public IP");
+    model->RefreshLan(tasks, []() -> huxerui::Task<std::optional<std::string>> {
+        co_return std::optional<std::string>{"192.168.1.20"};
+    });
+    ui.Pump(std::chrono::milliseconds{1});
+    check(model->lanAddress.Get() == std::optional<std::string>{"192.168.1.20"},
+          "LAN and public IP single-flight lanes remain independent");
+    homeNetFixture.reset(); homeNetTasks.reset();
 }
 
 int diagnosticsStarts = 0, diagnosticsCopies = 0, diagnosticsSaves = 0,
@@ -1624,6 +1828,153 @@ void testLogActions() {
     ui.TapAt({500.0F, 400.0F}); ui.PumpAndSettle();
     check(!ui.Find(UiSelector::Text("级别")).Exists() && !ui.Find(UiSelector::Text("错误")).Exists(),
         "点击菜单外部关闭所有面板");
+
+    // 空白占位符契约、首页活动节点解析与宽屏日志虚拟滚动回归。
+    {
+        using namespace clashflux::ui;
+        check(WebsiteTestTime(0).empty() && ConnectionRuleTypes("").empty() &&
+              ProfileSubscriptionAddress("relative/private?token=secret").empty(),
+              "unset time, unknown rule type, and malformed subscription URL return blank instead of em-dash");
+
+        const auto flagParsed = ExtractLeadingRegionalFlag("\xF0\x9F\x87\xAD\xF0\x9F\x87\xB0 香港 IEPL 01");
+        check(flagParsed && flagParsed->first == "hk" && flagParsed->second == "香港 IEPL 01" &&
+              !ExtractLeadingRegionalFlag("香港 01"),
+              "leading regional-indicator pair extracts lowercase ISO code and trims separating space");
+
+        std::map<std::string, std::string> labels{
+            {"cf_hk_1", "🇭🇰 香港 01"},
+            {"cf_us_1", "🇺🇸 美国 01"},
+        };
+        std::vector<ProxyGroupSnapshot> groups{
+            ProxyGroupSnapshot{
+                .name = "GLOBAL", .displayName = "GLOBAL", .type = "Fallback",
+                .current = "Proxy", .nodes = {"Proxy", "Auto"}, .selectable = false},
+            ProxyGroupSnapshot{
+                .name = "Proxy", .displayName = "节点选择", .type = "Selector",
+                .current = "Auto", .nodes = {"Auto", "cf_us_1"}, .selectable = true},
+            ProxyGroupSnapshot{
+                .name = "Auto", .displayName = "自动选择", .type = "URLTest",
+                .current = "cf_hk_1", .nodes = {"cf_hk_1", "cf_us_1"}, .selectable = false},
+        };
+        const auto liveResolved = ResolveActiveProxySelection(true, false, groups, labels, "rule");
+        check(liveResolved.tag == "cf_hk_1" && liveResolved.displayName == "🇭🇰 香港 01" && !liveResolved.directMode,
+              "live proxy snapshot follows GLOBAL -> Selector -> URLTest to concrete leaf node");
+        const auto directResolved = ResolveActiveProxySelection(true, false, groups, labels, "direct");
+        check(directResolved.directMode && directResolved.tag == "DIRECT",
+              "direct mode resolves explicit direct selection");
+        const auto previewAuto = ResolveActiveProxySelection(true, true, groups, labels, "rule");
+        check(previewAuto.tag == "Auto" && previewAuto.displayName == "自动选择",
+              "stopped preview snapshot stops honestly at non-selectable URLTest group");
+        groups[1].current = "cf_us_1";
+        const auto previewLeaf = ResolveActiveProxySelection(true, true, groups, labels, "rule");
+        check(previewLeaf.tag == "cf_us_1" && previewLeaf.displayName == "🇺🇸 美国 01",
+              "stopped preview snapshot still resolves an explicit leaf node chosen in Selector");
+
+        // 800 行环形淘汰保持存活日志条目的单调稳定 ID，且宽屏虚拟滚动复用缓存行块。
+        std::vector<LogEntry> ring;
+        for (int i = 0; i < 800; ++i) {
+            InsertLogEntry(ring, LogEntry{
+                .text = "[21:00:00] inbound/mixed[mixed-in]: accepted tcp 127.0.0.1:" +
+                        std::to_string(10000 + i) + " -> https://cdn.example.com/path/seg-" +
+                        std::to_string(i) + "/resource?token=abcdef0123456789abcdef0123456789",
+                .level = (i % 4) + 1,
+                .at = 1000 + i,
+            }, 800);
+        }
+        const std::uint64_t secondIdBefore = ring[1].id;
+        InsertLogEntry(ring, LogEntry{
+            .text = "[21:13:20] 主计划准备完成\n第二行补充诊断信息",
+            .level = 2,
+            .at = 2000,
+        }, 800);
+        check(ring.size() == 800 && ring.front().id == secondIdBefore && ring.back().id > secondIdBefore,
+              "ring-buffer rotation preserves stable monotonic IDs on surviving log entries");
+
+        const std::string breakable = BreakableLogText("https://example.test/very/long/path/segment/without/spaces");
+        check(breakable.find("\xE2\x80\x8B") != std::string::npos,
+              "BreakableLogText inserts soft wrap opportunities inside long tokens");
+
+        static int wideLogFactoryCalls = 0;
+        static huxerui::ScrollController wideLogScroll;
+        static std::shared_ptr<const std::vector<LogEntry>> wideLogVisible;
+        auto reversed = std::make_shared<std::vector<LogEntry>>(ring.rbegin(), ring.rend());
+        wideLogVisible = reversed;
+        wideLogFactoryCalls = 0;
+        const huxerui::Application wideLogApp{[]() -> huxerui::View {
+            using namespace clashflux::ui;
+            return huxerui::FlatTheme{huxerui::Scope([] {
+                const auto& theme = huxerui::UseTheme();
+                auto tasks = huxerui::UseTaskScope();
+                auto widthPx = huxerui::UseState<int>(0);
+                auto postedWidthPx = huxerui::UseState(std::make_shared<int>(0)).Get();
+                const auto scroll = huxerui::UseScrollController();
+                wideLogScroll = scroll;
+                const auto islands = ResolveIslandTheme(theme);
+                const float halfPadding = islands.island_padding * 0.5F;
+                const float denseRadius = islands.dense_radius;
+                const float rowGap = PageScrollInset(theme, true);
+                const huxerui::Font monoFont = huxerui::Font::Monospace(font_size::kMonoBody);
+                const auto visible = wideLogVisible;
+                const std::size_t count = visible->size();
+                const int wPx = widthPx.Get();
+                huxerui::TextMeasurer* measurer = &huxerui::UseTextMeasurer();
+                const float rawLineHeight = measurer->Metrics(monoFont).LineHeight();
+                const float lineHeight = std::max(std::ceil(rawLineHeight),
+                                                  std::ceil(monoFont.Size() * 1.3F));
+                return ScrollArea(PageVirtualList(count, [=](std::size_t index) -> huxerui::View {
+                    ++wideLogFactoryCalls;
+                    const LogEntry& entry = (*visible)[index];
+                    const huxerui::Color lvlColor = LogLevelColor(theme, entry.level);
+                    const huxerui::Color bodyColor = theme.colors.on_surface;
+                    const float bottomGap = index + 1 == count ? 0.0F : rowGap;
+                    const ObserveLogTextWidth observeWidth{tasks, widthPx, postedWidthPx};
+                    std::shared_ptr<const LogParagraph> paragraph = FindLogParagraph(
+                        entry.id, wPx, monoFont.Size(), rawLineHeight, lvlColor, bodyColor);
+                    if (!paragraph && wPx > 0) {
+                        paragraph = BuildLogParagraph(
+                            *measurer, entry.id, entry.level, entry.text,
+                            monoFont, rawLineHeight, lvlColor, bodyColor, wPx);
+                    }
+                    huxerui::View content = paragraph
+                        ? huxerui::View{huxerui::Row{}.With(
+                              huxerui::Grow(1.0F), huxerui::Frame{.height = paragraph->height},
+                              LogParagraphPaint{paragraph}, observeWidth)}
+                        : huxerui::View{huxerui::Text(LogAttributedText(entry.level, entry.text, lvlColor))
+                              .Style(huxerui::TextStyle{monoFont, bodyColor})
+                              .With(huxerui::Grow(1.0F), observeWidth)};
+                    return huxerui::Column {
+                        huxerui::Row{std::move(content)}.With(
+                            huxerui::Padding(halfPadding), huxerui::Background(islands.raised),
+                            huxerui::CornerRadius(denseRadius),
+                            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    }.With(huxerui::Padding(huxerui::EdgeInsets{.bottom = bottomGap})).Key(entry.id);
+                }).EstimatedItemExtent(2.0F * halfPadding + lineHeight + rowGap)
+                  .CacheExtent(180.0F).Controller(scroll),
+                    scroll, {}, {}, ScrollAreaInsets::Dense())
+                    .With(huxerui::Grow(1.0F));
+            })};
+        }, {.show_debug_overlay = false}};
+        huxerui::testing::UiTest logUi(wideLogApp,
+            {.viewport = {1400.0F, 900.0F}, .resource_provider = AppResources()});
+        logUi.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        logUi.PumpAndSettle();
+        check(wideLogFactoryCalls > 0 && wideLogFactoryCalls < 120,
+              "wide-screen 800-row log list bounds initial item realization with CacheExtent(180)");
+        check(FindLogParagraph((*reversed)[0].id, 960, font_size::kMonoBody, 0.0F,
+                               huxerui::Color::White(), huxerui::Color::White()) == nullptr,
+              "headless measurer without CreateTextLayout backend never populates invalid cached heights");
+        const float multilineH = logUi.Find(UiSelector::Key((*reversed)[0].id)).One().bounds.height;
+        const float singlelineH = logUi.Find(UiSelector::Key((*reversed)[1].id)).One().bounds.height;
+        check(multilineH > singlelineH + 10.0F,
+              "multi-line log entry measures taller than a wide-screen single-line log entry");
+        for (int frame = 0; frame < 64; ++frame) {
+            static_cast<void>(wideLogScroll.ScrollBy(140.0F));
+            logUi.Pump(std::chrono::milliseconds(16));
+        }
+        check(wideLogScroll.Offset() > 2000.0F,
+              "wide-screen log list scrolls smoothly across hundreds of cached log entries");
+        wideLogVisible.reset();
+    }
 }
 
 [[huxerui::composable]] huxerui::View CommonMenuContent() {
@@ -1797,7 +2148,9 @@ huxerui::View HomeGridRoot() {
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
         std::vector<huxerui::View> cards;
         for (const auto& spec : HomeCardCatalog(homeGridDesktop)) {
-            huxerui::View body = huxerui::Text(model->populated.Get() ? "Live " + std::string(spec.id) : "—");
+            huxerui::View body = model->populated.Get()
+                ? huxerui::View{huxerui::Text("Live " + std::string(spec.id))}
+                : PlaceholderText(huxerui::Font::System(font_size::kBody));
             cards.push_back(huxerui::Column {body}.With(huxerui::Padding(16.0F))
                 .LayoutValue<HomeCardSpan>({spec.width, spec.height})
                 .Key("home-card-" + std::string(spec.id)));
@@ -2270,7 +2623,7 @@ void testCompactProfileCards() {
           ProfileSubscriptionAddress("http://141.164.62.251:49/video/private?mu=2") == "141.164.62.251:49" &&
           ProfileSubscriptionAddress("https://user:secret@example.com:443/private") == "example.com:443" &&
           ProfileSubscriptionAddress("http://[2001:db8::1]:8080/sub") == "[2001:db8::1]:8080" &&
-          ProfileSubscriptionAddress("relative/private?token=secret") == "—",
+          ProfileSubscriptionAddress("relative/private?token=secret").empty(),
           "subscription address labels retain only host and explicit port, excluding credentials and private paths");
     huxerui::testing::UiTest ui(kCompactProfileCardsApplication, {.viewport = {320.0F, 700.0F}});
     ui.PumpAndSettle();
@@ -3632,12 +3985,12 @@ huxerui::View ProxyGridProfileRoot() {
     const int generation = model->generation.Get();
     const auto item = [](std::size_t index) -> huxerui::View {
         ++proxyGridBuilt;
-        const auto title = huxerui::Text("node-" + std::to_string(index))
-            .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
-            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall),
+        const auto title = SingleLineEllipsisText("node-" + std::to_string(index),
+            huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall),
                 huxerui::Color::Transparent()});
         return huxerui::Scope([index, title] {
-            return ProxyNodeTile(title, huxerui::Text("VLESS"),
+            return ProxyNodeTile(title,
+                huxerui::Text("VLESS"),
                 huxerui::Text(std::to_string(20 + static_cast<int>(index % 980))),
                 index == 0, "node-" + std::to_string(index), [] {},
                 SelectableTileInteraction::Selectable, true, false, false, [] {});
@@ -5128,6 +5481,90 @@ void testSingleProxyProbeCard() {
     fixture->releases.at(4) = true; advance(); move({500.0F, 650.0F});
     check(tile("single-a").Find(UiSelector::Text("81")).Exists() && fixture->model->singlePending.Get() == 0,
           "retry after a plan change publishes only the new request");
+    {
+        static int idleTileMounts = 0;
+        idleTileMounts = 0;
+        const huxerui::Application singleMountApp{[]() -> huxerui::View {
+            return huxerui::FlatTheme{huxerui::Scope([] {
+                ++idleTileMounts;
+                return clashflux::ui::ProxyNodeTile(
+                    huxerui::Text("idle-node"), huxerui::Text("VLESS"),
+                    huxerui::Text("42"), false, "idle-node", [] {},
+                    clashflux::ui::SelectableTileInteraction::Selectable,
+                    true, false, false, [] {});
+            })};
+        }, {.show_debug_overlay = false}};
+        huxerui::testing::UiTest idleUi(singleMountApp,
+            {.viewport = {400.0F, 200.0F}, .resource_provider = AppResources()});
+        idleUi.PumpAndSettle();
+        check(idleTileMounts == 1, "idle proxy node tile settles in one pass without redundant recomposition");
+    }
+    {
+        const std::string longCjkName =
+            "a台湾.chatgpt代注册.27.1版本.有网慢的问题直接联系客服微信禁止多设备未经允许多设备封号超长节点名称测试ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const std::string bounded = clashflux::ui::BoundSingleLineRun(longCjkName + "\n第二行");
+        check(bounded.find('\n') == std::string::npos && bounded.ends_with("\xE2\x80\xA6") &&
+              bounded.size() < longCjkName.size(),
+              "BoundSingleLineRun strips mandatory line breaks and caps code points cleanly at UTF-8 boundaries");
+
+        static int wheelTileCompositions = 0;
+        static huxerui::ScrollController wheelGridController;
+        wheelTileCompositions = 0;
+        const huxerui::Application longTitleGridApp{[]() -> huxerui::View {
+            using namespace clashflux::ui;
+            return huxerui::FlatTheme{huxerui::Scope([] {
+                const auto& theme = huxerui::UseTheme();
+                const auto controller = huxerui::UseScrollController();
+                wheelGridController = controller;
+                const huxerui::TextStyle titleStyle{huxerui::Font::System(font_size::kBodySmall),
+                                                    theme.colors.on_surface};
+                const huxerui::TextStyle detailStyle{huxerui::Font::System(font_size::kCaption),
+                                                     theme.colors.on_surface_variant};
+                auto grid = PageVirtualGrid(60, [titleStyle, detailStyle](std::size_t index) -> huxerui::View {
+                    const std::string name = "节点" + std::to_string(index) +
+                        "台湾代注册版本有网慢的问题直接联系客服禁止多设备未经允许多设备封号测试长文本";
+                    return huxerui::Scope([index, name, titleStyle, detailStyle] {
+                        ++wheelTileCompositions;
+                        return ProxyNodeTile(
+                            SingleLineEllipsisText(name, titleStyle),
+                            huxerui::Text("VMESS · UDP").Style(detailStyle),
+                            huxerui::Text("128").Style(detailStyle),
+                            index == 0, name, [] {},
+                            SelectableTileInteraction::Selectable, true, false, false, [] {});
+                    }).Key("long-cjk-card-" + std::to_string(index));
+                }, kSectionCardSpacing)
+                    .Columns(huxerui::GridColumns::Adaptive(196.0F))
+                    .EstimatedRowExtent(52.0F)
+                    .CacheExtent(200.0F)
+                    .ColumnSpacing(kSectionCardSpacing)
+                    .Controller(controller);
+                return huxerui::Column {
+                    ScrollArea(std::move(grid).Key("long-cjk-grid"), controller, {}, {},
+                               ScrollAreaInsets::Symmetric(kSectionCardSpacing)),
+                }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+            })};
+        }, {.show_debug_overlay = false}};
+        huxerui::testing::UiTest wheelUi(longTitleGridApp,
+            {.viewport = {980.0F, 640.0F}, .resource_provider = AppResources()});
+        wheelUi.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        wheelUi.PumpAndSettle();
+        const auto card0 = wheelUi.Find(UiSelector::Key("long-cjk-card-0")).One().bounds;
+        check(card0.height > 40.0F && card0.height < 64.0F,
+              "long CJK single-line ellipsis title preserves compact single-row card height");
+        wheelUi.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 51,
+                             .position = {120.0F, 120.0F},
+                             .device_kind = huxerui::PointerDeviceKind::Mouse});
+        wheelUi.PumpAndSettle();
+        const int beforeWheel = wheelTileCompositions;
+        static_cast<void>(wheelUi.SendScroll({{120.0F, 120.0F}, 0.0F, 120.0F}));
+        for (int frame = 0; frame < 8; ++frame) {
+            wheelUi.Pump(std::chrono::milliseconds(16));
+        }
+        // Only the single initially hovered card leaves once (and any newly realized trailing rows mount once);
+        // rows sliding past the stationary cursor during active wheel motion do not trigger Enter/Leave churn.
+        check(wheelTileCompositions <= beforeWheel + 12,
+              "active wheel scrolling under a stationary cursor avoids hover recomposition churn on passing cards");
+    }
 }
 
 struct RefreshFixture : clashflux::ui::ProfileRefreshModel, clashflux::ui::ProfilePreparationModel {
@@ -8091,8 +8528,10 @@ void testSettingsSelectSizing() {
         check(selector.One().bounds.width < englishWidth,
             "returning to a short choice shrinks the trigger without retaining the popup width");
         settingsSelect->ready = false; ui.PumpAndSettle();
-        check(!selector.Exists() && ui.Find(UiSelector::Text("—")).Exists(),
-            "unhydrated settings still withhold the selector instead of exposing a default choice");
+        check(!selector.Exists() && !ui.Find(UiSelector::Text("—")).Exists() &&
+              ui.FindSemantics(huxerui::testing::UiSemanticSelector::Identifier(
+                  std::string{clashflux::ui::kValuePlaceholderId})).Exists(),
+            "unhydrated settings still withhold the selector using a blank semantic placeholder instead of exposing a default choice");
     }
 }
 
@@ -8136,8 +8575,10 @@ void testSubscriptionUserAgentOrder() {
         check(optionsShowBothSequences(ui) && model->changes == 0,
               "hydration displays both complete UA sequences without rewriting the saved order");
         const auto bounds = option0.One().bounds;
-        check(bounds.x >= 16.0F && bounds.x + bounds.width <= width - 15.9F,
-              "UA choices fit both narrow and wide settings");
+        const auto bounds1 = option1.One().bounds;
+        check(bounds.x >= 16.0F && bounds.x + bounds.width <= width - 15.9F &&
+              bounds.height < 80.0F && bounds1.height < 80.0F && bounds1.y > bounds.y + bounds.height,
+              "UA choices fit both narrow and wide settings without vertical growth");
         option0.Tap(); ui.PumpAndSettle();
         check(model->order.Get() == subscription_http::kOrders[0] && model->changes == 1,
               "choosing the default Clash then sing-box sequence publishes it once");
@@ -8145,6 +8586,165 @@ void testSubscriptionUserAgentOrder() {
         model->visible = true; ui.PumpAndSettle();
         check(option0.Exists() && model->order.Get() == subscription_http::kOrders[0] && model->changes == 1,
               "remounting preserves the chosen order without extra writes");
+    }
+    {
+        static int dismissed = 0;
+        dismissed = 0;
+        const huxerui::Application dialogApp{[]() -> huxerui::View {
+            return huxerui::MaterialTheme(huxerui::MaterialLightThemeSpec(), huxerui::Scope([] {
+                const auto order = huxerui::UseState(std::string{clashflux::subscription_http::kOrders[0]});
+                return huxerui::Stack {
+                  clashflux::ui::SubscriptionUserAgentDialogView(true, order.Get(),
+                      [order](std::size_t index) {
+                          order = std::string{clashflux::subscription_http::kOrders.at(index)};
+                      }, [] { ++dismissed; }),
+                }.With(huxerui::Align(huxerui::HorizontalAlignment::Center, huxerui::VerticalAlignment::Center));
+            }));
+        }, {.show_debug_overlay = false}};
+        huxerui::testing::UiTest ui(dialogApp, {.viewport = {960.0F, 640.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto scaffold = ui.Find(UiSelector::Key("dialog-scaffold")).One().bounds;
+        const auto opt0 = ui.Find(UiSelector::Key("subscription-ua-option-0")).One().bounds;
+        const auto opt1 = ui.Find(UiSelector::Key("subscription-ua-option-1")).One().bounds;
+        const auto closeBtn = ui.Find(UiSelector::Key("subscription-ua-close")).One().bounds;
+        check(scaffold.height < 420.0F && opt0.height < 80.0F && opt1.height < 80.0F &&
+              opt1.y > opt0.y + opt0.height &&
+              closeBtn.y >= opt1.y + opt1.height &&
+              closeBtn.y + closeBtn.height <= scaffold.y + scaffold.height + 0.5F,
+              "UA dialog keeps natural row height and keeps both sequences and close action visible");
+        ui.Find(UiSelector::Key("subscription-ua-close")).Tap(); ui.PumpAndSettle();
+        check(dismissed == 1, "UA dialog close action remains reachable");
+    }
+    for (float width : {360.0F, 960.0F}) {
+        const huxerui::Application pageApp{[]() -> huxerui::View {
+            return huxerui::MaterialTheme(huxerui::MaterialLightThemeSpec(), huxerui::Scope([] {
+                const auto scroll = huxerui::UseState(std::make_shared<clashflux::ui::PageScrollOffset>()).Get();
+                const auto order = huxerui::UseState(std::string{clashflux::subscription_http::kOrders[0]});
+                const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+                return clashflux::ui::PageBodyRegion(
+                    clashflux::ui::SubscriptionUserAgentPageBody(true, order.Get(),
+                        [order](std::size_t index) {
+                            order = std::string{clashflux::subscription_http::kOrders.at(index)};
+                        }, scroll), compact ? 4.0F : 24.0F);
+            }));
+        }, {.show_debug_overlay = false}};
+        huxerui::testing::UiTest ui(pageApp, {.viewport = {width, 600.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto options = ui.Find(UiSelector::Key("subscription-ua-options")).One().bounds;
+        const auto opt0 = ui.Find(UiSelector::Key("subscription-ua-option-0")).One().bounds;
+        check(options.height < 260.0F && options.width <= 720.1F &&
+              opt0.x >= (width < 600.0F ? 15.9F : 23.9F) &&
+              opt0.x + opt0.width <= width - (width < 600.0F ? 15.9F : 23.9F),
+              "UA secondary page body uses compact margins on narrow viewports and bounded width on wide viewports");
+    }
+}
+
+void testNetworkDnsPageLayout() {
+    struct DnsFixture {
+        huxerui::State<bool> overrideDns{false};
+        huxerui::State<bool> canApply{false};
+        huxerui::State<huxerui::TextEditingValue> remoteDns{
+            huxerui::TextEditingValue::FromText("https://1.1.1.1/dns-query")};
+    };
+    static std::shared_ptr<DnsFixture> dnsFixture;
+    {
+        static int canceled = 0;
+        static int savedOnly = 0;
+        static int savedApplied = 0;
+        canceled = savedOnly = savedApplied = 0;
+        const huxerui::Application dialogApp{[]() -> huxerui::View {
+            return huxerui::MaterialTheme(huxerui::MaterialLightThemeSpec(), huxerui::Scope([] {
+                const auto model = huxerui::UseState(std::make_shared<DnsFixture>()).Get();
+                const auto scroll = huxerui::UseState(std::make_shared<clashflux::ui::PageScrollOffset>()).Get();
+                dnsFixture = model;
+                return huxerui::Stack {
+                  clashflux::ui::NetworkDnsDialogView(
+                      {}, model->overrideDns.Get(),
+                      [model](bool value) { model->overrideDns = value; },
+                      model->remoteDns.Get(), {},
+                      [model](const huxerui::TextEditingValue& value) { model->remoteDns = value; },
+                      false, true, model->canApply.Get(),
+                      [] { ++canceled; },
+                      [](bool apply) { if (apply) ++savedApplied; else ++savedOnly; },
+                      scroll),
+                }.With(huxerui::Align(huxerui::HorizontalAlignment::Center, huxerui::VerticalAlignment::Center));
+            }));
+        }, {.show_debug_overlay = false}};
+        huxerui::testing::UiTest ui(dialogApp, {.viewport = {960.0F, 640.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto scaffoldOff = ui.Find(UiSelector::Key("dialog-scaffold")).One().bounds;
+        const auto header = ui.Find(UiSelector::Key("dialog-header")).One().bounds;
+        const auto cancelBtn = ui.Find(UiSelector::Key("network-dns-cancel")).One().bounds;
+        const auto saveBtn = ui.Find(UiSelector::Key("network-dns-save")).One().bounds;
+        check(!ui.Find(UiSelector::Key("dialog-header")).Find(UiSelector::Type<huxerui::IconButton>()).Exists(),
+              "DNS dialog header omits close X icon");
+        check(std::abs(scaffoldOff.width - 520.0F) < 1.0F && scaffoldOff.height < 240.0F &&
+              !ui.Find(UiSelector::Key("network-field-remote_dns")).Exists() &&
+              !ui.Find(UiSelector::Key("network-dns-save-apply")).Exists() &&
+              cancelBtn.y >= header.y + header.height &&
+              saveBtn.y + saveBtn.height <= scaffoldOff.y + scaffoldOff.height + 0.5F,
+              "wide DNS dialog uses form width, keeps compact natural height when override is disabled, and shows footer actions");
+        dnsFixture->overrideDns = true;
+        dnsFixture->canApply = true;
+        ui.PumpAndSettle();
+        const auto scaffoldOn = ui.Find(UiSelector::Key("dialog-scaffold")).One().bounds;
+        const auto field = ui.Find(UiSelector::Key("network-field-remote_dns")).One().bounds;
+        const auto hint = ui.Find(UiSelector::Key("network-dns-hint")).One().bounds;
+        const auto applyBtn = ui.Find(UiSelector::Key("network-dns-save-apply")).One().bounds;
+        check(scaffoldOn.height > scaffoldOff.height && scaffoldOn.height < 380.0F &&
+              field.y > header.y + header.height && hint.y >= field.y + field.height - 0.5F &&
+              applyBtn.y >= hint.y + hint.height &&
+              applyBtn.y + applyBtn.height <= scaffoldOn.y + scaffoldOn.height + 0.5F,
+              "enabling DNS override in dialog reveals DoH field, hint, and save-and-apply action without vertical stretch");
+        ui.Find(UiSelector::Key("network-dns-cancel")).Tap();
+        ui.Find(UiSelector::Key("network-dns-save")).Tap();
+        ui.Find(UiSelector::Key("network-dns-save-apply")).Tap();
+        ui.PumpAndSettle();
+        check(canceled == 1 && savedOnly == 1 && savedApplied == 1,
+              "DNS dialog footer cancel, save, and save-and-apply actions dispatch accurately");
+    }
+    const huxerui::Application app{[]() -> huxerui::View {
+        return huxerui::MaterialTheme(huxerui::MaterialLightThemeSpec(), huxerui::Scope([] {
+            const auto model = huxerui::UseState(std::make_shared<DnsFixture>()).Get();
+            const auto scroll = huxerui::UseState(std::make_shared<clashflux::ui::PageScrollOffset>()).Get();
+            dnsFixture = model;
+            const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+            return clashflux::ui::PageBodyRegion(
+                clashflux::ui::NetworkDnsPageBody(
+                    {}, model->overrideDns.Get(),
+                    [model](bool value) { model->overrideDns = value; },
+                    model->remoteDns.Get(), {},
+                    [model](const huxerui::TextEditingValue& value) { model->remoteDns = value; },
+                    false, scroll),
+                compact ? 4.0F : 24.0F);
+        }));
+    }, {.show_debug_overlay = false}};
+    for (float width : {360.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(app, {.viewport = {width, 600.0F}, .resource_provider = AppResources()});
+        ui.PumpAndSettle();
+        const auto toggle = ui.Find(UiSelector::Key("network-dns-override")).One().bounds;
+        const auto formOff = ui.Find(UiSelector::Key("network-dns-form")).One().bounds;
+        check(formOff.height < 140.0F && toggle.y < 120.0F &&
+              !ui.Find(UiSelector::Key("network-field-remote_dns")).Exists(),
+              "DNS page keeps compact row height when override is disabled");
+        dnsFixture->overrideDns = true; ui.PumpAndSettle();
+        const auto formOn = ui.Find(UiSelector::Key("network-dns-form")).One().bounds;
+        const auto field = ui.Find(UiSelector::Key("network-field-remote_dns")).One().bounds;
+        const auto hint = ui.Find(UiSelector::Key("network-dns-hint")).One().bounds;
+        check(formOn.height < 320.0F && formOn.width <= 720.1F &&
+              field.x >= (width < 600.0F ? 15.9F : 23.9F) &&
+              field.x + field.width <= width - (width < 600.0F ? 15.9F : 23.9F) &&
+              field.y > toggle.y && hint.y >= field.y + field.height - 0.5F &&
+              hint.y + hint.height <= 600.0F,
+              "enabling DNS override reveals bounded DoH input and hint without stretching rows");
+    }
+    {
+        huxerui::testing::UiTest shortUi(app, {.viewport = {360.0F, 180.0F}, .resource_provider = AppResources()});
+        shortUi.PumpAndSettle();
+        dnsFixture->overrideDns = true; shortUi.PumpAndSettle();
+        check(shortUi.Find(UiSelector::Key("network-field-remote_dns")).Exists() &&
+              shortUi.Find(UiSelector::Key("network-dns-hint")).Exists(),
+              "DNS page stays scrollable and preserves controls under a keyboard-shortened viewport");
     }
 }
 
@@ -8248,6 +8848,7 @@ int main(int argc, char** argv) {
         testQrShareBounds(); return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); testWebsiteFormScroll(); return failures == 0 ? 0 : 1; }
+    if (argc == 2 && std::string_view(argv[1]) == "--home-network") { testHomeNetworkModel(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--scroll-profile") {
         profileScrollWork();
         return failures == 0 ? 0 : 1;
@@ -8286,7 +8887,7 @@ int main(int argc, char** argv) {
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     testCountryFlagIndex();
-    try { testSubscriptionUserAgentOrder(); testSettingsReadiness(); testSettingsSelectSizing(); testSettingsRowFeedback(); testHomeSettingsGear(); }
+    try { testSubscriptionUserAgentOrder(); testNetworkDnsPageLayout(); testSettingsReadiness(); testSettingsSelectSizing(); testSettingsRowFeedback(); testHomeSettingsGear(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: settings row feedback: %s\n", error.what());
         ++failures;
@@ -8456,6 +9057,7 @@ int main(int argc, char** argv) {
     testConnectionTraceContent();
     testWebsiteTests();
     testWebsiteNetworkAndTimeout();
+    testHomeNetworkModel();
     testQrScannerControl();
     try { testDiagnosticsContent(); testDiagnosticsThemeAndLayout(); }
     catch (const std::exception& error) {

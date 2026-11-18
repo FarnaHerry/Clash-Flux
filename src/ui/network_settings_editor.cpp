@@ -19,6 +19,7 @@ import clashflux.store.core;
 #include "profiles_model.h"
 #include "page_layout.h"
 #include "settings_group_layout.h"
+#include "network_dns_layout.h"
 #include "action_menu.h"
 
 namespace clashflux::ui {
@@ -707,9 +708,10 @@ void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun) {
     }, {.on_dismiss_request = [request] { if (*request) (*request)(); }});
 }
 
-// 独立 DNS 二级页：首行为“覆写 DNS”总开关，控制应用 DNS 是否参与编译；开关下方为具体配置。
-[[huxerui::composable]] huxerui::View NetworkDnsEditor(std::function<void()> onBack) {
+// DNS 设置：宽视口以表单弹窗呈现，Compact 推入独立二级页，共用同一份表单与草稿关闭保护。
+[[huxerui::composable]] huxerui::View NetworkDnsEditor(std::function<void()> onClose, bool fullPage) {
     const auto& theme = huxerui::UseTheme();
+    const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     const auto settings = huxerui::UseService<SettingsModel>();
     const auto control = UseCoreControl();
     const auto baseline = huxerui::UseState(settings->view.Get().network);
@@ -750,35 +752,44 @@ void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun) {
                 control.model->Update([&](CoreView& view) { view = result->core; });
                 if (!result->error.empty()) { toast.Show(result->error); return; }
                 toast.Show(apply && canApply ? Localized("网络设置已应用") : Localized("网络设置已保存，待下次连接或重启应用"));
-                if (alive.Get()) onBack();
+                if (alive.Get()) onClose();
             });
     };
-    const auto dialog = huxerui::UseDialog();
-    const auto close = [=] {
-        if (control.Busy()) return;
-        if (!form.Get().Changed(baseline.Get())) { onBack(); return; }
-        ConfirmDiscardChanges(dialog, onBack);
-    };
+    const auto close = UseEditorClose(
+        [form, baseline] { return form.Get().Changed(baseline.Get()); },
+        [control] { return control.Busy(); },
+        onClose);
     std::vector<huxerui::View> notices;
-    if (canApply && control.model->view.Get().core.networkRevision != settings->view.Get().network.revision)
-        notices.push_back(huxerui::Text(Localized("有待应用的网络设置")));
-    if (!failure.empty()) notices.push_back(huxerui::Text(failure).Style(huxerui::TextStyle{
-        huxerui::Font::System(font_size::kCaption), theme.colors.error}));
-    if (!settings->view.Get().networkError.empty()) notices.push_back(huxerui::Text(settings->view.Get().networkError));
-    const auto content = PageBodyRegion(huxerui::Column {
-      notices.empty() ? huxerui::View{} : huxerui::View{huxerui::Column(notices).With(
-          huxerui::Spacing(4.0F), huxerui::Padding(huxerui::EdgeInsets::Symmetric(16.0F, 4.0F)),
-          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("network-dns-notices")},
-      NetworkSection({
-        AdvancedSwitch(form, &AdvancedNetwork::override_dns, Localized("覆写 DNS"),
-            Localized("启用后，以下设置覆盖未自带 DNS 的订阅；关闭则跟随系统 DNS")),
-        form.Get().extra.override_dns ? NetworkField(form, "remote_dns", Localized("远程 DNS（DoH，可空）")) : huxerui::View{},
-        form.Get().extra.override_dns ? SettingsContentRow(huxerui::Text(
-            Localized("用于需要本地解析的域名；留空跟随系统 DNS，仅对未自带 DNS 的订阅生效，支持 https://1.1.1.1/dns-query 等 IP 地址形式。"))) : huxerui::View{},
-      }),
-    }.With(huxerui::Grow(1.0F), huxerui::Enabled(!busy),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), PageScrollInset(theme));
+    if (canApply && control.model->view.Get().core.networkRevision != settings->view.Get().network.revision) {
+        notices.push_back(huxerui::Text(Localized("有待应用的网络设置")).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant}));
+    }
+    if (!failure.empty()) {
+        notices.push_back(huxerui::Text(failure).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kCaption), theme.colors.error}));
+    }
+    if (!settings->view.Get().networkError.empty()) {
+        notices.push_back(huxerui::Text(settings->view.Get().networkError).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kCaption), theme.colors.error}));
+    }
+    const NetworkForm snapshot = form.Get();
+    const auto onOverrideChanged = [form](bool value) {
+        form.Update([&](NetworkForm& next) { next.extra.override_dns = value; });
+    };
+    const auto onRemoteDnsChanged = [form](const huxerui::TextEditingValue& value) {
+        form.Update([&](NetworkForm& next) { next.fields.at("remote_dns") = value; });
+    };
     const auto saveMenu = UseActionMenu();
+    if (!fullPage) {
+        return NetworkDnsDialogView(
+            std::move(notices), snapshot.extra.override_dns, onOverrideChanged,
+            snapshot.fields.at("remote_dns"), snapshot.FieldError("remote_dns"),
+            onRemoteDnsChanged, busy, valid, canApply, close, save, scroll);
+    }
+    const auto body = NetworkDnsPageBody(
+        std::move(notices), snapshot.extra.override_dns, onOverrideChanged,
+        snapshot.fields.at("remote_dns"), snapshot.FieldError("remote_dns"),
+        onRemoteDnsChanged, busy, scroll);
     const auto commit = [saveMenu, save, canApply] {
         if (!canApply) { save(false); return; }
         saveMenu.Show({
@@ -789,11 +800,12 @@ void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun) {
     return SecondaryPageScaffold(huxerui::Text(title, huxerui::TextRole::Title),
         FormHeaderAction(app::images::save, Localized("保存"), commit, valid, busy)
             .With(saveMenu.Target()).Key("network-dns-save"),
-        FormPageContent(content), close, false, true, true);
+        body, close, false, false, true).Key("settings-network-dns-page");
 }
 
-[[huxerui::composable]] huxerui::View NetworkDnsEditorPage() {
-    const auto navigation = huxerui::UseNavigation();
-    return NetworkDnsEditor([navigation] { static_cast<void>(navigation.Pop()); });
+void ShowNetworkDnsDialog(huxerui::DialogHandle dialog) {
+    ShowEditorDialog(dialog, [](huxerui::DialogContext context) {
+        return NetworkDnsEditor([context] { context.Dismiss(); }, false);
+    });
 }
 } // namespace clashflux::ui
