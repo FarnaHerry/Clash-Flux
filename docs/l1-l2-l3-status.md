@@ -5,7 +5,7 @@
 - 基于 `v0.3.116`（`f66ac4d`）快进合并工作区，发布提交包含 HuxerUI `d2c9781c`（含 macOS `MacUiWindow` 修复）、首页公网出口国旗、默认路由内网 IP、DNS 设置就绪门禁、Android 快捷方式/扫码入口和 UA 兜底 304 修复。Android versionName 0.3.117、versionCode 195，sing-box/libbox 保持 1.14.4。
 - Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Debug 下 HuxerUI codegen、主目标与全部测试目标构建通过；`clash-flux --version` 输出 v0.3.117；`ctest --output-on-failure --no-tests=error -L clashflux-required -j 4` **38/38 通过（97.29 秒）**；`git diff --check` 通过。
 - Android 宿主 JVM 的下载/UA 304、运行时启动、VPN 时长和升级策略回归通过；HuxerUI Android Java 编译通过。本机缺少 `libbox-arm64.aar`，完整 APK、正式签名安装和真机 VPN 未在本地验收，由标签 CI 与独立设备确认。
-- 本轮未提交 `libbox-arm64.aar`、用户数据库或订阅文件；Windows/macOS 本机 GUI 未执行。发布标签与 CI 结果见后续发布记录。
+- 本轮未提交 `libbox-arm64.aar`、用户数据库或订阅文件；Windows/macOS 本机 GUI 未执行。发布标签、CI 与资产见 [发布记录](evidence/2026-11-18-v0.3.117-release.md)。
 
 ## v0.3.115 隔离补丁验证（2026-11-17）
 
@@ -25,7 +25,7 @@
 - 该分支的 `6e04d4e` 在 macOS `MacUiWindow` 中因多余 `}` 提前闭合，另有 `HuxerUIWindow` 重复实现 key/main window 方法；fork 的 `f53676c4` 与 `d2c9781c` 分别修复后，应用固定 `d2c9781c`。
 - 移动端“网络检测”卡按 API 返回国家码显示国旗 emoji：国外 `https://api.country.is` 失败后使用国内 `https://api.mir6.com/api/ip_json`；两个端点都返回 IP 与国家码，同一解码器校验后展示，不写死中国。未知国家用地球 emoji。
 - `fetchText` 响应上限提高到 4096 B，两个端点各 8 秒超时、共用当前出口，旧响应由串行号丢弃。新增 `wire::DecodePublicIpLookup`、国旗转换和生产页面测试。
-- 验证：Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Debug 主目标、全部测试目标、HuxerUI codegen 构建通过；版本 `v0.3.117`；`clashflux-required` CTest **38/38，113.93 秒**。真实请求分别返回马来西亚（MY）和中国（CN）国家码。Android 宿主 JVM 门禁与 HUXERUI Java 编译通过；完整 APK 由标签 CI 核验。
+- 验证：Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Debug 主目标、全部测试目标、HuxerUI codegen 构建通过；版本 `v0.3.117`；`clashflux-required` CTest **38/38，97.29 秒**。真实请求分别返回马来西亚（MY）和中国（CN）国家码。Android 宿主 JVM 门禁与 HUXERUI Java 编译通过；标签 CI 的 Linux、macOS、Windows、Android 和发布 job 通过。
 - Windows/macOS 原生 GUI、Android 真机、国旗 emoji 的实际字体渲染及 VPN 未本机验收；证据见 [发布记录](evidence/2026-11-18-v0.3.117-release.md)。
 
 ## 2026-11-18 审查缺口修复
