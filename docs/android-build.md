@@ -11,9 +11,9 @@ AAR 混装，否则 Java 层可能调用 native 层已经移除或改变的入�
 例如 `HuxerUI Android application has not been initialized`。
 
 框架源码来自 `FarnaHerry/HuxerUI` 的 `farna/main`，当前与 CI 固定到
-`ada3acdcb90009d4c7b03de7472cc6ea8b47f8a2`（2026-11-18）；
+`d2c9781c26158bfc5306e1682388a492cbed44d4`（2026-11-18）；
 源码包含上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、
-位图快照与运行诊断控制；fork 修复 macOS `MacUiWindow` 类作用域。框架真机 instrumentation 仍待完成，
+位图快照与运行诊断控制；fork 修复 macOS AppKit 构建错误。框架真机 instrumentation 仍待完成，
 不能把 Linux 回归或 APK 编译成功记作 Android 真机测试通过。维护流程见 [HuxerUI fork](huxerui-fork.md)。
 
 本地构建仍需提供 CLI 和 SDK 元数据所需的 `HUXERUI_HOME`：

@@ -4,19 +4,20 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `ada3acdcb90009d4c7b03de7472cc6ea8b47f8a2`，各平台 CI 共用
+Clash-Flux 当前固定 `d2c9781c26158bfc5306e1682388a492cbed44d4`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
 
-2026-11-18 采用 `farna/main` 的 [`ada3acd`](https://github.com/FarnaHerry/HuxerUI/commit/ada3acdcb90009d4c7b03de7472cc6ea8b47f8a2)：
+2026-11-18 采用 `farna/main` 的 [`d2c9781c`](https://github.com/FarnaHerry/HuxerUI/commit/d2c9781c26158bfc5306e1682388a492cbed44d4)：
 包含上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、
-位图快照、运行诊断控制与运行时依赖修复。该提交同时修复 `6e04d4e` 在 macOS
-`platform/macos/appkit_adapter.mm` 中 `MacUiWindow` 类被多余 `}` 提前闭合、导致成员和纯虚实现
-不可见的发布构建错误。应用、CI 和 Android Java/native 统一使用该身份；宿主 HCG/HRC、
-锁定的 0.4.0 CLI 与内核版本保持。验证见[发布记录](evidence/2026-11-18-v0.3.117-release.md)。
+位图快照、运行诊断控制与运行时依赖修复。该分支同时修复 `6e04d4e` 在 macOS
+`platform/macos/appkit_adapter.mm` 中 `MacUiWindow` 类被多余 `}` 提前闭合，以及
+`HuxerUIWindow` 重复实现 key/main window 方法的发布构建错误。应用、CI 和 Android
+Java/native 统一使用该身份；宿主 HCG/HRC、锁定的 0.4.0 CLI 与内核版本保持。
+验证见[发布记录](evidence/2026-11-18-v0.3.117-release.md)。
 
 2026-11-16 跟进到已发布的 [`e2afd8a3`](https://github.com/FarnaHerry/HuxerUI/commit/e2afd8a3ca68bd7729ef084b11e741580237f252)，
 集成上游至 `c67c42c2`：跨窗口拖放、Dock 自定义标签栏与跨窗口停靠、桌面浮动窗口选项、
