@@ -5,7 +5,7 @@
 - 基于 `3a2802b`（`v0.3.117` 发布记录之后）发布补丁：修复 sing-box Clash `/configs` 将 mixed 入站报告为 `mixed-port: 0` 导致首页网络检测、运行诊断和经 mixed 的订阅下载使用端口 0；首页与网站测试改用打包国旗图集，订阅 UA 顺序改为两条完整序列，首页宽屏悬浮猫咪让出滚动条槽。Android versionName 0.3.118、versionCode 196，HuxerUI 保持 `d2c9781c`，sing-box/libbox 保持 1.14.4。
 - Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Debug 下主目标与全部测试目标构建通过；`clash-flux --version` 输出 v0.3.118；`clashflux-required` CTest **38/38 通过（108.26 秒实际，282.58 秒累计）**；`git diff --check` 通过。
 - 本机只有 JDK 25，未重跑 Android 宿主 JVM 门禁（项目固定 AGP 8.13.2 / Gradle 8.13 需要 JDK 17）；完整 APK、正式签名、Windows/macOS GUI 和真机 VPN 由标签 CI 与独立设备验收，不用本地 Debug 构建替代。
-- 发布标签、CI 与资产结果见 [发布记录](evidence/2026-11-18-v0.3.118-release.md)。
+- 标签 `v0.3.118` 的 [CI run 44257549886](https://github.com/FarnaHerry/Clash-Flux/actions/runs/44257549886) 重试后通过；Android v1/v2 签名与正式证书指纹通过，全部发布平台和 `publish-release` 通过，[GitHub Release](https://github.com/FarnaHerry/Clash-Flux/releases/tag/v0.3.118) 含 10 个资产。iOS Simulator 仍为暂缓的非阻塞诊断。详见 [发布记录](evidence/2026-11-18-v0.3.118-release.md)。
 
 ## 2026-11-18 v0.3.117 发布
 
