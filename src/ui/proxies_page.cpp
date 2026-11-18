@@ -221,7 +221,8 @@ huxerui::View NodeTitle(const std::string& name, huxerui::Color foreground) {
             std::ifstream codesFile(directory / "flags.codes", std::ios::binary);
             if (!codesFile) return std::nullopt;
             std::string codes(std::istreambuf_iterator<char>{codesFile}, {});
-            return Atlas{huxerui::ImageAsset::FromFile(directory / "flags.png"),
+            return Atlas{huxerui::ImageAsset::FromFile(
+                             huxerui::File((directory / "flags.png").string())),
                          std::move(codes)};
         } catch (const std::exception&) {
             return std::nullopt;
