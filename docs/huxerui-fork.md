@@ -4,43 +4,35 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `6e04d4ea3b319ddc798d7b2c783282744d063c3b`，各平台 CI 共用
+Clash-Flux 当前固定 `ada3acdcb90009d4c7b03de7472cc6ea8b47f8a2`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
 
-2026-11-18 跟进到已发布的 [`6e04d4e`](https://github.com/FarnaHerry/HuxerUI/commit/6e04d4ea3b319ddc798d7b2c783282744d063c3b)，
-集成上游窗口 API 收敛、统一任务等待/恢复、iOS/macOS/Android 系统任务、UIScene 多窗口、
-外部文件持久访问、位图快照、运行诊断控制、CLI watch 模式与运行时依赖冲突修复。
-应用当前页面未使用已移除的 fork 重复窗口方法，无需页面迁移；旧的 `WindowSupport` 查询继续由
-`WindowHandle::Capabilities()` 取代。本机独立 checkout、CI 和 Android Java/native 共用该身份。
-Linux 编译、UI/编解码回归及 Android HUI Java 编译结果见
-[本轮证据](evidence/2026-11-18-huxerui-6e04d4e.md)。
+2026-11-18 采用 `farna/main` 的 [`ada3acd`](https://github.com/FarnaHerry/HuxerUI/commit/ada3acdcb90009d4c7b03de7472cc6ea8b47f8a2)：
+包含上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、
+位图快照、运行诊断控制与运行时依赖修复。该提交同时修复 `6e04d4e` 在 macOS
+`platform/macos/appkit_adapter.mm` 中 `MacUiWindow` 类被多余 `}` 提前闭合、导致成员和纯虚实现
+不可见的发布构建错误。应用、CI 和 Android Java/native 统一使用该身份；宿主 HCG/HRC、
+锁定的 0.4.0 CLI 与内核版本保持。验证见[发布记录](evidence/2026-11-18-v0.3.117-release.md)。
 
 2026-11-16 跟进到已发布的 [`e2afd8a3`](https://github.com/FarnaHerry/HuxerUI/commit/e2afd8a3ca68bd7729ef084b11e741580237f252)，
 集成上游至 `c67c42c2`：跨窗口拖放、Dock 自定义标签栏与跨窗口停靠、桌面浮动窗口选项、
 Win7 DirectComposition 声明与 macOS 启动失败附件释放修复；移除被 `WindowHandle::Capabilities()`
-取代的旧 WindowSupport 查询。保留既有 Pager 和图表兼容修复。
-本机独立消费 checkout、CI 和 Android Java/native 统一该身份；宿主 HCG/HRC、锁定的 0.4.0 CLI 与内核版本保持。
+取代的旧 WindowSupport 查询。该候选也因 macOS 构建失败未进入发布。
+本机独立消费 checkout、CI 和 Android Java/native 统一使用 `89359f43`；宿主 HCG/HRC、
+锁定的 0.4.0 CLI 与内核版本保持。
 
 2026-11-15 跟进到已发布的 [`89359f43`](https://github.com/FarnaHerry/HuxerUI/commit/89359f43ef34357fabcf1c994f4b5fa1062c91a9)，
 包含官方 `3bebb8c71d92239504967972f12d4a5722c39dd5` 的 Windows 文本方向、独立资源包、
 编辑动作、多格式剪贴板与回调流更新，保留既有 Pager 和图表兼容修复。
 本机独立消费 checkout、CI 和 Android Java/native 统一该身份；宿主 HCG/HRC、锁定的 0.4.0 CLI 与内核版本保持。
 
-2026-11-16 跟进到已发布的 [`e2afd8a3`](https://github.com/FarnaHerry/HuxerUI/commit/e2afd8a3ca68bd7729ef084b11e741580237f252)，
-集成上游至 `c67c42c2`：跨窗口拖放、Dock 自定义标签栏与跨窗口停靠、桌面浮动窗口选项、
-Win7 DirectComposition 声明与 macOS 启动失败附件释放修复；移除被 `WindowHandle::Capabilities()`
-取代的旧 WindowSupport 查询。保留既有 Pager 和图表兼容修复。
-本机独立消费 checkout、CI 和 Android Java/native 统一该身份；宿主 HCG/HRC、锁定的 0.4.0 CLI 与内核版本保持。
-
 2026-11-17 发布验证发现 `e2afd8a3` 的 `platform/macos/appkit_adapter.mm` 重复定义
-`canBecomeKeyWindow` / `canBecomeMainWindow`，并在辅助方法处引用未定义的 `huxeruiWindow`，
-导致 macOS Release 构建失败。随后发布的 `6e04d4e` 收敛上游窗口 API 并移除这些重复方法；
-应用源码、CI 与 Android Java/native 已统一到该提交，跨窗口行为由框架公开接口维护，
-不在应用仓库复制框架补丁。
+`canBecomeKeyWindow` / `canBecomeMainWindow`，并在辅助方法处引用未定义的 `huxeruiWindow`。
+`6e04d4e` 虽收敛了上游窗口 API，但 macOS 编译仍未通过，当前发布继续固定 `89359f43`。
 
 Lib-CodeEditor fork 已发布 [`ee5b0cf8`](https://github.com/FarnaHerry/Lib-CodeEditor/commit/ee5b0cf8ac53f23f9816c1aedd52a6b90c3d696c)，
 包含官方 `4e67fd0c33a927f49727f22b90b02862ddd7d3ab` 和当前 HUI 的编辑动作适配。

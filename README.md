@@ -419,7 +419,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码固定 `6e04d4e`，本机与 CI 统一，在 `e2afd8a3` 基础上集成上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、位图快照、运行诊断控制、CLI watch 模式与运行时依赖冲突修复；应用无需页面迁移。CodeEditor 同步到 fork `ee5b0cf8`，文档与挂载控制器分离；Media 同步到官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
+当前源码固定 `ada3acd`，本机与 CI 统一，在 `e2afd8a3` 基础上集成上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、位图快照、运行诊断控制、CLI watch 模式与运行时依赖冲突修复；并修复 macOS `MacUiWindow` 类作用域；应用无需页面迁移。CodeEditor 同步到 fork `ee5b0cf8`，文档与挂载控制器分离；Media 同步到官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

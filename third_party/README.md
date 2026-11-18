@@ -9,7 +9,7 @@ nlohmann::json 是 single header，直接提交在 `json/`。Glaze 等本地归�
 归档版本及来源以本项目清单为准。
 
 应用当前的 HuxerUI fork 源码提交与检出命令见 [固定版本](../docs/huxerui-fork.md)；本机独立 checkout、CI 和 Android Java/native 共用该身份，不消费维护工作树。
-当前源码固定 `6e04d4ea3b319ddc798d7b2c783282744d063c3b`，在 `e2afd8a3` 基础上集成上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、位图快照、运行诊断控制、CLI watch 模式与运行时依赖冲突修复。应用未使用已移除的 fork 重复窗口方法；CodeEditor 等扩展固定提交保持，升级边界见上述记录。下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
+当前源码固定 `ada3acdcb90009d4c7b03de7472cc6ea8b47f8a2`，集成上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、位图快照、运行诊断控制、CLI watch 模式与运行时依赖冲突修复，并修复 macOS `MacUiWindow` 提前闭合导致 AppKit 构建失败的问题。应用未使用已移除的 fork 重复窗口方法；CodeEditor 等扩展固定提交保持，升级边界见上述记录。下表 0.4.0 是离线 SDK 归档身份，不是源码版本。官方 0.4.0 归档提供 huxerui CLI、hcg/hrc 宿主工具与官方运行时库，但不含 fork 专属的 `create_initial_window` API，不满足桌面源码构建要求（CMake 配置期守卫会拒绝）。`HUXERUI_HOME` 也可显式选择固定 fork 源码。
 
 ## 清单与来源
 
