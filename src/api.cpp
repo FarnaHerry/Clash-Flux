@@ -348,6 +348,60 @@ ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_
     return result;
 }
 
+ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
+                    long timeoutSec) {
+    ApiResult result;
+    CurlHandle handle;
+    if (!handle) {
+        result.error = "curl_easy_init failed";
+        return result;
+    }
+    CURL* const easy = handle.get();
+    curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "https");
+    struct BoundedText {
+        std::string* body;
+        std::size_t limit = 4096;
+    } bounded{&result.body};
+    curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION,
+        +[](char* data, size_t size, size_t count, void* context) -> size_t {
+            auto& target = *static_cast<BoundedText*>(context);
+            if (size != 0 && count > (target.limit - target.body->size()) / size)
+                return 0;
+            const size_t bytes = size * count;
+            target.body->append(data, bytes);
+            return bytes;
+        });
+    curl_easy_setopt(easy, CURLOPT_WRITEDATA, &bounded);
+    curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec > 0 ? timeoutSec : 8L);
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 4L);
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
+    char errorDetail[CURL_ERROR_SIZE]{};
+    curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, errorDetail);
+#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+    curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS,
+                     static_cast<long>(CURLSSLOPT_NATIVE_CA));
+#endif
+    // Two states: explicit proxy, or forced direct with environment proxies disabled.
+    curl_easy_setopt(easy, CURLOPT_PROXY,
+                     proxyUrl.empty() ? "" : proxyUrl.c_str());
+    curl_easy_setopt(easy, CURLOPT_NOPROXY, "");
+    const CURLcode code = curl_easy_perform(easy);
+    if (code == CURLE_OK) {
+        curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
+        result.ok = result.status >= 200 && result.status < 300;
+        if (!result.ok) result.error = "HTTP " + std::to_string(result.status);
+    } else {
+        result.error = errorDetail[0] != '\0'
+                           ? std::string(errorDetail)
+                           : std::string(curl_easy_strerror(code));
+    }
+    return result;
+}
+
 struct ClashApi::Impl {
     mutable std::mutex endpointMutex;
     std::shared_ptr<DownloadHandlePool> downloadPool = std::make_shared<DownloadHandlePool>();

@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.116 release notes](docs/releases/v0.3.116.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.117 release notes](docs/releases/v0.3.117.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -56,7 +56,7 @@ Desktop startup prepares a core without traffic inbounds so nodes can be tested.
   editing; local storage; Clash YAML, native sing-box JSON, OpenVPN .ovpn, and SS (SIP002/legacy full Base64), VMess JSON, VLESS/Trojan, HY2/TUIC/AnyTLS node subscriptions (plain or Base64, including mixed lists). Card menus share a single-frame QR or the complete config as a QiFi/QRS multi-frame QR sequence. See [node subscriptions](docs/node-subscriptions.md) for conversion and limits.
   Selection can change during preparation: repeated clicks are coalesced and only the latest pending target is kept.
   Candidate validation, startup and preview reuse the prepared output.
-- Subscription downloads use pinned Clash (Mihomo) then sing-box identities, trying the next only on HTTP 403. Settings can reverse their order. The pins do not follow upstream releases, and there is no Clash-Flux fallback identity; changing the order leaves saved profiles intact. See [download policy](docs/provider-resource-management.md).
+- Subscription downloads use pinned Clash (Mihomo) then sing-box identities, trying the next only on HTTP 403. Settings can reverse their order. There is no Clash-Flux subscription fallback; pins do not follow upstream releases automatically, and changing the order leaves saved profiles intact. See [download policy](docs/provider-resource-management.md).
 - Desktop rule targets: search and select groups or nodes from Clash subscriptions,
   including inactive sources; preserve missing references. Mobile, native connections
   and JSON use the default outbound. See [orchestration](docs/desktop-subscription-orchestration.md).
@@ -580,7 +580,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-The source is pinned to `89359f43` consistently in the local checkout and CI, retaining Windows text direction, text actions, multi-format clipboard, independent resource packages, and the existing Pager fixes. The `e2afd8a3` candidate from 2026-11-16 was not releaseable because its macOS AppKit source defines window methods twice, so this release keeps the last framework pin to pass the complete release matrix. CodeEditor uses fork `ee5b0cf8`, with retained documents and a controller for each mount. Media uses upstream `fee506de`, with the QR page migrated to the system image-picker API. The fork record explains the remaining Camera audio-dependency integration. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
+The source is pinned to `6e04d4e` consistently in the local checkout and CI, integrating upstream window-API convergence, unified task waiting and resumption, system tasks, UIScene multi-window support, persistent external-file access, bitmap snapshots, runtime diagnostics controls, CLI watch mode, and runtime dependency conflict fixes on top of `e2afd8a3`; no page migration was required. CodeEditor uses fork `ee5b0cf8`, with retained documents and a controller for each mount. Media uses upstream `fee506de`, with the QR page migrated to the system image-picker API. The fork record explains the remaining Camera audio-dependency integration. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

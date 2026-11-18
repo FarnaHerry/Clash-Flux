@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.116 发布说明](docs/releases/v0.3.116.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.117 发布说明](docs/releases/v0.3.117.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -21,8 +21,6 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
 - 网站访问测试：卡片展示本次出站的国旗、国家码和测试时间，支持全部测试、单卡重试及临时网站编辑；宽屏右键菜单，窄屏保留三点操作。按系统实际网络测试，10 秒超时；目标网站能返回出口位置时才显示国家，见[网站测试](docs/website-tests.md)。
 
 - 订阅原文、规则集 JSON、编译 JSON 和诊断报告共用 CodeEditor 文本组件，工作线程预构建文档，输入时不逐键复制全文。
-
-- 订阅下载固定使用 Clash（Mihomo）与 sing-box UA，HTTP 403 时尝试下一项；设置页可交换顺序。兼容版本不随上游自动提升，也不发送 Clash-Flux 兜底身份；调整不改写已有订阅。
 
 - 桌面外层使用分隔线，页内保留卡片；页名和顶部动作位于自定义标题栏，动作排列在窗口控件左侧。
   手机保留现有页面布局。
@@ -61,6 +59,7 @@ JSON（导入后合并应用托管项，再交给 sing-box 运行）。
   OpenVPN `.ovpn` 通过普通远程/本地来源导入，由 sing-box 1.14 的 `openvpn-client`
   endpoint 承载；桌面次来源按启用规则参与，手机保持单活动普通来源。
   不再提供旧 OpenVPN 独立连接或批量开关，PPTP 才由平台后端安装系统路由
+- 订阅下载默认使用固定兼容版本的 Clash（Mihomo）→ sing-box UA，HTTP 403 时尝试下一项；设置页可交换顺序，不包含 Clash-Flux 兜底身份。版本不会自动追随上游，调整不改写已有订阅，详见[下载策略](docs/provider-resource-management.md)。
 - 内核控制：桌面应用启动及设置中安装服务成功后进入待命；停核后测速也会按需启动待命。
   待命不开放业务入站，点击“连接”后
   开放代理端口并应用保存的系统代理/TUN 选择，两者均关闭仍可手动使用本地代理。
@@ -420,7 +419,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-当前源码固定 `89359f43`，本机与 CI 统一，包含 Windows 文本方向、编辑动作、多格式剪贴板、独立资源包和既有 Pager 修复。2026-11-16 的 `e2afd8a3` 候选因 macOS AppKit 重复方法定义而未通过发布构建，因此这版保持上次完整通过发布门禁的框架 pin。CodeEditor 固定 fork `ee5b0cf8`，文档与挂载控制器分离；Media 固定官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
+当前源码固定 `6e04d4e`，本机与 CI 统一，在 `e2afd8a3` 基础上集成上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、位图快照、运行诊断控制、CLI watch 模式与运行时依赖冲突修复；应用无需页面迁移。CodeEditor 同步到 fork `ee5b0cf8`，文档与挂载控制器分离；Media 同步到官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

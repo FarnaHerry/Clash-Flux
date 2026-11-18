@@ -19,6 +19,12 @@ public final class ProfileHttpPolicyTest {
                 "explicit request headers are never replaced by a fallback");
         require(!ProfileHttpPolicy.shouldTryNextUserAgent(403, true, null),
                 "invalid request headers are not retried");
+        require(ProfileHttpPolicy.hasValidators(new String[]{"If-None-Match", "test-etag"}) &&
+                        ProfileHttpPolicy.hasValidators(new String[]{"if-modified-since", "date"}) &&
+                        !ProfileHttpPolicy.hasValidators(new String[0]) &&
+                        !ProfileHttpPolicy.hasValidators(null) &&
+                        !ProfileHttpPolicy.hasValidators(new String[]{"If-None-Match"}),
+                "only a complete conditional request can validate a 304");
         require(ProfileHttpPolicy.shouldTryNextUserAgent(403, true,
                         new String[]{"If-None-Match", "test-etag"}),
                 "a bounded ordinary subscription retains identity fallback during revalidation");

@@ -28,6 +28,10 @@ final class ProfileHttpDownloaderTest {
             if ("/redirect".equals(path)) {
                 exchange.getResponseHeaders().set("Location", "/good");
                 exchange.sendResponseHeaders(302, -1);
+            } else if ("/fallback-304".equals(path)) {
+                String agent = exchange.getRequestHeaders().getFirst("User-Agent");
+                exchange.getResponseHeaders().set("ETag", "test-etag");
+                exchange.sendResponseHeaders(AGENTS[1].equals(agent) ? 304 : 403, -1);
             } else if ("/conditional".equals(path) && "test-etag".equals(exchange.getRequestHeaders().getFirst("If-None-Match"))) {
                 exchange.sendResponseHeaders(304, -1);
             } else {
@@ -80,6 +84,12 @@ final class ProfileHttpDownloaderTest {
             require(identityAgents.equals(Arrays.asList(AGENTS[0], AGENTS[0], AGENTS[1],
                     AGENTS[0], AGENTS[1], "clash-flux/0.1")),
                     "only the two pinned subscription identities are attempted");
+            ProfileHttpDownloader.Result fallback304 = ProfileHttpDownloader.fetch(
+                    base + "/fallback-304", 3, 1024, true,
+                    new String[]{"If-None-Match", "test-etag"}, true, AGENTS, staging.toString());
+            require(fallback304.status == 304 && fallback304.attempts == 2 &&
+                    !fallback304.error.isEmpty() && "http".equals(fallback304.failure),
+                    "a 304 after dropping validators must not approve the previous representation");
             String[] reversed = {AGENTS[1], AGENTS[0]};
             ProfileHttpDownloader.Result reordered = ProfileHttpDownloader.fetch(base + "/identity", 3, 1024,
                     true, new String[0], true, reversed, staging.toString());

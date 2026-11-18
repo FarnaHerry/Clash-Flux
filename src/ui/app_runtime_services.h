@@ -14,6 +14,8 @@ struct AppRuntimeServices {
     // activation, including when the UI process is started by the tap.
     huxerui::State<std::uint64_t> backgroundSettingsRequests{0};
     std::uint64_t handledBackgroundSettingsRequests = 0;
+    huxerui::State<bool> profileScanRequested{false};
+    bool profileScanOpen = false;
     bool persistenceStarted = false;
     bool startupActivationHandled = false;
     bool profilesPumpStarted = false;

@@ -23,6 +23,7 @@ public final class RuntimeControlService extends Service {
     private final IClashRuntime.Stub binder = new IClashRuntime.Stub() {
         @Override public Bundle snapshot() {
             Bundle snapshot = ClashVpnService.runtimeSnapshot();
+            snapshot.putBoolean("runtimeOwner", ClashVpnService.hasRuntimeOwner());
             snapshot.putBoolean("tunResetPending", getSharedPreferences(
                     "clashflux", MODE_PRIVATE).getBoolean(
                     "tun_preference_reset_pending", false));

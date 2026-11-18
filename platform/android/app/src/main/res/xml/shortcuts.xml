@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="toggle_vpn"
+        android:icon="@drawable/ic_shortcut_power"
+        android:shortcutShortLabel="@string/shortcut_toggle">
+        <intent
+            android:action="dev.farna.clashflux.action.SHORTCUT_TOGGLE_VPN"
+            android:targetClass="dev.farna.clashflux.LauncherShortcutActivity"
+            android:targetPackage="dev.farna.clashflux" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="scan_qr"
+        android:icon="@drawable/ic_shortcut_scan"
+        android:shortcutShortLabel="@string/shortcut_scan">
+        <intent
+            android:action="dev.farna.clashflux.action.SHORTCUT_SCAN"
+            android:targetClass="dev.farna.clashflux.LauncherShortcutActivity"
+            android:targetPackage="dev.farna.clashflux" />
+    </shortcut>
+</shortcuts>

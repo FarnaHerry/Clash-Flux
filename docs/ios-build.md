@@ -21,6 +21,10 @@ iOS 订阅和规则集下载由 `src/api.cpp` 转到 `platform/ios/App/ClashFlux
 `NSURLSession`，始终使用 Apple 系统证书与主机名校验，不提供 server-trust challenge
 放行路径。旧订阅的证书跳过字段不再生效；不修改全局 URLSession 信任设置或 HuxerUI 通用 API。
 
+桌面图标「开关」与「扫一扫」待接入。当前 `RunApplication()` 使用框架自己的 UIKit delegate，
+应用尚无公开入口接收 Quick Action 的冷启动参数和运行中回调。需先在框架宿主接通并转发
+系统事件，再接入 VPN 状态切换、iOS 相机权限和扫码确认流程，随后验证冷、热启动及返回。
+
 ## 工具链 ABI 约束（核心构建与 Xcode 侧必须同源）
 
 iOS 核心库（`clash-flux_huxerui_ios_core`）与 Xcode 侧 app/extension 必须使用**同一套

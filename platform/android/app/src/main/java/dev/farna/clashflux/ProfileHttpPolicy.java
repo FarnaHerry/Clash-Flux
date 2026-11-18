@@ -5,6 +5,16 @@ final class ProfileHttpPolicy {
 
     private ProfileHttpPolicy() {}
 
+    static boolean hasValidators(String[] requestHeaders) {
+        if (requestHeaders == null || requestHeaders.length % 2 != 0) return false;
+        for (int i = 0; i < requestHeaders.length; i += 2) {
+            String name = requestHeaders[i];
+            if ("if-none-match".equalsIgnoreCase(name) || "if-modified-since".equalsIgnoreCase(name))
+                return true;
+        }
+        return false;
+    }
+
     static boolean shouldTryNextUserAgent(int status, boolean subscriptionRequest, String[] requestHeaders) {
         if (status != 403 || !subscriptionRequest || requestHeaders == null || requestHeaders.length % 2 != 0)
             return false;

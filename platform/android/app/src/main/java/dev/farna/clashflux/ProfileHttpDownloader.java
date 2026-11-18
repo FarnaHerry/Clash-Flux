@@ -127,7 +127,12 @@ final class ProfileHttpDownloader {
                 result.headers = headers;
 
                 if (status == HttpURLConnection.HTTP_NOT_MODIFIED) {
-                    result.error = "";
+                    if (!ProfileHttpPolicy.hasValidators(requestHeaders)) {
+                        result.error = "HTTP 304 响应没有对应的条件请求";
+                        result.failure = "http";
+                    } else {
+                        result.error = "";
+                    }
                     return result;
                 }
 

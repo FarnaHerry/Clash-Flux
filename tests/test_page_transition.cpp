@@ -33,6 +33,7 @@
 #include "home_header_control.h"
 #include "home_grid.h"
 #include "home_card.h"
+#include "country_flag.h"
 #include "home_easter_eggs.h"
 #include "home_mode_choices.h"
 #include "interaction_theme.h"
@@ -1812,6 +1813,14 @@ huxerui::View HomeGridRoot() {
 const huxerui::Application kHomeGridApplication{HomeGridRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallHomeGridFixture}}};
 
+void testPublicIpFlag() {
+    using clashflux::ui::CountryFlagEmoji;
+    check(CountryFlagEmoji("CN") == "🇨🇳", "China country code becomes its flag emoji");
+    check(CountryFlagEmoji("my") == "🇲🇾", "lowercase country code becomes its flag emoji");
+    check(CountryFlagEmoji("") == "🌐" && CountryFlagEmoji("1X") == "🌐",
+          "missing or invalid country code uses the neutral globe");
+}
+
 void testFixedHomeGeometry() {
     using namespace clashflux::ui;
     for (const bool desktop : {false, true}) {
@@ -1823,7 +1832,7 @@ void testFixedHomeGeometry() {
             populated = false;
             ui.SetWindowMetrics({.viewport = {width, 900.0F}}); ui.PumpAndSettle();
             const auto catalog = HomeCardCatalog(desktop);
-            check(catalog.size() == (desktop ? 7U : 5U), "home uses the actual platform's fixed card count");
+            check(catalog.size() == (desktop ? 8U : 6U), "home uses the actual platform's fixed card count");
             std::vector<huxerui::Rect> before;
             for (const auto& spec : catalog) {
                 const auto rect = ui.Find(UiSelector::Key("home-card-" + std::string(spec.id))).One().bounds;
@@ -3637,6 +3646,7 @@ huxerui::View ProxyGridProfileRoot() {
         auto grid = PageVirtualGrid(model->count, item, 8.0F)
             .Columns(huxerui::GridColumns::Adaptive(196.0F)) // matches kProxyNodeWidth
             .EstimatedRowExtent(52.0F)
+            .ColumnSpacing(kSectionCardSpacing)
             .Controller(controller);
         if (model->cache_extent >= 0.0F) grid = std::move(grid).CacheExtent(model->cache_extent);
         return huxerui::Column {ScrollArea(std::move(grid)
@@ -7238,12 +7248,10 @@ huxerui::View SettingsRowsRoot() {
           huxerui::Column {
             huxerui::ProvideEnvironment(SettingsRowInsets{16.0F, 10.0F, 48.0F}, huxerui::Column {
               action(0), action(1),
-              SettingsContentRow(huxerui::Row {
-                huxerui::Text("Independent control").With(huxerui::Grow(1.0F)),
-                huxerui::Switch(checked.Get()).OnChanged([checked](bool value) {
+              SettingSwitchRow("Independent control", {}, huxerui::Switch(checked.Get())
+                .OnChanged([checked](bool value) {
                     checked = value; ++settingsSwitchChanges;
-                }).Key("settings-independent-switch"),
-              }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))).Key("settings-control-row"),
+                }).Key("settings-independent-switch")),
               action(2),
             }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))),
           }.With(huxerui::Background(theme.colors.surface), huxerui::CornerRadius(14.0F),
@@ -7346,8 +7354,14 @@ void testSettingsRowFeedback() {
         const auto group = ui.Find(UiSelector::Key("settings-row-group")).One().bounds;
         const auto first = ui.Find(UiSelector::Key("settings-action-0")).One().bounds;
         const auto middle = ui.Find(UiSelector::Key("settings-action-1")).One().bounds;
-        const auto control = ui.Find(UiSelector::Key("settings-control-row")).One().bounds;
         const auto last = ui.Find(UiSelector::Key("settings-action-2")).One().bounds;
+        const auto controlSwitch = ui.Find(UiSelector::Key("settings-independent-switch")).One().bounds;
+        const huxerui::Rect control{middle.x, middle.y + middle.height, group.width,
+            last.y - middle.y - middle.height};
+        check(control.height >= 48.0F && controlSwitch.height >= 48.0F &&
+              controlSwitch.y >= control.y &&
+              controlSwitch.y + controlSwitch.height <= control.y + control.height,
+              "grouped production switch row keeps its touch target and fits the allocated slot");
         check(std::abs(first.width - group.width) < 0.1F && std::abs(first.x - group.x) < 0.1F &&
               std::abs(last.width - group.width) < 0.1F && std::abs(first.height - 48.0F) < 0.1F &&
               std::abs(first.y - group.y) < 0.1F && std::abs(last.y + last.height - group.y - group.height) < 0.1F,
@@ -8141,20 +8155,22 @@ huxerui::View SettingsReadinessRoot() {
     return huxerui::FlatTheme {huxerui::Scope([] {
         const auto model = huxerui::UseState(std::make_shared<SettingsReadinessFixture>()).Get();
         settingsReadiness = model;
-        return huxerui::Column {
+        return huxerui::ProvideEnvironment(clashflux::ui::SettingsRowInsets{16.0F, 10.0F, 48.0F},
+          huxerui::ScrollView(huxerui::Column {
           huxerui::Text("Settings"),
-          clashflux::ui::SettingsContentRow(huxerui::Row {
-            huxerui::Text("Auto connect").With(huxerui::Grow(1.0F)),
+          huxerui::Column {clashflux::ui::SettingSwitchRow("Auto connect", {},
             clashflux::ui::SettingsValue(model->settingsReady.Get(), huxerui::Switch(model->savedAutoRun.Get())
                 .OnChanged([model](bool value) { model->savedAutoRun = value; ++model->changes; })
-                .Key("hydrated-setting-switch")),
-          }),
+                .Key("hydrated-setting-switch")))}.Key("settings-auto-row"),
+          huxerui::Column {clashflux::ui::SettingSwitchRow("Hinted setting", "Supporting hint",
+            clashflux::ui::SettingsValue(model->settingsReady.Get(), huxerui::Switch(false).Key("hydrated-hint-switch")))}
+            .Key("settings-hint-row"),
           clashflux::ui::SettingsContentRow(huxerui::Row {
             huxerui::Text("Core").With(huxerui::Grow(1.0F)),
             clashflux::ui::SettingsValue(model->coreReady.Get(), huxerui::Button("Restart").Key("ready-core-action")),
           }),
           huxerui::Button("About").OnClick([model] { ++model->navigations; }),
-        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))));
     })};
 }
 
@@ -8168,6 +8184,13 @@ void testSettingsReadiness() {
         check(!ui.Find(UiSelector::Key("hydrated-setting-switch")).Exists() &&
               !ui.Find(UiSelector::Key("ready-core-action")).Exists(),
               "pending settings and runtime values never expose default controls");
+        const auto pendingAuto = ui.Find(UiSelector::Key("settings-auto-row")).One().bounds;
+        const auto pendingHint = ui.Find(UiSelector::Key("settings-hint-row")).One().bounds;
+        check(ui.Find(UiSelector::Text("Hinted setting")).Exists() &&
+              ui.Find(UiSelector::Text("Supporting hint")).Exists() &&
+              !ui.Find(UiSelector::Key("hydrated-hint-switch")).Exists() &&
+              pendingAuto.height >= 48.0F && pendingHint.height >= 48.0F,
+              "production switch rows keep hints, full heights and withhold pending controls");
         ui.Find(UiSelector::Text("About")).Tap(); ui.PumpAndSettle();
         check(settingsReadiness->navigations == 1 && settingsReadiness->changes == 0,
               "independent settings navigation works before configuration hydration");
@@ -8176,6 +8199,10 @@ void testSettingsReadiness() {
         check(ui.Find(UiSelector::Key("hydrated-setting-switch")).Exists() &&
               !ui.Find(UiSelector::Key("ready-core-action")).Exists(),
               "hydrated settings appear immediately without waiting for runtime probes");
+        const auto hydratedAuto = ui.Find(UiSelector::Key("settings-auto-row")).One().bounds;
+        const auto hydratedHint = ui.Find(UiSelector::Key("settings-hint-row")).One().bounds;
+        check(hydratedAuto.height >= 48.0F && hydratedHint.height >= 48.0F,
+              "hydrated production switch rows keep full heights with and without a hint");
         ui.Find(UiSelector::Key("hydrated-setting-switch")).Tap(); ui.PumpAndSettle();
         check(!settingsReadiness->savedAutoRun.Get() && settingsReadiness->changes == 1,
               "the first editable switch uses its saved value rather than a fallback");
@@ -8242,6 +8269,7 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    testPublicIpFlag();
     try { testSubscriptionUserAgentOrder(); testSettingsReadiness(); testSettingsSelectSizing(); testSettingsRowFeedback(); testHomeSettingsGear(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: settings row feedback: %s\n", error.what());

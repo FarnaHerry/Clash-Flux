@@ -33,6 +33,14 @@ public final class RuntimeStartPolicyTest {
         require(!RuntimeStartPolicy.allowTun(false, true, true, false), "speed tests must reject openTun");
         require(!RuntimeStartPolicy.allowTun(false, false, false, false), "cancelled startup must reject openTun");
         require(!RuntimeStartPolicy.allowTun(false, false, true, true), "stopping runtime must reject openTun");
+        require(RuntimeTogglePolicy.shouldStopVpn(1, false) &&
+                        RuntimeTogglePolicy.shouldStopVpn(2, false),
+                "starting and connected VPN states are stoppable");
+        require(RuntimeTogglePolicy.shouldStopVpn(3, true),
+                "a failed VPN with retained resources must be stopped before retrying");
+        require(!RuntimeTogglePolicy.shouldStopVpn(0, true) &&
+                        !RuntimeTogglePolicy.shouldStopVpn(3, false),
+                "core-only or stale failed state starts a fresh VPN");
         require(!RuntimeStartPolicy.retainInbound(true, "tun"), "core-only config must omit TUN in memory");
         require(RuntimeStartPolicy.retainInbound(false, "tun"), "VPN config must retain TUN");
         for (String type : new String[]{"mixed", "socks", "http", "direct", "redirect", "custom"}) {

@@ -45,9 +45,12 @@ Json pack(const TargetSourceModel& model) {
     for (const auto& note : data.diagnostics)
         diagnostics.push_back(Json::array({note.scope, note.level, note.subject, note.detail, note.action, note.sourceId}));
     const auto& action = data.defaultAction;
+    auto noResolve = Json::array();
+    for (const auto id : data.noResolveRuleIds) noResolve.push_back(id);
     return Json::array({data.sourceId, data.nativeDirect, data.legacyClashDefault, data.format,
         Json::array({action.action, action.outbound, action.rejectMethod, action.implicit}),
-        std::move(origins), std::move(objects), std::move(diagnostics), data.payload, data.ruleSets});
+        std::move(origins), std::move(objects), std::move(diagnostics), data.payload, data.ruleSets,
+        std::move(noResolve)});
 }
 
 std::shared_ptr<const TargetSourceModel> unpack(Json packed, std::string source) {
@@ -83,6 +86,14 @@ std::shared_ptr<const TargetSourceModel> unpack(Json packed, std::string source)
     }
     if (nextRule != rules.size()) throw std::runtime_error("Unreferenced probe rules");
     data.ruleSets = std::move(packed.at(9));
+    for (const auto& value : packed.at(10)) {
+        if (!value.is_number_unsigned()) throw std::runtime_error("Invalid no-resolve rule id");
+        const auto id = value.get<std::uint64_t>();
+        if (id == 0 || id > data.rules.size() ||
+            (!data.noResolveRuleIds.empty() && id <= data.noResolveRuleIds.back()))
+            throw std::runtime_error("Invalid no-resolve rule order");
+        data.noResolveRuleIds.push_back(id);
+    }
     return capture.Finish();
 }
 
@@ -95,7 +106,7 @@ std::vector<std::uint8_t> encode(const TargetSourceModel& model, bool cbor) {
 
 // Fixed fixture identity. The probe never accepts application cache files.
 std::string identity(std::string_view source, bool cbor) {
-    return std::string(cbor ? "target-r5-probe-1-cbor\n" : "target-r5-probe-1-json\n") + sha256(source);
+    return std::string(cbor ? "target-r5-probe-2-cbor\n" : "target-r5-probe-2-json\n") + sha256(source);
 }
 
 CompileOptions optionsFor(const std::string& source) {

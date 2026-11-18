@@ -5,13 +5,15 @@ import android.content.Intent;
 import android.net.VpnService;
 import android.os.Bundle;
 
-/** Hosts the one-time system VPN consent flow initiated from the QS tile. */
+/** Hosts system VPN consent for the Quick Settings tile and launcher shortcut. */
 public final class VpnTileConsentActivity extends Activity {
     private static final int REQUEST_VPN_CONSENT = 1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Android restores the outstanding consent result for a recreated Activity.
+        if (savedInstanceState != null) return;
         String conflict = VpnConflict.find(this);
         if (!conflict.isEmpty()) {
             MainActivity.appLog(conflict, true);
@@ -33,7 +35,7 @@ public final class VpnTileConsentActivity extends Activity {
         if (requestCode == REQUEST_VPN_CONSENT && resultCode == RESULT_OK) {
             startVpn();
         } else {
-            MainActivity.appLog("用户取消了通知栏快捷开关的 VPN 授权", true);
+            MainActivity.appLog("用户取消了快捷开关的 VPN 授权", true);
             finish();
         }
     }

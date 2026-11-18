@@ -30,6 +30,13 @@ template <class T> Result<std::string> encode(const T& value) {
 }
 
 struct VersionInput { std::optional<std::string> version; };
+struct IpLookupFieldsInput {
+    std::optional<std::string> ip, country, countryCode, country_code;
+};
+struct IpLookupInput {
+    std::optional<IpLookupFieldsInput> data;
+    std::optional<std::string> ip, country, countryCode, country_code;
+};
 struct ReleaseInput {
     std::optional<std::string> tag_name;
     std::optional<bool> draft, prerelease;
@@ -339,6 +346,29 @@ Result<std::string> DecodeVersion(std::string_view text) {
     if (!input) return {{}, std::move(input.error)};
     if (!input.value.version || input.value.version->empty()) return {{}, "missing version"};
     return {std::move(*input.value.version), {}};
+}
+Result<PublicIpLookup> DecodePublicIpLookup(std::string_view text) {
+    auto input = codec_detail::decode<codec_detail::IpLookupInput>(text);
+    if (!input) return {{}, std::move(input.error)};
+    // Foreign services usually return top-level {ip,country}; the domestic
+    // fallback nests {data:{ip,countryCode}}. Accept both without guessing.
+    const auto* nested = input.value.data ? &*input.value.data : nullptr;
+    const auto& ip = (nested && nested->ip) ? nested->ip : input.value.ip;
+    if (!ip || !network::IP(*ip)) return {{}, "missing or invalid IP"};
+
+    const auto& code = (nested && nested->countryCode) ? nested->countryCode
+        : (nested && nested->country_code) ? nested->country_code
+        : (nested && nested->country) ? nested->country
+        : input.value.countryCode ? input.value.countryCode
+        : input.value.country_code ? input.value.country_code
+        : input.value.country;
+    if (!code || code->size() != 2) return {{}, "missing or invalid country code"};
+    std::string normalized = *code;
+    for (char& value : normalized) {
+        if (value >= 'a' && value <= 'z') value = static_cast<char>(value - 'a' + 'A');
+        if (value < 'A' || value > 'Z') return {{}, "missing or invalid country code"};
+    }
+    return {PublicIpLookup{*ip, std::move(normalized)}, {}};
 }
 Result<Release> DecodeStableRelease(std::string_view text) {
     auto input = codec_detail::decode<codec_detail::ReleaseInput>(text);

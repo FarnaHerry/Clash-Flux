@@ -554,8 +554,11 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
 [[huxerui::composable]] huxerui::View NetworkDnsEntry() {
     const auto navigation = huxerui::UseNavigation();
-    return SettingNavigationItem(Localized("DNS 设置"), app::images::globe,
-        [navigation] { navigation.Push(NetworkDnsEditorPage); });
+    const auto settings = huxerui::UseService<SettingsModel>();
+    return SettingNavigationItem(Localized("DNS 设置"), app::images::globe, [navigation, settings] {
+        if (!settings->view.Get().ready) return;
+        navigation.Push(NetworkDnsEditorPage);
+    }).With(huxerui::Enabled(settings->view.Get().ready)).Key("settings-network-dns");
 }
 
 [[huxerui::composable]] huxerui::View NetworkSettingsEntry(HomeProxySettingsKind kind) {

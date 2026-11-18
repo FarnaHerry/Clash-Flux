@@ -16,13 +16,14 @@ struct SettingsRowInsets {
     bool operator==(const SettingsRowInsets&) const = default;
 };
 
-inline huxerui::View SettingsContentRow(huxerui::View content) {
-    return huxerui::Scope([content]() -> huxerui::View {
+inline huxerui::View SettingsContentRow(huxerui::View content, std::optional<float> verticalPadding = {}) {
+    return huxerui::Scope([content, verticalPadding]() -> huxerui::View {
         const auto insets = huxerui::UseEnvironment<SettingsRowInsets>();
         if (insets == SettingsRowInsets{}) return content;
         return huxerui::Column {content}.With(
-            huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal, insets.vertical)),
+            huxerui::Padding(huxerui::EdgeInsets::Symmetric(insets.horizontal, verticalPadding.value_or(insets.vertical))),
             huxerui::Frame{.min_height = insets.minimum_height},
+            huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     });
 }

@@ -563,7 +563,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                         continue;
                     }
                     if (qrsDecoder->DecodedBlocks() == 0)
-                        message = Localized("将二维码放入取景画面，识别后自动导入");
+                        message = Localized("将二维码放入取景框，支持订阅链接和配置文本。");
                     const auto photo = co_await session.CapturePhotoAsync(
                         {.jpeg_quality = 50, .mirror = huxerui::camera::MirrorMode::Off});
                     if (!photo.Succeeded()) {
@@ -1167,18 +1167,10 @@ void PushProfileQrScanner(
         .With(ProfileSecondaryTransition(theme.motion));
 }
 
-[[huxerui::composable]] huxerui::View ProfileLinkImportPage(
-    profile_link::RemoteProfile request,
-    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
-    std::shared_ptr<AppHttpClient> http, huxerui::NavigationController navigation,
-    std::function<void()> close, huxerui::State<bool> showing) {
-    auto tasks = huxerui::UseTaskScope();
-    huxerui::Lifecycle([showing] { return [showing] { showing = false; }; }, 0);
-    // Separate form state preserves an unfinished ordinary import when a
-    // website opens another subscription. All State cells have initial values.
-    const ProfileCreateFields fields{
-        huxerui::UseState(huxerui::TextEditingValue{request.name}),
-        huxerui::UseState(huxerui::TextEditingValue{request.url}),
+static ProfileCreateFields UseExternalProfileFields(std::string name, std::string url) {
+    return {
+        huxerui::UseState(huxerui::TextEditingValue{std::move(name)}),
+        huxerui::UseState(huxerui::TextEditingValue{std::move(url)}),
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState<std::size_t>(0),
         huxerui::UseState(huxerui::TextEditingValue{}),
@@ -1192,6 +1184,40 @@ void PushProfileQrScanner(
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(true),
         huxerui::UseState(std::string{})};
+}
+
+#if defined(__ANDROID__)
+[[huxerui::composable]] huxerui::View AndroidProfileScanShortcutPage(std::function<void()> onClose) {
+    const auto navigation = huxerui::UseNavigation();
+    const auto tasks = huxerui::UseTaskScope();
+    const auto toast = UseFluxToast();
+    const auto picker = huxerui::UseService<huxerui::FilePicker>();
+    const auto http = huxerui::UseService<AppHttpClient>();
+    const auto fields = UseExternalProfileFields({}, {});
+    const auto close = [navigation] { static_cast<void>(navigation.Pop()); };
+    const auto reviewBack = UseProfileCreateClose(fields, close);
+    auto scanned = huxerui::UseState(false);
+    huxerui::Lifecycle([onClose] { return onClose; }, 0);
+    if (!scanned.Get()) {
+        return ProfileQrScannerPage(close, [content = fields.qr_content, scanned](std::string result) {
+            content = huxerui::TextEditingValue{std::move(result)};
+            scanned = true;
+        });
+    }
+    return ProfileCreateMethodPage(ProfileAddMethod::Qr, fields, tasks, toast, picker,
+        http, false, navigation, reviewBack, close);
+}
+#endif
+
+[[huxerui::composable]] huxerui::View ProfileLinkImportPage(
+    profile_link::RemoteProfile request,
+    FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
+    std::shared_ptr<AppHttpClient> http, huxerui::NavigationController navigation,
+    std::function<void()> close, huxerui::State<bool> showing) {
+    auto tasks = huxerui::UseTaskScope();
+    huxerui::Lifecycle([showing] { return [showing] { showing = false; }; }, 0);
+    // Separate form state preserves an unfinished ordinary import.
+    const auto fields = UseExternalProfileFields(std::move(request.name), std::move(request.url));
     const auto back = UseProfileCreateClose(fields, close);
     return ProfileCreateMethodPage(ProfileAddMethod::Url, fields, tasks, toast,
         picker, http, false, navigation, back, close);

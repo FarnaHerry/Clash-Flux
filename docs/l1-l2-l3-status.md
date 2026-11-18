@@ -1,10 +1,17 @@
+# L1 / L2 / L3 开发完成度复核
+
+## 2026-11-18 v0.3.117 发布
+
+- 基于 `v0.3.116`（`f66ac4d`）快进合并工作区，发布提交包含 HuxerUI `6e04d4e`、首页公网出口国旗、默认路由内网 IP、DNS 设置就绪门禁、Android 快捷方式/扫码入口和 UA 兜底 304 修复；Android versionName 0.3.117、versionCode 195，sing-box/libbox 保持 1.14.4。
+- Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Debug 下 HuxerUI codegen、主目标与全部测试目标构建通过；`clash-flux --version` 输出 v0.3.117；`ctest --output-on-failure --no-tests=error -L clashflux-required -j 4` **38/38 通过（113.93 秒）**；`git diff --check` 通过。
+- Android 宿主 JVM 的下载/UA 304、运行时启动、VPN 时长和升级策略回归通过；HuxerUI Android Java 编译通过。本机缺少 `libbox-arm64.aar`，完整 APK、正式签名安装和真机 VPN 未在本地验收，由标签 CI 与独立设备确认。
+- 本轮未提交 `libbox-arm64.aar`、用户数据库或订阅文件；Windows/macOS 本机 GUI 未执行。发布标签与 CI 结果见后续发布记录。
+
 ## v0.3.115 隔离补丁验证（2026-11-17）
 
 - 代码快照：基于正式 `v0.3.114` 提交 `6236644` 的隔离发布 worktree，应用规则级 `no-resolve` 增量及 AND 顺序修复；HuxerUI 固定消费 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`，sing-box 固定 v1.14.4。
 - Fedora 45 WSL / Clang 23.1.5 / libc++ / CMake 4.4.2 Debug：全目标和主目标构建通过，`run.sh --version` 输出 v0.3.115；目标 baseline/source/project、protocol baseline/entries 通过；完整 `clashflux-required` CTest 38/38 通过，含真实固定内核运行测试；`git diff --check` 通过。
 - 复杂 AND/OR/NOT 和混合解析需求保持保守记账；未验 Windows TUN、Android 真机、桌面 GUI、平台签名/安装或发布产物。CI 发布门禁待运行。
-# L1 / L2 / L3 开发完成度复核
-
 
 ## 2026-11-18 v0.3.116 发布快照验收
 
@@ -12,7 +19,52 @@
 - Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 的隔离发布树完成 HuxerUI codegen、主目标与全目标构建。`run.sh --version` 输出 v0.3.116，`clashflux-required` CTest 38/38 通过（245.79 秒累计测试时间），`git diff --check` 通过。发布 HuxerUI 源码和 CI 均固定 `89359f43ef34357fabcf1c994f4b5fa1062c91a9`；sing-box 为 1.14.4。
 - Android 宿主 UA 策略/JVM 测试、Java 实际编译与 JNI 数组签名检查通过。冻结根代码快照另以 CMake 4.4.2 / Ninja 1.13.2 / NDK 29 完成 arm64 Debug 主目标编译和链接；Git 长路径选项仅对构建进程启用。没有据此声称 Android 真机下载/VPN、签名 APK 安装、Windows 原生 GUI 或正式发布已通过；这些由发布 CI 与独立设备验收确认。
 
+## 2026-11-18 HuxerUI 6e04d4e 与首页出口国旗
 
+- HuxerUI 固定到 `6e04d4ea3b319ddc798d7b2c783282744d063c3b`，CI pin、本机 checkout、README/Android 与 fork 记录同步。该版本集成上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件访问、位图快照、运行诊断和运行时依赖修复；应用未使用已移除的窗口方法，无需页面迁移。`common.cpp` 补上不再由框架间接提供的 `<filesystem>` 显式包含。
+- 移动端“网络检测”卡改为按 API 返回国家码显示国旗 emoji：国外 `https://api.country.is` 失败后使用国内 `https://api.mir6.com/api/ip_json`；两个端点都返回 IP 与国家码，同一解码器校验后展示，不写死中国。未知国家用地球 emoji，地址仍显示在下方。
+- `fetchText` 响应上限提高到 4096 B 以容纳国内 JSON；两个端点各 8 秒超时、共用当前出口，旧响应由串行号丢弃。新增 `wire::DecodePublicIpLookup`、国旗转换和生产页面测试。
+- 验证：Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Debug 主目标、全部测试目标、HuxerUI codegen 构建通过；版本 `v0.3.117`；`clashflux-required` CTest **38/38，113.93 秒**。真实请求分别返回马来西亚（MY）和中国（CN）国家码。Android 宿主 JVM 门禁与 HUXERUI Java 编译通过；Gradle app 任务因缺少 `libbox-arm64.aar` 在 `stageSingboxAar` 失败，Android native/完整 APK 未在本机通过。
+- Windows 原生配置因本机缺少 OpenSSL 开发包失败；macOS、Android 真机、国旗 emoji 的实际字体渲染及 VPN 未验收。证据见 [HuxerUI 6e04d4e 升级](evidence/2026-11-18-huxerui-6e04d4e.md)。未提交、推送或发布。
+
+## 2026-11-18 审查缺口修复
+
+- Android 下载桥在每次请求前判断是否实际发送 `If-None-Match`/`If-Modified-Since`；UA 兜底清除条件头后若收到 304，按 HTTP 失败处理，不再复用首个 UA 的缓存正文。宿主 JVM 新增首选 UA 403 → 兜底 304 回归。
+- 桌面图标快捷方式改为透明中转 Activity；VPN 开关在 1.5 秒窗口内通过 `RuntimeControlService` Binder 读取实时 `vpnState` 和运行时所有权，进程异常回收后的陈旧恢复值不再决定首次点击方向；绑定失败才回退持久状态。授权 Intent 带 `NEW_TASK`，不再被后续快捷方式的中转任务清理影响。
+- DNS 设置入口和保存现在都等待 `SettingsModel.ready`，与相邻网络设置一致；hydrate 前不会以默认网络配置建立表单。
+- 目标快照的 JSON/CBOR 探针新增 `noResolveRuleIds` 编解码、顺序/范围校验和版本 2 身份；重启夹具加入顶层 CIDR `no-resolve`。重放矩阵补充禁用/替换前序规则、非空全局 origin 和次来源隔离，HTTP provider 正文替换仍按当前候选重编译。
+- 设置行抽到 `src/ui/settings_rows.cpp`，`page_transition` 直接链接生产 `SettingSwitchRow`；UA 顺序选项在每组标签下展示实际完整 UA。代理网格性能夹具补入生产 `ColumnSpacing(8pt)` 并重采 [证据](evidence/2026-11-16-proxy-grid-scroll.md)。
+- 首页「内网 IP」卡片只显示系统默认路由当前使用的接口和一条 IPv4；无默认路由时才回退第一个活动内网地址，不再并列多个接口。
+
+验证：Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Debug，完整构建和版本检查通过；`clashflux-required` CTest **38/38**（93.29 秒）通过。目标冻结/捕获/投影、协议基线、R5 JSON/CBOR 探针、UA 跨平台下载、持久化、资源管理、连接追溯及规则集运行回归通过。`git diff --check`、67 项测试门禁和 611 条 UI 字面量检查通过。Android 宿主 JVM 下载/策略/启动/VPN 时长回归通过；新增快捷方式与策略类通过 `javac`/Android SDK 编译检查。内网 IP 单一地址修改另经主目标、`page_transition` 和隔离 WSLg 实际 GUI 检查，卡片仅显示默认路由的 `eth0 / 172.20.102.54` 一行。未执行 Windows 原生构建、Android 真机或系统授权验收。
+
+## 2026-11-18 订阅 UA 固定版本与顺序设置
+
+- 普通订阅默认使用 `ClashMeta/1.19.32; mihomo/1.19.32` → `sing-box/1.14.4`，删除 Clash-Flux 订阅兜底身份。版本为独立的兼容固定值，不随应用发版或上游最新版自动改变。设置页展示实际 UA，允许交换顺序；hydrate 前不可修改，设置走应用级模型写透，影响之后的下载，不改写现有订阅。
+- 桌面与 Android 从同一原生定义捕获请求顺序和版本，Java 只负责执行传入数组。仅在 403 时切换，200 成功即停止，不按数量比较自动切换来源语义。表示缓存绑定完整 UA 列表与顺序；兜底清除条件头，不把兜底响应的校验头记为首选 UA 的缓存。
+- 同址实测组合 UA 的 Clash 原文为 43 节点 / 16 组，当前生产转换入口完整保留 43 / 16，固定 sing-box 1.14.4 `check` 返回零。单写 `ClashMeta/1.19.32` 仍为 30 / 16。此结果只证明本次响应及转换，不承诺所有服务端均识别相同标识，也不将 Verge 历史缓存的第 17 组视为已恢复。
+- `71ce44a` 加开发工作区，在 Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 完成 HuxerUI codegen、主目标构建、`run.sh --version`（v0.3.112）、`test_page_transition --subscription-ua` 与 CTest `rule_provider_download|resource_management_runtime|persistence|page_transition|ui_resources`（5/5）。回归覆盖真实 HTTP 首选/兜底、反转顺序、403 停止界限、跨 UA 条件头、重启后设置与表示缓存隔离、窄宽设置交互和卸载重挂。Android 宿主 JVM 下载策略、流式文件与 TLS 拒绝回归通过；完整平台编译与发布结果另行记录。
+- 同一快照继续完成全目标构建及 `ctest --output-on-failure --no-tests=error -L clashflux-required -j 4`（38/38，139.11 秒）。Android `:app:testProfileHttpPolicy :app:compileDebugJavaWithJavac` 通过，`javap -s` 确认 Java 的数组参数描述符与 JNI 一致。Windows / NDK 29 arm64 Debug 经 CMake 4.4.2 配置、`cmake --build platform/android/app/.cxx/Debug/40351s4r/arm64-v8a --target clash-flux -j 4` 完整编译和链接通过。为绕过本机旧工具的长路径限制，原生构建使用 Ninja 1.13.2 与进程级 Git `core.longpaths=true`；Java 任务与独立原生构建分别执行。`git diff --check` 通过。未进行 Android 真机下载、Windows 原生 GUI 和安装验收，正式发布快照另由发布工作区及 CI 验证。
+
+## 2026-11-18 节点与分组的历史对照
+
+- 补充本机 Clash Verge 原文与主订阅响应对照：同一订阅地址可能按 User-Agent 返回不同协议集合和分组，不能从同一份原文的转换一致性推断端到端订阅一致。以下仅记录数量与格式，不保存订阅地址、凭据或节点明细。
+- `mojie`：Flux 缓存为 30 个 VMess / 16 组，Verge 缓存为 43 节点（6 HY2、10 AnyTLS、27 VMess）/ 17 组。Verge 这份完整原文在重构前后转换器中均保留 43 / 17。本次同址请求 `clash-verge/v2.4.3` 返回 43 / 17；无版本 `sing-box` 返回 30 个 VMess 的 Base64 裸节点，编译后仅一个生成组；`sing-box/1.14.4` 返回完整 43 个裸节点，但仍无来源分组。服务端响应是本次快照，不保证以后数量相同。
+- `kitty`：两边保存的 Clash 原文均为 32 节点 / 2 组。本次无版本 `sing-box` 返回原生 JSON，同样为 32 / 2。Ahou 的 Verge 两份远程订阅均经外部转换地址包装同一底层订阅，分别为 31 / 11 和 31 / 28；Flux 的直接节点订阅为 51 / 1，不能将模板生成组归为转换器丢失。Verge 的另外一份本地配置为 25 / 2。当前选中的来源也不同：Verge 为 Ahou，Flux 为 kitty。
+- 本轮修改前的工作区和 v0.3.115 的 `sing-box → clash.meta → clash-flux` 仅在 403 时切 UA，200 的精简响应直接接受。因此此版本没有解决上述协商差异；版本号可能改变服务端协议能力判断，但不保证获得完整配置。后续下载策略须区分裸节点与完整配置，保留用户显式 UA 与转换地址选择，不自动按节点/组数量替换规则语义。本次审计未修改两款应用的用户数据或 UA 策略。
+- 在独占临时目录从 `894a808` 构建协议模型重构前的 `test_singbox`，与当前工作区的生产转换入口比较同一批输入。30 节点/16 分组的 Clash 文档完整出站一致。32 节点/2 分组的 Clash 来源含未准备的 HTTP 规则资源，因此仅取原有节点、分组和来源指纹进行对照，完整出站一致，节点名、地址、分组名、成员及顺序全部保留。
+- 51 个 VMess 分享节点在两端均完整生成，选择组仍为一个。逐字段差异只包含 TLS 旧分享的 `security` 从 `auto` 转为 `aes-128-gcm`，对应 v0.3.112 已记录的兼容修复，其它节点和分组字段一致。该对照范围为节点与组，不替代外部资源、VPN 或历史服务端响应的验收。
+
+## 2026-11-18 代理页测速按钮与滚动条
+
+- 宽屏测速浮层原先的 80pt 避让同时作用于节点网格尾部和滚动条轨道。滚动请求新增可选的 `rail_bottom_avoidance`，代理页将轨道附加避让设为零，正文继续保留尾部空白，测速按钮横向让出滚动条槽。窄屏导航避让继续由正文请求维护。
+- 当前 `71ce44a` 加既有开发工作区，在 Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 完成 HuxerUI codegen、主目标构建与版本检查（v0.3.112）。`test_page_transition --scrollbars`、`ctest -R '^(page_transition|ui_resources)$' --output-on-failure --no-tests=error`（2/2）及 `git diff --check` 通过。回归覆盖普通正文、虚拟列表和网格在宽窄视口下的完整视口、轨道箭头位置、尾项浮层净空与滚动位置。Windows 原生 GUI 未实测。
+
+## 2026-11-17 逻辑规则解析扩展
+
+- 以 `v0.3.115` 的路由解析工作为基础，AND/OR/NOT 及 classical provider 中全部目标 CIDR 均带 `no-resolve` 时，可沿用已有目标地址。NOT 和双重否定保留未解析域名的取反语义。混入需要查询的目标条件仍按现有 unsupported/approx 边界处理，范围见 [解析计划](resolve-granularity-plan.md#10-后续修饰符支持)。
+- 首页系统代理/TUN 齿轮改为整体偏移，图标、反馈和命中区域共用中心。新增生产按钮回归覆盖浅深色、宽窄卡片、hover、press、相邻留白与独立开关。
+- 当前工作区 HEAD 为 `71ce44a`，转换器以发布快照 `29b7f87` 为比较基线追加上述扩展。Fedora 45 WSL / Clang 23.1.5 / libc++ / CMake 4.4.2，全部目标构建、主目标版本检查（工作区版本 v0.3.112）、42 例目标冻结基线、目标捕获/投影与协议基线、`test_page_transition --home-gear` 和完整 `clashflux-required` CTest 38/38 通过。Android arm64 Debug NDK 主目标编译通过。UI 验证为无窗口生产组件回归，Windows 原生悬停与 TUN、Android 真机未验。
 ## 2026-11-17 路由解析后续
 
 - 顶层 `RULE-SET`、`GEOIP`、`IP-ASN` 的 `no-resolve` 进入解析规划。纯 AND 树可使用带修饰符的目标 CIDR 子条件。反向 GeoIP 先验证已有目标地址。固定 sing-box 1.14.4 与 Mihomo 对照覆盖字面 IP、未解析域名和前序已解析路径。编译支持与仍需近似的范围见 [后续修饰符支持](resolve-granularity-plan.md#10-后续修饰符支持)。

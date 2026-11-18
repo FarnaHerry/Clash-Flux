@@ -721,10 +721,11 @@ void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun) {
     const auto failure = form.Get().Read(parsed);
     const auto title = Localized("DNS 设置");
     const bool busy = control.Busy();
-    const bool valid = failure.empty() && settings->view.Get().networkError.empty() && !busy;
+    const bool ready = settings->view.Get().ready;
+    const bool valid = ready && failure.empty() && settings->view.Get().networkError.empty() && !busy;
     const bool canApply = control.ProxyActive();
     const auto save = [=](bool apply) {
-        if (control.Busy()) return;
+        if (!settings->view.Get().ready || control.Busy()) return;
         Network next;
         if (const auto error = form.Get().Read(next); !error.empty()) { toast.Show(error); return; }
         const auto expected = baseline.Get();

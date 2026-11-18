@@ -196,8 +196,8 @@ android {
         applicationId = "dev.farna.clashflux"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
-        versionCode = 194
-        versionName = "0.3.116"
+        versionCode = 195
+        versionName = "0.3.117"
 
         externalNativeBuild {
             cmake {
@@ -382,6 +382,7 @@ tasks.named("preBuild").configure { dependsOn testAppUpdatePolicy }
 
 def compileRuntimeStartPolicyTest = tasks.register("compileRuntimeStartPolicyTest", JavaCompile) {
     source files("src/main/java/dev/farna/clashflux/RuntimeStartPolicy.java",
+            "src/main/java/dev/farna/clashflux/RuntimeTogglePolicy.java",
             "src/main/java/dev/farna/clashflux/VpnUptime.java",
             "src/main/java/dev/farna/clashflux/RuntimeModeReconciler.java",
             "../../../tests/android/RuntimeStartPolicyTest.java",

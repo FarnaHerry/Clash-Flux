@@ -33,4 +33,16 @@ int main() {
     assert(invalid);
     const auto& e = invalid.value.entries.at("e");
     assert(e.delay == 7 && e.testTime == 0);
+
+    const auto foreign = DecodePublicIpLookup(
+        R"({"ip":"43.216.255.247","country":"MY"})");
+    assert(foreign && foreign.value.ip == "43.216.255.247" &&
+           foreign.value.countryCode == "MY");
+    const auto domestic = DecodePublicIpLookup(
+        R"({"code":200,"data":{"ip":"1.30.213.166","countryCode":"CN"}})");
+    assert(domestic && domestic.value.ip == "1.30.213.166" &&
+           domestic.value.countryCode == "CN");
+    assert(!DecodePublicIpLookup(R"({"ip":"1.2.3.999","country":"CN"})"));
+    assert(!DecodePublicIpLookup(R"({"ip":"1.2.3.4"})"));
+    assert(!DecodePublicIpLookup(R"({"ip":"1.2.3.4","country":"CHN"})"));
 }

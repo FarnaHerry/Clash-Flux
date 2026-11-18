@@ -632,6 +632,13 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     const auto* payload = std::get_if<huxerui::UrlActivation>(&activation);
     if (!payload) return;
     const auto& uri = payload->url;
+#if defined(__ANDROID__)
+    if (uri.Scheme() == "clash-flux" && uri.Authority() == "app" &&
+        uri.Path() == "/scan-qr" && !uri.Query() && !uri.Fragment()) {
+        if (!runtimeServices->profileScanOpen) runtimeServices->profileScanRequested = true;
+        return;
+    }
+#endif
     if (uri.Scheme() == "clash-flux" && uri.Authority() == "app" &&
         uri.Path() == "/settings/background") {
         runtimeServices->backgroundSettingsRequests =
@@ -799,6 +806,23 @@ huxerui::PageTransition SecondaryPageTransition(
     huxerui::State<std::size_t> navPage, huxerui::State<std::size_t> pagerPage,
     huxerui::State<int> themeMode, const IslandTheme& islands,
     const huxerui::ThemeSpec& spec, ProfilesCache profilesCache) {
+    const auto navigation = huxerui::UseNavigation();
+    const auto tasks = huxerui::UseTaskScope();
+    const auto runtime = huxerui::UseService<AppRuntimeServices>();
+    const auto profiles = huxerui::UseService<ProfilesModel>();
+    huxerui::Lifecycle([=] {
+        if (runtime->profileScanRequested.Get() && profiles->loaded.Get()) {
+            tasks.Post([=] {
+                if (!runtime->profileScanRequested.Get()) return;
+                navigation.Push(AndroidProfileScanShortcutPage, std::function<void()>{[runtime] {
+                    runtime->profileScanOpen = false;
+                }});
+                runtime->profileScanOpen = true;
+                runtime->profileScanRequested = false;
+            });
+        }
+        return [] {};
+    }, runtime->profileScanRequested, profiles->loaded);
     auto fromSwipe = huxerui::UseState(false);
     // Home/settings 卡片仍按绝对页号导航，这里把 Pager 的四槽索引与共享
     // 页号状态同步；二级页不属于 Pager，不参与该同步。

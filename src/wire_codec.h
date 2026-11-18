@@ -104,6 +104,12 @@ struct Policy {
 };
 
 Result<std::string> DecodeVersion(std::string_view text);
+struct PublicIpLookup {
+    std::string ip;
+    std::string countryCode;
+    bool operator==(const PublicIpLookup&) const = default;
+};
+Result<PublicIpLookup> DecodePublicIpLookup(std::string_view text);
 // GitHub's latest stable Release, projected from the REST response.
 struct ReleaseAsset {
     std::string name;

@@ -14,7 +14,8 @@ enum class HomeCardKind {
     Profile,    // 当前订阅
     Proxy,      // 系统代理（桌面）
     Tun,        // 虚拟网卡（桌面）
-    LanIp,      // 内网 IP（本机局域网地址）
+    LanIp,      // 内网 IP（当前默认路由的本机地址）
+    NetCheck,   // 网络检测（公网出口 IP）
 };
 
 struct HomeCardSpec {
@@ -32,8 +33,9 @@ inline constexpr HomeCardSpec kMobileHomeCards[] = {
     // 出站模式是纵向单选列表（标题 + 3 个选项），占 1x2。
     {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
-    // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
-    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
+    // 内网 IP 与网络检测在订阅卡右侧各占 1x1。
+    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
+    {HomeCardKind::NetCheck, "netcheck", "网络检测", 1, 1},
 };
 
 inline constexpr HomeCardSpec kDesktopHomeCards[] = {
@@ -42,8 +44,9 @@ inline constexpr HomeCardSpec kDesktopHomeCards[] = {
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},
-    // 内网 IP 紧跟当前订阅，1x2：两行高度可容纳更多接口明细。
-    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 2},
+    // 内网 IP 紧跟当前订阅，1x1：只显示当前路由的一条地址。
+    {HomeCardKind::LanIp, "lanip", "内网 IP", 1, 1},
+    {HomeCardKind::NetCheck, "netcheck", "网络检测", 1, 1},
     {HomeCardKind::Proxy, "proxy", "系统代理", 1, 1},
     {HomeCardKind::Tun, "tun", "虚拟网卡", 1, 1},
 };

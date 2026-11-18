@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -641,14 +642,6 @@ bool StartProxyGroupTest(const std::string& group) {
 #endif
 }
 
-[[huxerui::composable]] huxerui::View SettingItemIcon(huxerui::ImageResource icon, bool danger) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    return huxerui::Image(icon)
-        .Fit(huxerui::ImageFit::Contain)
-        .Tint(danger ? theme.colors.error : theme.colors.on_surface_variant)
-        .With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
-}
-
 [[huxerui::composable]] huxerui::View SettingRow(huxerui::StringVariant label,
                                                  huxerui::StringVariant hint,
                                                  huxerui::View control,
@@ -686,35 +679,6 @@ bool StartProxyGroupTest(const std::string& group) {
     return SettingsContentRow(huxerui::Row {
       std::move(description).With(huxerui::Grow(1.0F)),
       control,
-    }.With(huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
-}
-
-[[huxerui::composable]] huxerui::View SettingSwitchRow(
-    huxerui::StringVariant label, huxerui::StringVariant hint, huxerui::View control,
-    bool danger, std::optional<huxerui::ImageResource> icon) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    huxerui::View text = huxerui::Column {
-        huxerui::Text(label).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kBody),
-            danger ? theme.colors.error : theme.colors.on_surface}),
-        huxerui::UseString(hint).empty()
-            ? huxerui::View{huxerui::Row{}}
-            : huxerui::View{huxerui::Text(hint).Style(huxerui::TextStyle{
-                  huxerui::Font::System(font_size::kCaption),
-                  theme.colors.on_surface_variant})},
-    }.With(huxerui::Spacing(2.0F), huxerui::Grow(1.0F));
-    if (icon) {
-        return SettingsContentRow(huxerui::Row {
-          SettingItemIcon(*icon, danger),
-          text,
-          control,
-        }.With(huxerui::Spacing(12.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
-    }
-    return SettingsContentRow(huxerui::Row {
-        std::move(text),
-        control,
     }.With(huxerui::Spacing(12.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
 }

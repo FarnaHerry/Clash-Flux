@@ -364,6 +364,7 @@ huxerui::View AndroidRulesPage(ProfilesCache profiles);
 huxerui::View AndroidConnectionsPage();
 huxerui::View AndroidLogsPage();
 huxerui::View AndroidLanguagePage();
+huxerui::View AndroidProfileScanShortcutPage(std::function<void()> onClose);
 huxerui::View AndroidThemePage(huxerui::State<int> themeMode);
 huxerui::View AndroidFidelityPage(std::int64_t profileId);
 huxerui::View AndroidConnectionDetailPage(ConnectionRow initial);

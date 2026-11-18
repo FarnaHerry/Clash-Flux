@@ -16,6 +16,7 @@ def write_fixture(path, family, count):
                 "  sample: {type: inline, behavior: domain, payload: [provider.test]}\n"
                 "rules:\n"
                 "  - RULE-SET,sample,DIRECT\n"
+                "  - IP-CIDR,192.0.2.0/24,DIRECT,no-resolve\n"
                 "  - UNKNOWN,omitted.test,DIRECT\n"
             )
             for i in range(count):
@@ -53,7 +54,7 @@ def verify_rejection(exe, root, source, artifact):
     changed_source = root / "changed-source"
     changed_source.write_bytes(source.read_bytes() + b"\n")
     for label, data, candidate in (
-        ("unknown version", original.replace(b"target-r5-probe-1", b"target-r5-probe-2", 1), source),
+        ("unknown version", original.replace(b"target-r5-probe-2", b"target-r5-probe-3", 1), source),
         ("mismatched source", original, changed_source),
         ("truncated body", original[:-1], source),
     ):

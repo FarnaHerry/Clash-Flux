@@ -1,7 +1,7 @@
-// netinfo.cppm — 本机网络接口信息（首页「内网 IP」卡片的数据源）。
+// netinfo.cppm — 本机当前网络接口信息（首页「内网 IP」卡片的数据源）。
 //
-// 只枚举活动、非 loopback 接口的 IPv4 地址；不联网、不写盘，调用是便宜的
-// 系统调用，但按约定仍由调用方放到任务线程执行。
+// 返回默认路由使用的活动、非 loopback IPv4；无默认路由时回退第一个活动
+// 非 loopback 地址。不发送数据包、不写盘，但按约定仍由调用方放到任务线程。
 module;
 
 #include <cstring>
@@ -15,6 +15,8 @@ module;
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 export module clashflux.netinfo;
@@ -38,32 +40,40 @@ std::string narrowAdapterName(const WCHAR* wide) {
     const int length =
         WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
     if (length <= 1) return {};
-    std::string narrow(static_cast<std::size_t>(length - 1), '\0');
+    std::string narrow(static_cast<std::size_t>(length), '\0');
     WideCharToMultiByte(CP_UTF8, 0, wide, -1, narrow.data(), length, nullptr,
                         nullptr);
+    narrow.pop_back();
     return narrow;
 }
 
 #endif
 
-// 活动、非 loopback 接口的 IPv4 地址（每接口一条）。失败时返回空表，
+// 当前用于外发流量的本机 IPv4 与接口名。优先读取系统默认路由选中的接口；
+// 无默认路由时退回第一个活动、非 loopback IPv4。失败或没有地址时返回空，
 // 调用方据此显示「未检测到内网地址」。
-export std::vector<LanAddress> lanIpv4Addresses() {
-    std::vector<LanAddress> result;
+export std::optional<LanAddress> activeLanIpv4Address() {
 #if defined(_WIN32)
+    std::optional<LanAddress> fallback;
+    ULONG fallbackMetric = std::numeric_limits<ULONG>::max();
+    DWORD bestIndex = 0;
+    IN_ADDR target{};
+    const bool hasBest = InetPtonA(AF_INET, "1.1.1.1", &target) == 1 &&
+        GetBestInterface(target.S_un.S_addr, &bestIndex) == NO_ERROR;
+
     ULONG size = 0;
     constexpr ULONG kFlags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
                              GAA_FLAG_SKIP_DNS_SERVER;
     if (GetAdaptersAddresses(AF_INET, kFlags, nullptr, nullptr, &size) !=
             ERROR_BUFFER_OVERFLOW ||
         size == 0) {
-        return result;
+        return std::nullopt;
     }
     std::vector<char> buffer(size);
     auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
     if (GetAdaptersAddresses(AF_INET, kFlags, nullptr, adapters, &size) !=
         NO_ERROR) {
-        return result;
+        return std::nullopt;
     }
     for (const IP_ADAPTER_ADDRESSES* adapter = adapters; adapter != nullptr;
          adapter = adapter->Next) {
@@ -86,17 +96,47 @@ export std::vector<LanAddress> lanIpv4Addresses() {
                 nullptr) {
                 continue;
             }
-            result.push_back({narrowAdapterName(adapter->FriendlyName), text});
+            LanAddress candidate{narrowAdapterName(adapter->FriendlyName), text};
+            if (hasBest && adapter->IfIndex == bestIndex) return candidate;
+            if (!fallback || adapter->Ipv4Metric < fallbackMetric) {
+                fallbackMetric = adapter->Ipv4Metric;
+                fallback = std::move(candidate);
+            }
         }
     }
+    return fallback;
 #else
+    std::optional<std::string> routeSource;
+    const int descriptor = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (descriptor >= 0) {
+        struct SocketGuard {
+            int descriptor;
+            ~SocketGuard() { ::close(descriptor); }
+        } guard{descriptor};
+        sockaddr_in target{};
+        target.sin_family = AF_INET;
+        target.sin_port = htons(53);
+        if (inet_pton(AF_INET, "1.1.1.1", &target.sin_addr) == 1 &&
+            ::connect(descriptor, reinterpret_cast<const sockaddr*>(&target),
+                      sizeof(target)) == 0) {
+            sockaddr_in local{};
+            socklen_t length = sizeof(local);
+            char text[INET_ADDRSTRLEN]{};
+            if (getsockname(descriptor, reinterpret_cast<sockaddr*>(&local),
+                            &length) == 0 &&
+                inet_ntop(AF_INET, &local.sin_addr, text, sizeof(text)) != nullptr)
+                routeSource = text;
+        }
+    }
+
     ifaddrs* list = nullptr;
-    if (getifaddrs(&list) != 0 || list == nullptr) return result;
+    if (getifaddrs(&list) != 0 || list == nullptr) return std::nullopt;
     // getifaddrs 的链表必须整体 freeifaddrs，中途 continue 不能漏。
     struct IfaddrsGuard {
         ifaddrs* list;
         ~IfaddrsGuard() { freeifaddrs(list); }
     } guard{list};
+    std::optional<LanAddress> fallback;
     for (const ifaddrs* entry = list; entry != nullptr;
          entry = entry->ifa_next) {
         if (entry->ifa_addr == nullptr ||
@@ -114,10 +154,12 @@ export std::vector<LanAddress> lanIpv4Addresses() {
             nullptr) {
             continue;
         }
-        result.push_back({entry->ifa_name, text});
+        LanAddress candidate{entry->ifa_name, text};
+        if (routeSource && candidate.address == *routeSource) return candidate;
+        if (!fallback) fallback = std::move(candidate);
     }
+    return fallback;
 #endif
-    return result;
 }
 
 } // namespace netinfo

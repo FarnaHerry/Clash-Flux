@@ -87,6 +87,45 @@ void CheckEditor() {
             (resolve + 1)->value("ip_cidr", json::array()) == json::array({"198.51.100.0/24"}),
             "the personal CIDR triggers DNS ahead of the no-resolve source rule");
     }
+    const auto checkReplay = [&](const singbox::ProfileRuleEdits& edits, std::string_view message) {
+        auto replayOptions = options;
+        replayOptions.profileRuleEdits = edits;
+        replayOptions.auxiliarySources = {{"replay-secondary", "Secondary",
+            "rules: ['MATCH,DIRECT']\n", true}};
+        replayOptions.globalRules.clear();
+        vpn::RouteRule global;
+        global.match = vpn::MatchKind::ExactDomain;
+        global.pattern = "global.test";
+        global.connectionId = "replay-secondary";
+        global.id = "replay-global";
+        global.tier = vpn::RuleTier::UserOverride;
+        global.targetKind = vpn::TargetKind::Default;
+        replayOptions.globalRules.push_back(global);
+        const auto cold = singbox::compileConfig(replayOptions);
+        const auto warm = singbox::compileConfig(replayOptions, {}, model.get());
+        check(cold.error.empty() && warm.error.empty() && warm.json == cold.json &&
+              warm.fidelity == cold.fidelity && warm.warnings == cold.warnings &&
+              warm.rulePlan.origins == cold.rulePlan.origins &&
+              cold.rulePlan.origins.size() == 1 &&
+              cold.rulePlan.origins.front().sourceId == "replay-secondary" &&
+              warm.targetRulesReused > 0,
+            std::string{message});
+        if (cold.error.empty()) {
+            const auto rules = json::parse(cold.json).at("route").at("rules");
+            check(std::ranges::none_of(rules, [](const auto& rule) {
+                    return rule.value("action", "") == "resolve";
+                }), std::string{message} + ": no-resolve still suppresses ordinary DNS");
+        }
+    };
+    singbox::ProfileRuleEdits disabledBefore{.rules = {final}};
+    disabledBefore.rules.push_back({.id="disable-before", .operation="disable",
+        .anchor="clash:DOMAIN,unique.test,DIRECT"});
+    checkReplay(disabledBefore, "disabling an earlier rule keeps replay diagnostics and origins aligned");
+    singbox::ProfileRuleEdits replacedBefore{.rules = {final}};
+    replacedBefore.rules.push_back({.id="replace-before", .operation="replace",
+        .anchor="clash:DOMAIN,unique.test,DIRECT", .match="domain_suffix",
+        .pattern="before.test", .target="DIRECT"});
+    checkReplay(replacedBefore, "replacing an earlier rule recompiles the no-resolve branch at its current index");
     options.profileYaml += "\n# different source version\n";
     check(singbox::compileConfig(options, {}, model.get()).targetRulesReused == 0,
         "R3 source identity includes exact content");

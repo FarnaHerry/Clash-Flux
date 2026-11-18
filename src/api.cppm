@@ -55,6 +55,12 @@ export struct ApiResult {
 export ApiResult probeThroughProxy(const std::string& target, int mixedPort, std::stop_token cancel,
                                   long budgetMs = 9000);
 
+// GET an HTTPS text endpoint. proxyUrl empty forces a direct connection and
+// ignores proxy environment variables; non-empty routes through that HTTP proxy.
+// Synchronous; callers must run it on a task thread.
+export ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
+                           long timeoutSec);
+
 export struct NativeRuntime {
     bool ok = false;
     std::string version;
