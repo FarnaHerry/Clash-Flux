@@ -866,11 +866,47 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         onBack, false, false, false, true);
 }
 
-[[huxerui::composable]] huxerui::View SubscriptionDownloadSettings() {
+[[huxerui::composable]] huxerui::View SubscriptionUserAgentPage(std::function<void()> onBack) {
     const auto model = huxerui::UseService<SettingsModel>();
     const SettingsView settings = model->view.Get();
-    return SubscriptionUserAgentOrderControl(settings.ready, settings.subscriptionUserAgentOrder,
-        [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); });
+    return SecondaryPageScaffold(huxerui::Text(Localized("UA 尝试顺序"), huxerui::TextRole::Title),
+        huxerui::View{},
+        FormPageContent(PageScrollView(huxerui::ProvideEnvironment(
+            SettingsRowInsets{16.0F, 10.0F, 48.0F},
+            SubscriptionUserAgentChoices(settings.ready, settings.subscriptionUserAgentOrder,
+                [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); })))),
+        std::move(onBack), false, false, true).Key("settings-subscription-ua-page");
+}
+
+[[huxerui::composable]] huxerui::View SubscriptionUserAgentDialog(huxerui::DialogContext context) {
+    const auto model = huxerui::UseService<SettingsModel>();
+    const SettingsView settings = model->view.Get();
+    return DialogScaffold(DialogHeader(Localized("UA 尝试顺序")),
+        huxerui::ProvideEnvironment(SettingsRowInsets{16.0F, 10.0F, 48.0F},
+            SubscriptionUserAgentChoices(settings.ready, settings.subscriptionUserAgentOrder,
+                [model](std::size_t index) { model->SetSubscriptionUserAgentOrder(index); })),
+        DialogActions({DialogAction(Localized("关闭"), [context] { context.Dismiss(); }, false)}),
+        DialogSize::Form);
+}
+
+[[huxerui::composable]] huxerui::View SubscriptionDownloadSettings() {
+    const auto model = huxerui::UseService<SettingsModel>();
+    const auto dialog = huxerui::UseDialog();
+    const auto navigation = huxerui::UseNavigation();
+    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    return SettingNavigationItem(Localized("UA 尝试顺序"), app::images::swap,
+        [model, dialog, navigation, compact] {
+            if (!model->view.Get().ready) return;
+            if (compact) {
+                navigation.Push([navigation] {
+                    return SubscriptionUserAgentPage([navigation] {
+                        static_cast<void>(navigation.Pop());
+                    });
+                });
+                return;
+            }
+            dialog.Show([](huxerui::DialogContext context) { return SubscriptionUserAgentDialog(context); });
+        }).With(huxerui::Enabled(model->view.Get().ready)).Key("settings-subscription-ua");
 }
 
 [[huxerui::composable]] huxerui::View SettingsPage(

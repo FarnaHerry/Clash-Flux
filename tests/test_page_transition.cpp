@@ -1813,12 +1813,15 @@ huxerui::View HomeGridRoot() {
 const huxerui::Application kHomeGridApplication{HomeGridRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallHomeGridFixture}}};
 
-void testPublicIpFlag() {
-    using clashflux::ui::CountryFlagEmoji;
-    check(CountryFlagEmoji("CN") == "🇨🇳", "China country code becomes its flag emoji");
-    check(CountryFlagEmoji("my") == "🇲🇾", "lowercase country code becomes its flag emoji");
-    check(CountryFlagEmoji("") == "🌐" && CountryFlagEmoji("1X") == "🌐",
-          "missing or invalid country code uses the neutral globe");
+void testCountryFlagIndex() {
+    using clashflux::ui::CountryFlagAtlasIndex;
+    constexpr std::string_view codes = "ad ae af cn my";
+    check(CountryFlagAtlasIndex("CN", codes) == 3 &&
+              CountryFlagAtlasIndex("my", codes) == 4,
+          "packaged flag codes resolve case-insensitively");
+    check(!CountryFlagAtlasIndex("", codes) && !CountryFlagAtlasIndex("1X", codes) &&
+              !CountryFlagAtlasIndex("zz", codes),
+          "missing, malformed, or unknown country codes have no flag");
 }
 
 void testFixedHomeGeometry() {
@@ -8105,13 +8108,15 @@ huxerui::View SubscriptionUaRoot() {
         const auto model = huxerui::UseState(std::make_shared<SubscriptionUaFixture>()).Get();
         subscriptionUaFixture = model;
         if (!model->visible.Get()) return huxerui::View{huxerui::Text("Hidden")};
-        return clashflux::ui::SubscriptionUserAgentOrderControl(model->ready.Get(), model->order.Get(),
+        return clashflux::ui::SubscriptionUserAgentChoices(model->ready.Get(), model->order.Get(),
             [model](std::size_t index) {
                 model->order = std::string{clashflux::subscription_http::kOrders.at(index)};
                 ++model->changes;
             }).With(huxerui::Padding(16.0F));
     })};
 }
+
+bool optionsShowBothSequences(const huxerui::testing::UiTest& ui);
 
 void testSubscriptionUserAgentOrder() {
     using namespace clashflux;
@@ -8120,26 +8125,37 @@ void testSubscriptionUserAgentOrder() {
             {.viewport = {width, 600.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
         const auto model = subscriptionUaFixture;
-        const auto select = ui.Find(UiSelector::Key("subscription-ua-select"));
-        check(!select.Exists() && model->changes == 0,
-              "UA order cannot be edited or written before settings hydration");
+        const auto option0 = ui.Find(UiSelector::Key("subscription-ua-option-0"));
+        const auto option1 = ui.Find(UiSelector::Key("subscription-ua-option-1"));
+        check(option0.Exists() && option1.Exists() && !option0.One().enabled &&
+                  !option1.One().enabled && model->changes == 0,
+              "UA order shows both pinned sequences disabled before hydration");
         model->ready = true; ui.PumpAndSettle();
-        check(ui.Find(UiSelector::Text(subscription_http::OrderLabel(1))).Exists() && model->changes == 0,
-              "hydration displays the saved order without rewriting it");
-        const auto bounds = select.One().bounds;
+        check(option0.One().enabled && option1.One().enabled && model->changes == 0,
+              "hydration enables the pinned UA sequences without rewriting the saved order");
+        check(optionsShowBothSequences(ui) && model->changes == 0,
+              "hydration displays both complete UA sequences without rewriting the saved order");
+        const auto bounds = option0.One().bounds;
         check(bounds.x >= 16.0F && bounds.x + bounds.width <= width - 15.9F,
-              "UA order trigger fits both narrow and wide settings");
-        select.Tap(); ui.PumpAndSettle();
-        ui.Find(UiSelector::Text(subscription_http::OrderLabel(0))).Tap(); ui.PumpAndSettle();
+              "UA choices fit both narrow and wide settings");
+        option0.Tap(); ui.PumpAndSettle();
         check(model->order.Get() == subscription_http::kOrders[0] && model->changes == 1,
-              "popup selection publishes the default Clash then sing-box order once");
-        for (const auto agent : subscription_http::kUserAgents)
-            check(ui.Find(UiSelector::Text(std::string{agent})).Exists(), "the actual pinned UA is visible");
+              "choosing the default Clash then sing-box sequence publishes it once");
         model->visible = false; ui.PumpAndSettle();
         model->visible = true; ui.PumpAndSettle();
-        check(select.Exists() && model->order.Get() == subscription_http::kOrders[0] && model->changes == 1,
+        check(option0.Exists() && model->order.Get() == subscription_http::kOrders[0] && model->changes == 1,
               "remounting preserves the chosen order without extra writes");
     }
+}
+
+bool optionsShowBothSequences(const huxerui::testing::UiTest& ui) {
+    for (std::size_t index = 0; index < clashflux::subscription_http::kOrders.size(); ++index) {
+        if (!ui.Find(UiSelector::Text(clashflux::subscription_http::OrderLabel(index))).Exists()) return false;
+    }
+    for (const auto agent : clashflux::subscription_http::kUserAgents) {
+        if (!ui.Find(UiSelector::Text(std::string{agent})).Exists()) return false;
+    }
+    return true;
 }
 
 struct SettingsReadinessFixture {
@@ -8269,7 +8285,7 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    testPublicIpFlag();
+    testCountryFlagIndex();
     try { testSubscriptionUserAgentOrder(); testSettingsReadiness(); testSettingsSelectSizing(); testSettingsRowFeedback(); testHomeSettingsGear(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: settings row feedback: %s\n", error.what());

@@ -3,6 +3,7 @@
 #include "ui.h"
 #include "app_resources.h"
 #include "action_menu.h"
+#include "country_flag.h"
 #include "refresh_motion.h"
 #include <ctime>
 
@@ -38,19 +39,8 @@ inline std::string WebsiteTestTime(std::int64_t value, bool full = false) {
 
 inline huxerui::View WebsiteCountry(std::string code) {
     return huxerui::Scope([code = std::move(code)] {
-        const auto image = huxerui::UseImage(app::images::country_flags);
-        const auto codes = huxerui::UseRawResource(app::raw::country_codes_txt).ReadString(true);
-        auto lower = code;
-        for (auto& c : lower) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-        const auto position = lower.size() == 2 ? codes.find(lower) : std::string::npos;
         std::vector<huxerui::View> views;
-        if (position != std::string::npos && position % 3 == 0) {
-            const auto index = position / 3;
-            views.push_back(huxerui::Canvas([image, index](huxerui::PaintContext& paint, huxerui::Size size) {
-                paint.DrawImageRect(image, {float(index % 16) * 48.0F, float(index / 16) * 36.0F, 48.0F, 36.0F},
-                    {0, 0, size.width, size.height});
-            }).With(huxerui::Frame{.width = 20, .height = 15}));
-        }
+        views.push_back(CountryFlag(code, 20.0F, 15.0F));
         views.push_back(huxerui::Text(code));
         return huxerui::Row(std::move(views)).With(huxerui::Spacing(4.0F),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));

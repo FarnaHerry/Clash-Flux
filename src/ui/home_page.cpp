@@ -342,12 +342,9 @@ void MirrorHomeState(huxerui::State<HomeState> state,
 }
 
 [[huxerui::composable]] huxerui::View HomeCardFlagHeading(
-    std::string flag, huxerui::StringVariant title) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    return HomeCardHeadingWith(
-        huxerui::Text(std::move(flag)).Style(huxerui::TextStyle{
-            huxerui::Font::System(font_size::kTitle), theme.colors.on_surface}),
-        std::move(title));
+    std::string countryCode, huxerui::StringVariant title) {
+    return HomeCardHeadingWith(CountryFlag(std::move(countryCode), 20.0F, 15.0F, true),
+                               std::move(title));
 }
 
 // 统计列：统计带内的一列指标；不带卡片外壳，由外层统计带统一包卡。
@@ -797,8 +794,7 @@ huxerui::Task<wire::PublicIpLookup> FetchPublicIp(std::shared_ptr<AppHttpClient>
     return huxerui::Column {
         huxerui::Row {
             huxerui::Column {
-                HomeCardFlagHeading(CountryFlagEmoji(current.countryCode),
-                                    Localized("网络检测")),
+                HomeCardFlagHeading(current.countryCode, Localized("网络检测")),
                 std::move(status),
             }.With(huxerui::Spacing(4.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
@@ -1050,7 +1046,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     huxerui::View dock = huxerui::Column {
         std::move(floating),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
-                 .right = theme.spacing.medium,
+                 .right = theme.spacing.medium + kScrollBarGutter,
                  .bottom = theme.spacing.medium,
                  .left = theme.spacing.medium,
              }),
@@ -1255,11 +1251,17 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // 焦点所在的节点滚入视野，导致首页一打开就被滚到中途（且随后每次重组都可能
     // 来回滚）。可聚焦性交给内置控件自己的默认策略，分段选择器只保留语义。
     // Runtime effects remain mounted independently from the replaceable header.
+    const bool showFloatingCat = !compact &&
+        !(kDesktopHomeControl && controlCardShown.Get());
+    auto homeInsets = ScrollAreaInsets{};
+    homeInsets.bottom_avoidance = compact ? kCompactFloatingNavigationInset
+        : (showFloatingCat ? kHomeFloatingButtonInset : 0.0F);
+    // The cat sits beside the scrollbar. Keep the extra footer clearance for
+    // content, but do not shorten the wide rail like the old proxy speed FAB.
+    homeInsets.rail_bottom_avoidance = 0.0F;
     huxerui::View scrollContent = huxerui::Stack {
         std::move(runtimePump),
-        ScrollablePageContent(pageBody, scrollOffset, {.bottom_avoidance = compact
-            ? kCompactFloatingNavigationInset
-            : (kDesktopHomeControl && controlCardShown.Get() ? 0.0F : kHomeFloatingButtonInset)}),
+        ScrollablePageContent(pageBody, scrollOffset, homeInsets),
     }.With(huxerui::Grow(1.0F));
     huxerui::View page = PageScaffold(
         Localized("首页"), {}, std::move(scrollContent), true, false, true,

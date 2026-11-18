@@ -21,9 +21,14 @@ inline std::size_t OrderIndex(std::string_view value) {
     return found == kOrders.end() ? 0 : static_cast<std::size_t>(found - kOrders.begin());
 }
 
-inline std::array<std::string_view, 2> UserAgents(std::string_view order) {
-    const auto& indices = kOrderIndices[OrderIndex(order)];
+inline std::array<std::string_view, 2> OrderUserAgents(std::size_t index) {
+    if (index >= kOrderIndices.size()) index = 0;
+    const auto& indices = kOrderIndices[index];
     return {kUserAgents[indices[0]], kUserAgents[indices[1]]};
+}
+
+inline std::array<std::string_view, 2> UserAgents(std::string_view order) {
+    return OrderUserAgents(OrderIndex(order));
 }
 
 inline std::string Identity(std::string_view order) {

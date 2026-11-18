@@ -432,6 +432,9 @@
             lastAppliedJson_ = lastPreparedJson_;
             snap_.appliedRulePlan = lastPreparedRulePlan_;
             snap_.proxyListening = lastAppliedOptions_ && lastAppliedOptions_->proxyListening;
+            // sing-box 的 Clash /configs 把 mixed-port 报成 0（它只认 port/socks-port），
+            // 不能拿它当监听端口；以本进程已接受的运行计划为准。
+            snap_.mixedPort = lastAppliedOptions_ ? lastAppliedOptions_->mixedPort : mixedPort();
             snap_.networkRevision = lastAppliedOptions_ ? lastAppliedOptions_->network.revision : 0;
             snap_.connectedSince = snap_.proxyListening ? std::chrono::steady_clock::now()
                                                        : std::chrono::steady_clock::time_point{};
@@ -1276,7 +1279,8 @@ public:
         if (!j.is_object()) return;
         std::lock_guard lock(mutex_);
         snap_.mode = j.value("mode", "");
-        snap_.mixedPort = j.value("mixed-port", snap_.mixedPort);
+        // mixed-port 由已接受的运行计划写入 snapshot；sing-box Clash 兼容层返回 0，
+        // 这里只刷新它确实报告的模式、LAN 和日志级别。
         snap_.allowLan = j.value("allow-lan", snap_.allowLan);
         snap_.logLevel = j.value("log-level", snap_.logLevel);
         // TUN belongs to the accepted running plan and platform lifecycle,
