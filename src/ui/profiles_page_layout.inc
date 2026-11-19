@@ -136,7 +136,7 @@
                                      if (previewActiveId != 0 && previewTargetId == profile.id &&
                                          previewTargetId != previewActiveId) {
                                          slot = std::move(slot).With(
-                                             huxerui::Border(theme.colors.primary, kCardStrongOutlineWidth),
+                                             huxerui::Border(theme.colors.primary, kCardOutlineWidth),
                                              huxerui::CornerRadius(kSelectableTileRadius));
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));

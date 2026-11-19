@@ -290,7 +290,6 @@ struct IslandTheme {
     huxerui::Color raised;  // 二级岛表面
     huxerui::Color active;
     huxerui::Color overlay;
-    huxerui::Color outline_soft;
 };
 
 inline IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {
@@ -305,7 +304,6 @@ inline IslandTheme ResolveIslandTheme(const huxerui::ThemeSpec& theme) {
         .raised = theme.colors.surface_container,
         .active = theme.colors.surface_container_high,
         .overlay = theme.colors.surface_container_highest,
-        .outline_soft = theme.colors.outline,
     };
 }
 
@@ -526,12 +524,9 @@ huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
                               huxerui::StringVariant placeholder,
                               huxerui::View trailingAction = {});
 
-// 卡片容器（二级岛）：raised 表面 + nested 圆角 + 内边距。outlined=false 去掉
-// 描边，仅靠表面层级区分卡片（移动端设置页等无边框场景）。
-// 描边宽度统一由 theme_colors.h 的卡片主题常量控制，页面不单独指定。
+// 卡片容器（二级岛）：raised 表面 + nested 圆角 + 内边距，常态无描边。
 // contentPadding 可显式设为 0，让整行反馈铺满表面，留白交给行内内容。
-huxerui::View Card(huxerui::View content, bool outlined = true,
-                   std::optional<float> contentPadding = std::nullopt);
+huxerui::View Card(huxerui::View content, std::optional<float> contentPadding = std::nullopt);
 
 // 密集卡片：圆角阶梯的 dense 档（IslandTheme::dense_radius 4pt）+ 减半
 // 内边距，用于日志行等高密度内容——嵌套圆角 14pt 在密集列表里过圆。
@@ -559,7 +554,7 @@ huxerui::View FittedSingleLineLabel(std::string text, huxerui::TextStyle style,
 constexpr float kSelectableTileRadius = 8.0F;
 
 enum class SelectableTileInteraction { Selectable, ReadOnly, Disabled };
-enum class SelectableTileStyle { Standard, Subscription };
+enum class SelectableTileStyle { Standard, DragPreview };
 
 SelectableTileColors ResolveSelectableTileColors(
     const huxerui::ThemeSpec& theme, bool selected);

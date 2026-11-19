@@ -54,7 +54,7 @@ struct ProxyTestModel {
     void Broadcast(int ticket, const std::string& name) {
         if (!Current(ticket)) return;
         group = name;
-        generation = ticket;
+        if (generation.Get() < ticket) generation = ticket;
     }
     void End(int ticket) {
         if (!Current(ticket)) return;
@@ -103,8 +103,8 @@ struct ProxyTestModel {
     int StartSingle(const std::string& tag, const std::shared_ptr<ProxyProbe>& probe) {
         const auto found = probes.find(tag);
         if (found == probes.end() || found->second != probe ||
-            progress.Get().busy || probe->value.Get().testing) return 0;
-        const int ticket = generation.Get() + 1;
+            probe->value.Get().testing) return 0;
+        const int ticket = std::max(generation.Get(), progress.Get().generation) + 1;
         generation = ticket;
         probe->generation = ticket;
         probe->value = ProbeState{0, false, true};
@@ -171,7 +171,7 @@ void LaunchProxyGroupProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyT
             if (result->done) break;
             for (const auto& target : targets) {
                 const auto& probe = target.probe;
-                if (!probe->value.Get().testing) continue;
+                if (probe->generation.Get() != ticket || !probe->value.Get().testing) continue;
                 const auto measured = poll(target.tag);
                 if (measured && measured->first > 0 &&
                     measured->second > probe->baselineTime.Get()) {

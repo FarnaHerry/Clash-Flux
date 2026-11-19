@@ -215,19 +215,15 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     bool retired = true;
     bool startupDecisionPending = false;
     bool trayRefreshFailed = false;
-    bool basicTrayVisible = false;
     bool exitRequested = false;
     std::uint64_t windowGeneration = 0;
     std::string presentationKey;
-    std::string menuStructureKey;
 
     void HideTray() {
         tray.Hide();
         // Hide discards the native presentation, so unchanged model values
         // must still republish it after tray enablement or host recovery.
         presentationKey.clear();
-        menuStructureKey.clear();
-        basicTrayVisible = false;
     }
 
     CoreControl MenuControl() {
@@ -420,14 +416,6 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
     void RefreshBasicTray() {
         if (exitRequested) return;
         if (refresh) {
-            // The windowless startup menu and the full window menu have
-            // different trees. Give StatusNotifier hosts one update cycle with
-            // an empty menu before publishing the replacement; otherwise KDE
-            // can retain an action from the old tree (notably a second Quit).
-            if (basicTrayVisible) {
-                HideTray();
-                return;
-            }
             refresh();
             return;
         }
@@ -448,7 +436,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         if (key == presentationKey) return;
         std::vector<huxerui::MenuEntry> entries;
         const auto self = shared_from_this();
-        entries.push_back(huxerui::MenuItem(english ? "Open main window" : "显示主窗口",
+        entries.push_back(huxerui::MenuItem(english ? "Show main window" : "显示主窗口",
                                             [self] { self->ShowWindow(); }));
         entries.push_back(huxerui::MenuSection{});
         const TrayModeLabels modeLabels = english
@@ -457,7 +445,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         entries.push_back(OutboundModeMenu(modeLabels, mode, !busy));
         entries.push_back(huxerui::MenuItem(
             control->ProxyActive() ? (english ? "Disconnect" : "断开连接")
-                                   : (english ? "Connect" : "连接"), [self] {
+                                   : (english ? "Connect" : "连接代理"), [self] {
                 if (self->control) self->MenuControl().Run({
                     .action = self->control->ProxyActive() ? CoreAction::Disconnect : CoreAction::Connect});
             }).Checked(control->ProxyActive()).Enabled(!busy));
@@ -485,7 +473,6 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         else if (coreRunning && view.systemProxyActive) icon = app::images::tray_system_proxy;
         tray.Show(std::move(icon), huxerui::SystemTrayOptions{
             .tooltip = "Clash-Flux", .menu = std::move(entries)});
-        basicTrayVisible = true;
         presentationKey = std::string{key};
     }
 

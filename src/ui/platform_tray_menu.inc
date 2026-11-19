@@ -70,18 +70,13 @@
                 running, menuRunning, proxyEnabled, tunEnabled, busy,
                 core.systemProxyActive, core.TunActive(), settings.lightweightTray);
             key += core.ProxyActive() ? '1' : '0';
-            std::size_t profileCount = 0;
             for (const model::Profile& profile : profiles) {
                 if (profile.type == "pptp") continue;
-                ++profileCount;
                 key += std::to_string(profile.id);
                 append(profile.name);
                 key += profile.selected ? '1' : '0';
             }
-            std::string structureKey = std::format("p{};g{};", profileCount, groups.size());
             for (const ProxyGroupSnapshot& group : groups) {
-                structureKey += std::format("{}:{};", group.selectable,
-                    group.selectable ? group.nodes.size() : 0);
                 append(group.name);
                 append(group.displayName);
                 append(group.current);
@@ -93,14 +88,6 @@
                 }
             }
             if (key == trayRuntime->presentationKey) return;
-            // Linux assigns D-Bus IDs in tree order. When the tree changes,
-            // Plasma can retain a previous checkbox or submenu at a reused ID.
-            // Publish an empty tree for one poll before replacing its structure.
-            if (!trayRuntime->menuStructureKey.empty() &&
-                trayRuntime->menuStructureKey != structureKey) {
-                trayRuntime->HideTray();
-                return;
-            }
             const auto windowGeneration = trayRuntime->windowGeneration;
 
             std::vector<huxerui::MenuEntry> entries;
@@ -244,6 +231,5 @@
             tray.Show(std::move(icon), huxerui::SystemTrayOptions{
                 .tooltip = "Clash-Flux", .menu = std::move(entries)});
             trayRuntime->presentationKey = std::move(key);
-            trayRuntime->menuStructureKey = std::move(structureKey);
         };
     }

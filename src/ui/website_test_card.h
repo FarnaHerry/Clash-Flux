@@ -120,7 +120,7 @@ inline huxerui::View WebsiteTestCard(
                 .Key("website-time-" + std::to_string(site.id)),
           }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-        auto card = Card(std::move(content), false);
+        auto card = Card(std::move(content));
         if (compact) return card;
         return std::move(card).With(menu.Target(), huxerui::Focusable())
             .On<huxerui::ViewEvents::ContextMenuRequested>(

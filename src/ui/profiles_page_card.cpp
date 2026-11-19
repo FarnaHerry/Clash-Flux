@@ -190,14 +190,9 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     }
     huxerui::View preview = SelectableTile(previewContent,
         profile.selected, profile.name, {}, SelectableTileInteraction::ReadOnly,
-        SelectableTileStyle::Subscription);
-    huxerui::Color shadow = theme.colors.scrim;
-    shadow.alpha = 0.24F;
+        SelectableTileStyle::DragPreview);
     return std::move(preview).With(
         huxerui::Frame{.width = width, .height = ProfileCardHeight(compact)},
-        huxerui::Border(theme.colors.primary, kCardEmphasisOutlineWidth),
-        huxerui::CornerRadius(kSelectableTileRadius),
-        huxerui::Shadow{.color = shadow, .blur_radius = 16.0F, .spread = -2.0F},
         // Compact 的 20pt 手柄在标题行中居中，补偿留白和垂直居中偏移。
         huxerui::Offset(huxerui::Point{-10.0F, -8.0F - (compact
             ? (CompactProfileCardHeadingHeight(nativeVpn) - 20.0F) * 0.5F : 0.0F)}));
@@ -792,7 +787,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
             }
             activateProfile(id);
         }, nativeVpn ? SelectableTileInteraction::ReadOnly
-                     : SelectableTileInteraction::Selectable, SelectableTileStyle::Subscription);
+                     : SelectableTileInteraction::Selectable);
 
     // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
     // （内容已单行截断，ClipChildren 兜底）。

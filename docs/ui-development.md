@@ -92,7 +92,7 @@
   圆点按 0.9 秒周期、150ms 错峰弹跳，升至顶部时变亮，落回时淡下，结束后恢复结果。
   动效只更新绘制，后台或减少动态效果时显示静态圆点。
   入口提示及无障碍名称包含测速语义；点击只请求该运行 tag 的 delay API，
-  不触发整卡选线。单节点请求同样归应用任务域，同节点单飞、不同节点独立，单测与整组扫描互斥，
+  不触发整卡选线。单节点请求同样归应用任务域，同节点单飞、不同节点独立，整组测速中仍可单测空闲节点，
   失败可重试，旧计划的卡片句柄及结果不得占用或覆盖新请求。Android 当前原生入口仍只支持整组测速。
 
 - 文件选择器的筛选名称等本地化字符串在组合期解析，再通过拥有型 DTO 传给点击回调和异步任务。
@@ -325,8 +325,8 @@ CodeEditor 通过 `EditorOptions::settings.scrollbar.mode` 采用窄屏 never / 
 - 只有需要用户明确授权的流程可以显示系统交互提示，例如 UAC 提权。普通后台操作、失败清理和状态探测都保持安静执行。
 - HuxerUI 的 Windows 系统托盘菜单是原生菜单，`SystemTrayOptions` 不提供 `MenuStyle` 参数。桌面托盘生命周期按当前应用 `ThemeSpec` 同步 Windows 原生菜单主题；Windows 10 build 17763 及以上支持此同步，旧系统保留系统原生菜单主题。修改 HuxerUI 或 Windows 平台适配时，保持托盘菜单与应用深浅模式一致。
 - 完整托盘菜单在「选择订阅」上方提供「出站模式」原生悬停子菜单，无窗简版共用该子菜单。规则、全局和直连沿用首页的切换入口。内核运行时勾选实际模式，停核时勾选保存值。
-- Linux 启动隐藏时先使用不依赖窗口的简版托盘菜单；主窗口挂载后切换到完整菜单，先让 StatusNotifier 菜单空一轮再发布，避免 Plasma 在两种菜单结构间保留旧动作。内核停止后的路由清理不碰 sing-box 的 `pref 9000`，仅由 root 服务清理能凭保留哨兵确认属于 Clash-Flux 的补偿路由。
-- 托盘隐藏时同时清空呈现缓存，停用后重开或宿主恢复时必须重新发布；简版菜单缓存包含实际内核与接管状态，图标使用实际状态，开关使用配置意图。完整菜单和无窗菜单统一调用应用级退出收尾。Linux 原生回归可在图形会话运行 `dbus-run-session -- /usr/bin/python3 tests/test_tray_runtime.py build/clash-flux`（需要 Gio/PyGObject 与 bubblewrap）：使用独立 D-Bus、临时数据及屏蔽已安装服务的沙箱，覆盖宿主失联/恢复、无窗唤回、菜单角色及退出；此检查单独运行，不替代 18 项桌面 CTest 门禁。
+- Linux 启动隐藏时先使用不依赖窗口的简版托盘菜单；主窗口挂载后用 `SystemTrayHandle::Show` 在同一托盘项内切换为完整菜单。HuxerUI 为保留的菜单动作复用 D-Bus ID，并通知宿主更新布局和属性。内核停止后的路由清理不碰 sing-box 的 `pref 9000`，仅由 root 服务清理能凭保留哨兵确认属于 Clash-Flux 的补偿路由。
+- 托盘隐藏时同时清空呈现缓存，停用后重开或宿主恢复时必须重新发布；简版菜单缓存包含实际内核与接管状态，图标使用实际状态，开关使用配置意图。完整菜单和无窗菜单统一调用应用级退出收尾。Linux 原生回归可在图形会话运行 `dbus-run-session -- /usr/bin/python3 tests/test_tray_runtime.py build/clash-flux`（需要 Gio/PyGObject 与 bubblewrap）：使用独立 D-Bus、临时数据及屏蔽已安装服务的沙箱，覆盖宿主失联与恢复、无窗唤回时菜单原位替换、菜单角色及退出。此检查在桌面 CTest 门禁之外单独运行。
 
 ## 首页卡片
 
@@ -485,10 +485,9 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 
 「拖入或点击选择文件」的输入区域统一使用 `src/ui/file_drop_zone.h` 的
 `FileDropZone(icon, title, picked_file, tasks, toast, picker, filter, key)`，
-定义在 `common.cpp`，不自行拼接 Column/FileDropTarget。外观跟控件族：
-圆角 `theme.shapes.small`、常态 `surface_container_high` 底加 `outline_soft`
-描边，拖入悬停切换 `primary_container` 底、`primary` 强调描边与
-`on_primary_container` 文字；未选择时副行显示 `filter.name`，选中后主行显示
+定义在 `common.cpp`，不自行拼接 Column/FileDropTarget。圆角用 `theme.shapes.small`，
+常态用 `surface_container_high` 底。鼠标悬停显示 1pt 主色描边，拖入文件时同时切换
+`primary_container` 底和 `on_primary_container` 文字。未选择时副行显示 `filter.name`，选中后主行显示
 文件名、副行显示完整路径。交互契约：`FileDropTarget` 按扩展名整批校验外部拖入
 （要么全收要么拒绝，失败 toast），点击仍走 FilePicker 并复用
 `PickProfileConfigFile` 的错误反馈——键盘、触摸与不支持拖入的宿主依赖该等价
@@ -514,21 +513,16 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 
 策略组下拉选择器的条目直接复用 `selectable_tile.cpp` 的 `SelectableTile`，与代理节点/订阅卡片共用选中底色、前景色、主色描边、圆角及交互；右侧抽屉与底部抽屉使用同一内容，保留紧凑 Flow 排布、角标和选后关闭行为。
 
-所有页面的卡片描边线宽集中在 `src/ui/theme_colors.h`：
-`kCardOutlineWidth` 用于普通卡片和对话框卡片；
-`kCardSelectedOutlineWidth` 用于可选条目的选中描边；
-`kCardEmphasisOutlineWidth` 用于文件拖入悬停与订阅拖动预览；
-`kCardStrongOutlineWidth` 用于订阅放置目标与主题色选中卡片。
-桌面普通与悬停/拖动预览为 0.5pt，选中与强强调为 1pt，并结合描边颜色与底色表达状态；
-手机保留原来的 1/1.5/2pt 档位。订阅大卡片单独使用 `kSubscriptionSelectedOutlineWidth=2pt`，
-通过 `SelectableTileStyle::Subscription` 应用于实际卡片与拖动预览；其它可选条目仍为 1pt。页面不单独指定卡片线宽，
-`Card` 只允许用 `outlined=false` 关闭描边。无描边的 `DenseCard` 和未选中条目
-继续靠底色区分；按钮、输入框、单选圈和键盘焦点环使用各自控件样式。
+普通卡片、骨架、弹窗及未选中条目默认无描边。悬停、选中、文件拖入、订阅拖动预览和放置目标
+统一使用 `theme_colors.h` 的 `kCardOutlineWidth`（1pt，逻辑像素）。已有悬停反馈的卡片用
+`ResolveCardIndication` 沿原圆角显示描边，选中后悬停只切换描边颜色。普通卡片与密集条目靠底色区分，
+弹窗和订阅拖动预览通过阴影表达浮起层级。按钮、输入框、单选圈和键盘焦点环使用各自控件样式。
 
 首页网格及桌面运行状态卡共用 `HomeCardSurface`：raised 底色、nested 圆角、无描边。
 手机与桌面窄窗标题栏的猫咪运行卡同样无描边，保留固定 48pt 标题槽和既有切换动画。
-鼠标悬停以主题 primary 色沿卡片圆角淡入一圈描边，移出淡出；使用框架 Indication，不占布局、
-不添加整卡点击动作，卡内开关和按钮维持独立命中。按下时缩至 98.5% 并下移 1pt，
+鼠标悬停以主题 primary 色沿卡片圆角淡入一圈描边，移出淡出。卡片通过 `ViewEvents::Hover`
+跟踪整个表面的指针进出，卡内按钮、开关和输入框悬停时也保留卡片描边。描边只更新绘制，
+卡内控件维持独立命中。按下时缩至 98.5% 并下移 1pt，
 松开或取消后用弹簧回到原位；只观察指针，不夺取子控件/滚动所有权，reduced motion 关闭位移动画。
 
 首页普通卡片支持鼠标双击/触控双击显示彩蛋，再双击返回；`home_card.h` 的 `HomeCardSurface` 使用框架 MultiTapGesture 和 `Transition` 对实时内容做 200ms、0.96→1 的轻缩放淡入，卡片外框与 HomeGrid 占位不动。移除整卡 SharedBounds 快照、侧边收窄和光照层，不逐帧写 State，快速反向直接从当前进度转向最新目标。正反面子树保留挂载，以透明度控制绘制；隐藏面禁用输入并退出无障碍树，彩蛋面另有输入隔离层，防止正面子控件重新启用后穿透。减少动态效果直接切换，结束后停止额外帧。每次从正面进入彩蛋时，从 `home_easter_eggs.h` 的公共池抽取并保留当前卡片选择；返回不重抽、不持久化。池中包含 HuxerUI 作者 `FinalScave` 的 GitHub 主页，以及 Lib-Charts、Lib-SQLite、Lib-Camera、Lib-CodeEditor 和 Lib-Media 的官方仓库。链接只在用户点击入口时打开；旧的按卡片类型跳转连接/日志/订阅/设置菜单不再作为彩蛋。启动/运行猫咪控制卡显式关闭此能力。

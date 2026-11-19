@@ -4,12 +4,18 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `d2c9781c26158bfc5306e1682388a492cbed44d4`，各平台 CI 共用
+Clash-Flux 当前固定 `cbd3ce2eaf501cffa4dd785a9904776f0c83730b`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
+
+2026-11-19 采用 `farna/main` 的 [`cbd3ce2`](https://github.com/FarnaHerry/HuxerUI/commit/cbd3ce2eaf501cffa4dd785a9904776f0c83730b)，
+包含 0.5.0 源码基线的 GTK PlatformView、窗口宿主 API 和 Windows HTTP 流更新，以及
+Linux D-Bus 托盘菜单原位更新。应用复用 `SystemTrayHandle::Show` 切换图标和菜单，
+Linux 在同一个 StatusNotifier 项内更新布局和属性，并为语义相同的动作保留菜单 ID。
+Android Java/native 同步到此提交，宿主 CLI 仍使用独立固定的 0.4.0 归档。
 
 2026-11-18 采用 `farna/main` 的 [`d2c9781c`](https://github.com/FarnaHerry/HuxerUI/commit/d2c9781c26158bfc5306e1682388a492cbed44d4)：
 包含上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、
@@ -364,7 +370,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout 11849f99952c2c2d6a3292809f0011d79e125c9e
+git -C third_party/huxerui checkout cbd3ce2eaf501cffa4dd785a9904776f0c83730b
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

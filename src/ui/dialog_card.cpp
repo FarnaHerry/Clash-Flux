@@ -24,7 +24,6 @@ struct EditorDismissBinding {
             : huxerui::Shadow{ThemeShadowColor(theme, 0.30F), {}, 28.0F, 2.0F},
         huxerui::Background(islands.overlay),
         huxerui::CornerRadius(cornerRadius.value_or(islands.island_radius)),
-        huxerui::Border(islands.outline_soft, kCardOutlineWidth),
         huxerui::ClipChildren(),
         huxerui::Padding(contentPadding.value_or(islands.island_padding)),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

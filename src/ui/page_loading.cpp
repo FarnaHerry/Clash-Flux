@@ -125,7 +125,7 @@ huxerui::View SkeletonCard(huxerui::View content, const huxerui::ThemeSpec& them
         huxerui::Padding(padding.value_or(huxerui::EdgeInsets::All(islands.island_padding))),
         huxerui::Frame{.height = height},
         huxerui::Background(islands.raised), huxerui::CornerRadius(islands.nested_radius),
-        huxerui::Border(islands.outline_soft, kCardOutlineWidth), huxerui::ClipChildren(),
+        huxerui::ClipChildren(),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 

@@ -1178,17 +1178,14 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 // 通用「拖入或点击」文件选区（声明见 file_drop_zone.h）。FileDropTarget 只做
 // 外部文件的整批元数据校验（扩展名/MIME，整批要么全收要么拒绝），读取与导入
 // 仍由调用方决定；点击走 FilePicker——键盘、触摸与不支持拖入的宿主都依赖这个
-// 等价入口（框架 file_drop.h 的契约要求）。悬停由 Entered/Exited 翻本地 State
-// 驱动重组，物理松手在 Exited 之后才投递 Dropped。圆角/描边跟控件族
-// （shapes.small + outline_soft），与按钮、下拉、菜单同族。
+// 等价入口（框架 file_drop.h 的契约要求）。文件拖入状态由 Entered/Exited
+// 更新，松手在 Exited 之后才投递 Dropped。
 [[huxerui::composable]] huxerui::View FileDropZone(
     huxerui::ImageVariant icon, huxerui::StringVariant title,
     huxerui::State<std::optional<huxerui::FileReference>> picked_file, huxerui::TaskScope tasks,
     FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     huxerui::FilePickerFilter filter, std::string key) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const IslandTheme islands = ResolveIslandTheme(theme);
-    const bool flat = huxerui::UseEnvironment<DialogSurfaceContext>().flat;
     auto hovering = huxerui::UseState(false);
     const bool hover = hovering.Get();
     const auto& selection = picked_file.Get();
@@ -1241,8 +1238,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               huxerui::Background(hover ? theme.colors.primary_container
                                         : theme.colors.surface_container_high),
               huxerui::CornerRadius(theme.shapes.small),
-              huxerui::Border(hover ? theme.colors.primary : islands.outline_soft,
-                              hover ? kCardEmphasisOutlineWidth : kCardOutlineWidth),
+              huxerui::Border(theme.colors.primary, hover ? kCardOutlineWidth : 0.0F),
               huxerui::ClipChildren(),
               huxerui::FileDropTarget::Accepts(std::move(dropOptions)),
               huxerui::PointerCursor(huxerui::PointerCursorKind::Hand))
@@ -1265,7 +1261,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             })
         .OnClick(open_picker)
         .With(huxerui::Focusable(true),
-              ResolveCardIndication(theme, hover ? kCardEmphasisOutlineWidth : 0.0F),
+              ResolveCardIndication(theme),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(title)})
         .Key(std::move(key));

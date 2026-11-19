@@ -23,12 +23,18 @@ MODE_INDEX = 2
 
 WATCHER = "org.kde.StatusNotifierWatcher"
 WATCHER_PATH = "/StatusNotifierWatcher"
-MENU_PATH = "/StatusNotifierItem/Menu"
+ITEM_PATH = "/StatusNotifierItem"
+ITEM = "org.kde.StatusNotifierItem"
+MENU_PATH = f"{ITEM_PATH}/Menu"
 MENU = "com.canonical.dbusmenu"
 XML = """<node><interface name="org.kde.StatusNotifierWatcher">
   <method name="RegisterStatusNotifierItem"><arg type="s" direction="in"/></method>
   <property name="IsStatusNotifierHostRegistered" type="b" access="read"/>
 </interface></node>"""
+
+
+def menu_properties(items):
+    return [(properties, menu_properties(children)) for _, properties, children in items]
 
 
 class Fixture:
@@ -37,11 +43,13 @@ class Fixture:
         self.folder = folder
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.owner = None
+        self.registrations = 0
         self.host = True
         self.process = None
         runtime = folder / "runtime"
         runtime.mkdir(mode=0o700)
         self.env = dict(os.environ, XDG_DATA_HOME=str(folder), XDG_RUNTIME_DIR=str(runtime),
+                        XDG_CACHE_HOME=str(folder / "cache"), XDG_CONFIG_HOME=str(folder / "config"),
                         TMPDIR=str(folder), GDK_BACKEND="x11", INTEL_FORCE_PROBE="1",
                         GTK_A11Y="none", NO_AT_BRIDGE="1", LANGUAGE="en")
         # Refuse the real session bus: watcher restarts must never affect Plasma.
@@ -70,6 +78,7 @@ class Fixture:
                                   Gio.DBusCallFlags.NONE, 3000, None)
 
     def register_item(self, connection, sender, path, interface, method, args, invocation):
+        self.registrations += 1
         self.owner = sender
         invocation.return_value(None)
 
@@ -90,12 +99,15 @@ class Fixture:
                          GLib.Variant("(iias)", (0, -1, []))).unpack()[1][2]
 
     def sandbox(self):
+        masks = []
+        for location in ("/run/clash-flux", "/etc/clash-flux"):
+            if pathlib.Path(location).is_dir():
+                masks.extend(("--tmpfs", location))
         return ["bwrap", "--die-with-parent", "--ro-bind", "/", "/",
                 "--dev-bind", "/dev", "/dev",
                 "--proc", "/proc",
                 "--bind", str(self.folder), str(self.folder),
-                "--tmpfs", "/run/clash-flux", "--tmpfs", "/etc/clash-flux",
-                "--", str(self.binary)]
+                *masks, "--", str(self.binary)]
 
     def start(self, root_count):
         self.owner = None
@@ -114,6 +126,33 @@ class Fixture:
     def click(self, item):
         self.call(self.owner, MENU_PATH, MENU, "Event",
                   GLib.Variant("(isvu)", (item[0], "clicked", GLib.Variant("i", 0), 0)))
+
+    def open_full_menu(self):
+        before = self.menu()
+        owner = self.owner
+        registrations = self.registrations
+        statuses = []
+        layouts = []
+        status_signal = self.bus.signal_subscribe(
+            owner, ITEM, "NewStatus", ITEM_PATH, None, Gio.DBusSignalFlags.NONE,
+            lambda *args: statuses.append(args[5].unpack()[0]))
+        layout_signal = self.bus.signal_subscribe(
+            owner, MENU, "LayoutUpdated", MENU_PATH, None, Gio.DBusSignalFlags.NONE,
+            lambda *args: layouts.append(args[5].unpack()[0]))
+        try:
+            self.click(before[0])
+            self.wait(lambda: layouts and len(self.menu()) == FULL_MENU_COUNT,
+                      "window activation did not replace the basic menu")
+            after = self.menu()
+            assert (self.owner, self.registrations) == (owner, registrations)
+            assert "Passive" not in statuses, "menu replacement hid the tray"
+            assert [after[index][0] for index in (0, MODE_INDEX, -1)] == \
+                [before[index][0] for index in (0, MODE_INDEX, -1)], \
+                "menu replacement changed IDs for retained actions"
+            print("PASS: window activation replaced the tray menu in place", flush=True)
+        finally:
+            self.bus.signal_unsubscribe(layout_signal)
+            self.bus.signal_unsubscribe(status_signal)
 
     def check_mode(self, selected):
         mode = self.menu()[MODE_INDEX]
@@ -144,16 +183,16 @@ class Fixture:
                               GLib.Variant("b", available)}, [])))
 
     def recover_host(self, root_count):
-        before = self.menu()
+        before = menu_properties(self.menu())
         self.set_host(False)
         self.wait(lambda: not self.menu(), "unavailable host did not clear tray")
         self.set_host(True)
         self.wait(lambda: len(self.menu()) == root_count, "tray not republished on host return")
-        assert self.menu() == before, "host return changed labels, checkmarks or actions"
+        assert menu_properties(self.menu()) == before, "host return changed menu properties"
         print(f"PASS: {root_count}-item menu restored after host loss", flush=True)
 
     def restart_watcher(self):
-        before = self.menu()
+        before = menu_properties(self.menu())
         self.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
                   "ReleaseName", GLib.Variant("(s)", (WATCHER,)))
 
@@ -175,7 +214,7 @@ class Fixture:
                   "RequestName", GLib.Variant("(su)", (WATCHER, 4)))
         self.wait(lambda: not unexported() and len(self.menu()) == len(before),
                   "watcher restart lost tray menu")
-        assert self.menu() == before, "watcher restart changed menu roles or callbacks"
+        assert menu_properties(self.menu()) == before, "watcher restart changed menu properties"
         print("PASS: watcher name loss/reacquisition restores menu", flush=True)
 
     def finish(self):
@@ -238,9 +277,7 @@ def main():
                                      [("tray.start_minimized", "true"), ("ui.language", "en")])
             fixture.start(BASIC_MENU_COUNT)
             fixture.switch_mode(2, selected=1)
-            fixture.click(fixture.menu()[0])
-            fixture.wait(lambda: len(fixture.menu()) == FULL_MENU_COUNT,
-                         "window activation did not replace the basic menu")
+            fixture.open_full_menu()
             fixture.check_mode(2)
             fixture.recover_host(FULL_MENU_COUNT)
             fixture.finish()

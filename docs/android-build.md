@@ -11,9 +11,8 @@ AAR 混装，否则 Java 层可能调用 native 层已经移除或改变的入�
 例如 `HuxerUI Android application has not been initialized`。
 
 框架源码来自 `FarnaHerry/HuxerUI` 的 `farna/main`，当前与 CI 固定到
-`d2c9781c26158bfc5306e1682388a492cbed44d4`（2026-11-18）；
-源码包含上游窗口 API 收敛、统一任务等待/恢复、系统任务、UIScene 多窗口、外部文件持久访问、
-位图快照与运行诊断控制；fork 修复 macOS AppKit 构建错误。框架真机 instrumentation 仍待完成，
+`cbd3ce2eaf501cffa4dd785a9904776f0c83730b`（2026-11-19），基于 HuxerUI 0.5.0 源码，
+包含 fork 的 Linux 托盘原位更新。框架真机 instrumentation 仍待完成，
 不能把 Linux 回归或 APK 编译成功记作 Android 真机测试通过。维护流程见 [HuxerUI fork](huxerui-fork.md)。
 
 本地构建仍需提供 CLI 和 SDK 元数据所需的 `HUXERUI_HOME`：
@@ -48,9 +47,8 @@ CI 从锁定的 0.4.0 归档取官方 CLI（SHA256 校验）并以 `--sdk huxeru
   使用同一 Application，因此服务端也无需重复加载。
 - 源码模式下 Android/iOS 只构建 static 切片；桌面仍显式使用 shared，
   因为 Linux 链接 static 切片需要 gtk4 开发包。
-- 源码/CI pin 使用 `062f3092`（0.4.0 合并线）。已发布的 0.4.0 SDK 包早于该
-  合并，缺少 `include/huxerui/linux/window.h`，只影响用该 SDK 做桌面构建；
-  Android 的 AAR/static 切片不受影响。
+- 0.4.0 离线 SDK 包早于 `062f3092` 合并线，缺少 `include/huxerui/linux/window.h`，
+  只影响用该 SDK 做桌面构建。Android CI 用其中的 CLI 构建本文所列的固定源码。
 
 ## 扩展库与相册选择
 

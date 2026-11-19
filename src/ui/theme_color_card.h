@@ -68,7 +68,6 @@ inline huxerui::View ThemeModeCardSurface(const huxerui::ThemeSpec& theme,
     huxerui::ImageResource symbol, bool selected, std::string label,
     std::function<void()> onClick, float width = kThemeModeCardWidth) {
     const auto colors = ResolveSelectableTileColors(theme, selected);
-    const float outline = selected ? kCardSelectedOutlineWidth : 0.0F;
     return huxerui::Row {
       huxerui::Image(symbol).Tint(colors.fg)
           .With(huxerui::Frame{.width = kThemeModeIconSize, .height = kThemeModeIconSize})
@@ -79,10 +78,10 @@ inline huxerui::View ThemeModeCardSurface(const huxerui::ThemeSpec& theme,
     }.With(huxerui::Frame{.width = width, .height = kThemeModeCardHeight},
         huxerui::Spacing(theme.spacing.small), huxerui::Padding(theme.spacing.small),
         huxerui::Background(colors.surface), huxerui::CornerRadius(theme.shapes.medium),
-        huxerui::Border(selected ? theme.colors.primary : huxerui::Color::Transparent(),
-            outline), huxerui::ClipChildren(),
+        huxerui::Border(theme.colors.primary, selected ? kCardOutlineWidth : 0.0F),
+        huxerui::ClipChildren(),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-        ResolveCardIndication(theme, outline), huxerui::Focusable(true),
+        ResolveCardIndication(theme, selected), huxerui::Focusable(true),
         huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = std::move(label), .selected = selected})
         .OnClick(std::move(onClick));
 }
@@ -139,15 +138,14 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
             huxerui::CornerRadius(theme.shapes.small),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("theme-color-preview");
     }
-    const float outline = selected ? kCardStrongOutlineWidth : kCardOutlineWidth;
     return huxerui::Column {content}.With(
         huxerui::Frame{.width = edge, .height = edge * kThemeColorCardHeightRatio},
         huxerui::Spacing(theme.spacing.small),
         huxerui::Padding(theme.spacing.small), huxerui::Background(ResolveIslandTheme(theme).raised),
         huxerui::CornerRadius(theme.shapes.medium), huxerui::ClipChildren(),
-        huxerui::Border(selected ? theme.colors.primary : ResolveIslandTheme(theme).outline_soft, outline),
+        huxerui::Border(theme.colors.primary, selected ? kCardOutlineWidth : 0.0F),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-        ResolveCardIndication(theme, selected ? outline : 0.0F), huxerui::Focusable(true),
+        ResolveCardIndication(theme, selected), huxerui::Focusable(true),
         huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = std::move(label), .selected = selected}
     ).OnClick(std::move(onClick));
 }

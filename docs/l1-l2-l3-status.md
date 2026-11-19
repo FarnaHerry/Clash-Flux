@@ -1,5 +1,12 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-19 v0.3.121 补丁发布
+
+- 基于 `v0.3.120`（`98a0291`），应用和各平台 CI 固定 HuxerUI `cbd3ce2`。Linux 托盘使用同一个 StatusNotifier 项更新图标、简版与完整菜单；本次也包含节点测速状态隔离及卡片悬停修复。Android versionName 0.3.121、versionCode 199。
+- Fedora 45 WSL / Clang 23.1.5 / CMake 4.4.2 Release 主目标经 HuxerUI codegen 构建，版本输出为 v0.3.121。隔离 D-Bus 验证图标替换仅注册一次、菜单布局和属性更新信号、保留按钮 ID 及过期点击拒绝。Xvfb 上运行 `tests/test_tray_runtime.py`，通过简版切完整菜单、稳定动作 ID、宿主恢复和退出回归。
+- CTest 的 `page_transition`、`ui_resources`、`persistence`、`cps_dependencies`、`native_control_runtime` 共 5/5 通过（24.68 秒）；`test_rule_provider_download.py --require-tls` 及 `git diff --check` 通过。
+- 本机未验真实 Plasma 面板、其它平台构建、安装包及 APK 签名。带安装包的 GitHub Release 由标签 CI 发布。
+
 ## 2026-11-19 v0.3.119 补丁发布
 
 - 基于 `eb8077e`（`v0.3.118` 发布记录之后）发布补丁：首页「内网 IP」与「网络检测」迁移至应用级 `HomeNetworkModel`，移除手动刷新按钮与「检测中…」加载态并在各自独立单飞下异步就地替换；首页订阅卡展示当前具体生效节点；网站测试保留同源 `/cdn-cgi/trace` 优先并增加桌面内核 `/connections` 出站核实、Windows 纯直连兜底与「可访问」状态；DNS 宽屏改为弹窗，优化代理网格单行截断与日志 `TextLayout` 段落缓存，全项目占位符统一改为空白槽位并写入 UI 规范。Android versionName 0.3.119、versionCode 197，HuxerUI 保持 `d2c9781c`，sing-box/libbox 保持 1.14.4。

@@ -318,7 +318,7 @@ inline huxerui::View ProxyProbeDots(huxerui::Color color, float width) {
 
 inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
     huxerui::View delay, float dotsWidth, bool selected, std::string label, std::function<void()> activate,
-    SelectableTileInteraction interaction, bool canProbe, bool testing, bool blocked,
+    SelectableTileInteraction interaction, bool canProbe, bool testing,
     std::function<void()> startProbe) {
     title = std::move(title).With(huxerui::Semantics{.hidden = true});
     detail = std::move(detail).With(huxerui::Grow(1.0F), huxerui::Semantics{.hidden = true});
@@ -329,7 +329,6 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
         if (canProbe) {
             if (!status) {
                 auto color = selected ? colors.fg : colors.muted;
-                if (blocked) color.alpha *= theme.interactions.disabled_opacity;
                 status = huxerui::Text(Localized("测速"))
                     .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
                     .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
@@ -337,18 +336,20 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
             const auto probeLabel = huxerui::UseString(Localized("测速")) + ": " + label;
             huxerui::View action = huxerui::Row {status}
                 .With(huxerui::Frame{.min_height = kProxyDelaySlotHeight},
+                      huxerui::Padding(huxerui::EdgeInsets::Symmetric(3.0F, testing ? 0.0F : 2.0F)),
+                      huxerui::CornerRadius(theme.shapes.small),
                       huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-                      huxerui::Focusable(true),
-                      huxerui::Enabled(!blocked || testing),
+                      huxerui::Focusable(!testing),
+                      testing ? huxerui::Indication{} : theme.interactions.indication,
                       huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                          .label = probeLabel,
                                          .identifier = "node-probe:" + label,
                                          .busy = testing})
-                .OnClick([startProbe, testing, blocked] {
-                    if (!testing && !blocked) startProbe();
+                .OnClick([startProbe, testing] {
+                    if (!testing) startProbe();
                 })
                 .Key("node-probe-action");
-            if (!blocked && !testing) {
+            if (!testing) {
                 action = std::move(action).With(
                     huxerui::PointerCursor(huxerui::PointerCursorKind::Hand),
                     huxerui::Tooltip(Localized("测速")));
@@ -384,10 +385,10 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
                huxerui::Focusable(interactive),
                huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
         if (selected) {
-            tile = std::move(tile).With(huxerui::Border(theme.colors.primary, kCardSelectedOutlineWidth));
+            tile = std::move(tile).With(huxerui::Border(theme.colors.primary, kCardOutlineWidth));
         }
         if (interactive) {
-            tile = std::move(tile).With(ResolveCardIndication(theme, selected ? kCardSelectedOutlineWidth : 0.0F))
+            tile = std::move(tile).With(ResolveCardIndication(theme, selected))
                 .OnClick(activate);
         }
         return tile;

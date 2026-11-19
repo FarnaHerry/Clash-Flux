@@ -22,6 +22,44 @@ inline huxerui::IconButton HomeCardLeadingIconButton(
         .With(huxerui::Offset(huxerui::Point{-inset, 0.0F}));
 }
 
+struct HomeCardHoverOutline {
+    class Extension;
+    huxerui::Border border;
+    huxerui::CornerRadii corners;
+    huxerui::AnimationSpec fade;
+    bool hovered;
+    bool operator==(const HomeCardHoverOutline&) const = default;
+};
+
+class HomeCardHoverOutline::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const HomeCardHoverOutline& outline)
+        : outline_(outline), opacity_(outline.hovered ? 1.0F : 0.0F) {}
+
+    void Update(huxerui::ViewNode&, const HomeCardHoverOutline& outline) {
+        outline_ = outline;
+        opacity_.AnimateTo(outline.hovered ? 1.0F : 0.0F, outline.fade);
+        InvalidatePaint(PaintInvalidation::Foreground);
+    }
+
+    FrameResult OnFrame(huxerui::ViewNode&, const huxerui::FrameInfo& frame) override {
+        const auto result = opacity_.Advance(frame);
+        if (result.changed) InvalidatePaint(PaintInvalidation::Foreground);
+        return {.needs_frame = result.needs_frame, .wake_after = result.wake_after};
+    }
+
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        auto color = outline_.border.color;
+        color.alpha *= std::clamp(opacity_.Value(), 0.0F, 1.0F);
+        if (color.alpha <= 0.0F) return;
+        paint.DrawBorder(node.Bounds(), color, huxerui::StrokeStyle{.width = outline_.border.width}, outline_.corners);
+    }
+
+private:
+    HomeCardHoverOutline outline_;
+    huxerui::MotionController opacity_;
+};
+
 // Build the dashboard surface on its own node so its fill and hover layer share
 // the same rounded geometry. A passive card does not acquire a click action.
 inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
@@ -32,6 +70,7 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
                            backContent = std::move(backContent), onReveal = std::move(onReveal)]() -> huxerui::View {
         auto pointer = huxerui::UseState<std::optional<std::int64_t>>(std::nullopt);
         auto back = huxerui::UseState(false);
+        auto hovered = huxerui::UseState(false);
         const auto turn = [back, onReveal](const huxerui::MultiTapEvent&) {
             if (!back.Get() && onReveal) onReveal();
             back = !back.Get();
@@ -46,6 +85,8 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
             : pressed ? huxerui::AnimationSpec{huxerui::TweenSpec{.duration = 0.07}}
                       : huxerui::AnimationSpec{huxerui::SpringSpec{.stiffness = 480.0F, .damping_ratio = 0.72F}};
         const auto islands = ResolveIslandTheme(theme);
+        const auto hoverStyle = ResolveCardIndication(theme).hover.value();
+        const bool showOutline = hovered.Get();
         huxerui::View faceContent = content;
         if (allowFlip) {
             faceContent = huxerui::Stack {
@@ -78,8 +119,12 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
             huxerui::Scale(huxerui::AnimateTo(compress ? 0.985F : 1.0F, animation)),
             huxerui::Offset(huxerui::AnimateTo(huxerui::Point{0.0F, compress ? 1.0F : 0.0F}, animation)),
-            huxerui::Indication{.hover = ResolveCardIndication(theme).hover}
-        ).On<huxerui::ViewEvents::PointerIntercept>([pointer](const huxerui::PointerEvent& event) {
+            HomeCardHoverOutline{hoverStyle.border.value(), huxerui::CornerRadii{islands.nested_radius},
+                showOutline ? hoverStyle.enter : hoverStyle.exit, showOutline}
+        ).On<huxerui::ViewEvents::Hover>([hovered](const huxerui::HoverEvent& event) {
+            // A nested control owns its indication. The card observes containment independently.
+            if (event.type != huxerui::HoverEventType::Move) hovered = event.type == huxerui::HoverEventType::Enter;
+        }).On<huxerui::ViewEvents::PointerIntercept>([pointer](const huxerui::PointerEvent& event) {
                 if (event.type == huxerui::PointerEventType::Down && !pointer.Get() &&
                     (event.device_kind == huxerui::PointerDeviceKind::Touch ||
                      event.changed_button == huxerui::PointerButton::Primary))

@@ -33,8 +33,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
         ResolveSelectableTileColors(theme, selected);
     const bool interactive = interaction != SelectableTileInteraction::Disabled &&
                              static_cast<bool>(on_click);
-    const float outline = !selected ? 0.0F : style == SelectableTileStyle::Subscription
-        ? kSubscriptionSelectedOutlineWidth : kCardSelectedOutlineWidth;
+    const bool dragPreview = style == SelectableTileStyle::DragPreview;
     // 表面/圆角/描边在建树时就落在 Column 上（不能在返回值外面补修饰符，原因见
     // Card 的注释）：未选中 islands.active，选中 primary_container 淡染底 +
     // primary 描边。
@@ -43,9 +42,6 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
             .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
                   huxerui::Background(colors.surface),
                   huxerui::CornerRadius(kSelectableTileRadius),
-                  huxerui::Border(selected ? theme.colors.primary
-                                           : huxerui::Color::Transparent(),
-                                  outline),
                   huxerui::ClipChildren(),
                   huxerui::Grow(1.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
@@ -54,8 +50,14 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                                      .label = std::move(semantics_label), .selected = selected},
                   huxerui::Focusable(interactive),
                   huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
+    if (selected || dragPreview) {
+        tile = std::move(tile).With(huxerui::Border(theme.colors.primary, kCardOutlineWidth));
+    }
+    if (dragPreview) {
+        tile = std::move(tile).With(ResolveFluxShadows(theme).profile_drag_preview);
+    }
     if (interactive) {
-        tile = std::move(tile).With(ResolveCardIndication(theme, outline)).OnClick(std::move(on_click));
+        tile = std::move(tile).With(ResolveCardIndication(theme, selected)).OnClick(std::move(on_click));
     }
     return tile;
 }

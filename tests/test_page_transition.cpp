@@ -4083,7 +4083,7 @@ huxerui::View ProxyGridProfileRoot() {
                 huxerui::Text("VLESS"),
                 huxerui::Text(std::to_string(20 + static_cast<int>(index % 980))),
                 dotsWidth, index == 0, "node-" + std::to_string(index), [] {},
-                SelectableTileInteraction::Selectable, true, false, false, [] {});
+                SelectableTileInteraction::Selectable, true, false, [] {});
         }).Key("proxy-grid-card-" + std::to_string(index));
     };
     return huxerui::FlatTheme{huxerui::Scope([model, item, generation] {
@@ -5447,7 +5447,7 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
               huxerui::Font::System(font_size::kCaption), huxerui::UseTheme().colors.on_surface})};
     return ProxyNodeTile(huxerui::Text(tag), huxerui::Text("TLS"), std::move(delay), dotsWidth, false,
         tag, [fixture] { fixture->selected += 1; }, SelectableTileInteraction::Selectable,
-        canProbe, value.testing, fixture->model->progress.Get().busy,
+        canProbe, value.testing,
         [fixture, tasks, tag, entry] { StartSingleProbeFixture(fixture, tasks, tag, entry); });
 }
 [[huxerui::composable]] huxerui::View SingleProbeFixtureContent() {
@@ -5612,8 +5612,8 @@ void testSingleProxyProbeCard() {
     const auto detail = measured.Find(UiSelector::Text("TLS")).One().bounds;
     check(std::abs(number.y + number.height / 2 - detail.y - detail.height / 2) < 0.1F &&
           number.y + number.height / 2 > measuredTile.y + measuredTile.height / 2 &&
-          std::abs(number.x + number.width - measuredAction.x - measuredAction.width) < 0.1F &&
-          std::abs(number.x + number.width - (measuredTile.x + measuredTile.width - 10.0F)) < 0.1F &&
+          std::abs(number.x + number.width + 3.0F - measuredAction.x - measuredAction.width) < 0.1F &&
+          std::abs(number.x + number.width - (measuredTile.x + measuredTile.width - 13.0F)) < 0.1F &&
           std::abs(title.x - detail.x) < 0.1F && title.y < detail.y,
           "delay uses the padded bottom-right corner on the protocol row");
     const auto countPaint = [&](const std::regex& command) {
@@ -5642,7 +5642,11 @@ void testSingleProxyProbeCard() {
     check(fixture->selected.Get() == 1 && fixture->singleTags.empty(),
           "empty space outside the result remains a card selection target");
     fixture->selected = 0;
+    const int batch = fixture->model->Begin(); ui.Pump();
+    check(batch != 0 && action("single-a").One().enabled && action("single-b").One().enabled,
+          "a group batch leaves idle node actions enabled");
     action("single-a").Tap(); ui.Pump();
+    fixture->model->End(batch); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a"} && fixture->selected.Get() == 0 &&
           probing("single-a"),
           "single probe targets the clicked runtime tag and does not activate the parent selection");
@@ -5701,7 +5705,7 @@ void testSingleProxyProbeCard() {
                     huxerui::Text("idle-node"), huxerui::Text("VLESS"),
                     huxerui::Text("42"), dotsWidth, false, "idle-node", [] {},
                     clashflux::ui::SelectableTileInteraction::Selectable,
-                    true, false, false, [] {});
+                    true, false, [] {});
             })};
         }, {.show_debug_overlay = false}};
         huxerui::testing::UiTest idleUi(singleMountApp,
@@ -5741,7 +5745,7 @@ void testSingleProxyProbeCard() {
                             huxerui::Text("VMESS · UDP").Style(detailStyle),
                             huxerui::Text("128").Style(detailStyle),
                             dotsWidth, index == 0, name, [] {},
-                            SelectableTileInteraction::Selectable, true, false, false, [] {});
+                            SelectableTileInteraction::Selectable, true, false, [] {});
                     }).Key("long-cjk-card-" + std::to_string(index));
                 }, kSectionCardSpacing)
                     .Columns(huxerui::GridColumns::Adaptive(196.0F))
@@ -7042,7 +7046,7 @@ std::optional<huxerui::Rect> paintedCatCard(huxerui::testing::UiTest& ui) {
     return result;
 }
 
-struct PaintedHeaderCard {
+struct PaintedCard {
     huxerui::Rect bounds;
     float outlineWidth;
     float cornerRadius;
@@ -7081,12 +7085,13 @@ std::vector<huxerui::Rect> paintedHomeCats(huxerui::testing::UiTest& ui) {
     return result;
 }
 
-std::optional<PaintedHeaderCard> paintedHeaderCard(huxerui::testing::UiTest& ui) {
+std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
+    std::optional<float> width, std::optional<float> height) {
     std::istringstream input(ui.CaptureSnapshot().ToString());
     std::string line;
     std::getline(input, line); std::getline(input, line);
     const auto snapshot = readCatPaintNode(input, line);
-    std::optional<PaintedHeaderCard> result;
+    std::optional<PaintedCard> result;
     float outlineWidth = 0.0F;
     const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent) -> void {
         auto local = catPaintTransform(node.Find("transform"));
@@ -7095,17 +7100,18 @@ std::optional<PaintedHeaderCard> paintedHeaderCard(huxerui::testing::UiTest& ui)
             local.translate_y += offset->Number("y");
         }
         const auto world = composeCatPaint(parent, local);
-        if (const auto* content = node.Find("content")) {
-            for (const auto& command : content->children) {
+        for (const auto* phase : {node.Find("content"), node.Find("foreground")}) {
+            if (!phase) continue;
+            for (const auto& command : phase->children) {
                 const auto* bounds = command.Find("bounds");
-                if (command.name == "border" && bounds && bounds->Number("height") == 48.0F &&
-                    bounds->Number("width") > 200.0F) {
+                if (!bounds || (width ? bounds->Number("width") != *width : bounds->Number("width") <= 200.0F) ||
+                    (height && bounds->Number("height") != *height)) continue;
+                if (command.name == "border") {
                     const auto* style = command.Find("style");
                     outlineWidth = style ? style->Number("width") : 0.0F;
                 }
-                if (command.name == "rect" && bounds && bounds->Number("height") == 48.0F &&
-                    bounds->Number("width") > 200.0F) {
-                    result = PaintedHeaderCard{
+                if (command.name == "rect") {
+                    result = PaintedCard{
                         {world.m11 * bounds->Number("x") + world.translate_x,
                          world.m22 * bounds->Number("y") + world.translate_y,
                          world.m11 * bounds->Number("width"),
@@ -7535,7 +7541,7 @@ void testHomeHeaderControl() {
     advance(2400);
     check(model->control->shown.Get() && !ui.Find(UiSelector::Key("home-header-floating-cat")).Exists() &&
           ui.Find(UiSelector::Key("home-header-uptime")).Exists(), "successful cat merges into the production running header");
-    const auto fullHeaderCard = paintedHeaderCard(ui);
+    const auto fullHeaderCard = paintedCard(ui, std::nullopt, 48.0F);
     check(fullHeaderCard && fullHeaderCard->bounds.width == slot.width &&
           fullHeaderCard->bounds.height == slot.height &&
           fullHeaderCard->outlineWidth == 0.0F &&
@@ -7553,7 +7559,7 @@ void testHomeHeaderControl() {
     advance(150);
     check(model->toggles == 2 && model->control->motion.Get().collapsing,
           "header stop begins the in-place shrink before returning to the dock");
-    const auto shrinkingHeaderCard = paintedHeaderCard(ui);
+    const auto shrinkingHeaderCard = paintedCard(ui, std::nullopt, 48.0F);
     check(fullHeaderCard && shrinkingHeaderCard &&
           shrinkingHeaderCard->bounds.width < fullHeaderCard->bounds.width &&
           shrinkingHeaderCard->bounds.height < fullHeaderCard->bounds.height &&
@@ -7729,6 +7735,7 @@ huxerui::View HomeCardPressRoot(bool dark, bool reduced) {
     return huxerui::MaterialTheme(theme, huxerui::Column{
         clashflux::ui::HomeCardSurface(theme, huxerui::Column{
             huxerui::Text("Card body").With(huxerui::Grow(1.0F)),
+            huxerui::TextField(huxerui::TextEditingValue{}).Key("nested-card-input"),
             huxerui::Button("Nested card action").OnClick([] { ++homeCardActionCount; }).Key("nested-card-action"),
         }.With(huxerui::Grow(1.0F)), "press").With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("press-card"),
         huxerui::Spacer().With(huxerui::Frame{.height = 100.0F}),
@@ -7766,9 +7773,38 @@ void testHomeCardPress() {
         huxerui::testing::UiTest ui(*app, {.viewport = {400.0F, 400.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
         const auto card = ui.Find(UiSelector::Key("press-card")).One();
-        huxerui::PointerEvent event{.type = huxerui::PointerEventType::Down, .pointer_id = 84,
-            .position = {card.bounds.x + 8.0F, card.bounds.y + 8.0F}, .device_kind = huxerui::PointerDeviceKind::Mouse,
-            .changed_button = huxerui::PointerButton::Primary, .pressed_buttons = huxerui::PointerButton::Primary};
+        const auto idleCard = paintedCard(ui, 280.0F, std::nullopt);
+        check(idleCard && idleCard->outlineWidth == 0.0F, "home card has no border at rest");
+        huxerui::PointerEvent event{.type = huxerui::PointerEventType::Move, .pointer_id = 84,
+            .position = {card.bounds.x + 8.0F, card.bounds.y + 8.0F},
+            .device_kind = huxerui::PointerDeviceKind::Mouse};
+        ui.SendPointer(event); ui.PumpAndSettle();
+        const auto hoveredCard = paintedCard(ui, 280.0F, std::nullopt);
+        check(idleCard && hoveredCard && hoveredCard->outlineWidth == 1.0F &&
+              hoveredCard->bounds == idleCard->bounds && hoveredCard->cornerRadius == idleCard->cornerRadius,
+              "home card hover paints a one-point border without moving or reshaping the card");
+        const auto padding = event.position;
+        const auto hoverAt = [&](huxerui::Point position) {
+            event.position = position;
+            ui.SendPointer(event); ui.PumpAndSettle();
+            return paintedCard(ui, 280.0F, std::nullopt);
+        };
+        const auto centerOf = [&](const char* key) {
+            const auto bounds = ui.Find(UiSelector::Key(key)).One().bounds;
+            return huxerui::Point{bounds.x + bounds.width / 2.0F, bounds.y + bounds.height / 2.0F};
+        };
+        const auto paddingHover = ui.CaptureSnapshot();
+        const auto onButton = hoverAt(centerOf("nested-card-action"));
+        check(onButton && onButton->outlineWidth == 1.0F, "hovering a nested button keeps the card outline");
+        check(ui.CaptureSnapshot() != paddingHover, "the nested button still paints its own hover feedback");
+        const auto outside = hoverAt({card.bounds.x + card.bounds.width + 8.0F, padding.y});
+        check(outside && outside->outlineWidth == 0.0F, "leaving a nested control and its card clears the outline");
+        const auto onInput = hoverAt(centerOf("nested-card-input"));
+        check(onInput && onInput->outlineWidth == 1.0F, "entering directly over a nested input shows the card outline");
+        hoverAt(padding);
+        event.type = huxerui::PointerEventType::Down;
+        event.changed_button = huxerui::PointerButton::Primary;
+        event.pressed_buttons = huxerui::PointerButton::Primary;
         ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
         check(reduced ? paintedHomeCardScale(ui) == 1.0F : paintedHomeCardScale(ui) < 0.999F,
               "home card paints a press transform in both themes and honors reduced motion");
@@ -9052,6 +9088,12 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::string_view(argv[1]) == "--home-gear") {
         testHomeSettingsGear(); return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--home-card-surface") {
+        testHomeHeaderControl();
+        testHomeCardPress();
+        testHomeCardFlip();
+        return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-node-card") {
         testSingleProxyProbeCard(); return failures == 0 ? 0 : 1;

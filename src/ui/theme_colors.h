@@ -13,21 +13,8 @@
 
 namespace clashflux::ui {
 
-// 全页面卡片描边的唯一线宽入口；桌面普通卡片使用细线，选中时适度加粗。
-// 手机保留普通、强调（悬停/拖动预览）、强强调（放置目标/色卡选中）的既有档位。
-#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+// 卡片悬停、选中和拖放使用同一描边线宽。
 inline constexpr float kCardOutlineWidth = 1.0F;
-inline constexpr float kCardSelectedOutlineWidth = 1.0F;
-inline constexpr float kCardEmphasisOutlineWidth = 1.5F;
-inline constexpr float kCardStrongOutlineWidth = 2.0F;
-#else
-inline constexpr float kCardOutlineWidth = 0.5F;
-inline constexpr float kCardSelectedOutlineWidth = 1.0F;
-inline constexpr float kCardEmphasisOutlineWidth = kCardOutlineWidth;
-inline constexpr float kCardStrongOutlineWidth = kCardSelectedOutlineWidth;
-#endif
-
-inline constexpr float kSubscriptionSelectedOutlineWidth = 2.0F;
 
 inline constexpr int kRgbChannelMax = 255;
 inline constexpr float kHsbTurnDegrees = 360.0F;
@@ -452,12 +439,13 @@ inline huxerui::Indication ResolveFluxIndication(const huxerui::ThemeSpec& theme
     };
 }
 
-inline huxerui::Indication ResolveCardIndication(const huxerui::ThemeSpec& theme,
-                                                 float existingOutline = 0.0F) {
+inline huxerui::Indication ResolveCardIndication(const huxerui::ThemeSpec& theme, bool selected = false) {
     auto indication = theme.interactions.indication;
     auto hover = indication.hover.value_or(huxerui::IndicationLayer{});
     hover.fill.reset();
-    hover.border = huxerui::Border{theme.colors.primary, existingOutline + kCardOutlineWidth};
+    const auto color = selected ? MixThemeColor(theme.colors.primary, theme.colors.on_surface, 0.22F)
+                                : theme.colors.primary;
+    hover.border = huxerui::Border{color, kCardOutlineWidth};
     hover.placement = huxerui::IndicationPlacement::AboveContent;
     indication.hover = hover;
     return indication;
@@ -514,7 +502,7 @@ inline huxerui::Color ThemeShadowColor(const huxerui::ThemeSpec& theme, float op
     return color;
 }
 
-// 桌面表面的统一阴影层级；深色降低不透明度，避免中性灰背景边缘发黑。
+// 浮层表面的统一阴影层级；深色降低不透明度，避免中性灰背景边缘发黑。
 // 参数均为逻辑像素，不参与布局或改变控件的命中区域。
 struct FluxShadowScheme {
     huxerui::Shadow title_bar;
@@ -524,6 +512,7 @@ struct FluxShadowScheme {
     huxerui::Shadow bottom_sheet;
     huxerui::Shadow dialog;
     huxerui::Shadow compact_navigation;
+    huxerui::Shadow profile_drag_preview;
 };
 
 inline FluxShadowScheme ResolveFluxShadows(const huxerui::ThemeSpec& theme) {
@@ -538,6 +527,7 @@ inline FluxShadowScheme ResolveFluxShadows(const huxerui::ThemeSpec& theme) {
         // 底部胶囊沿用既有参数，手机与桌面 Compact 的观感保持一致。
         {ThemeShadowColor(theme, (dark ? 4.0F : 32.0F) / 255.0F),
             {0.0F, 0.85F}, 2.667F, 0.0F},
+        {.color = ThemeShadowColor(theme, dark ? 0.17F : 0.24F), .blur_radius = 16.0F, .spread = -2.0F},
     };
 }
 

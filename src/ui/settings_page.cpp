@@ -116,7 +116,7 @@ constexpr bool kUpdateUsesSystemInstaller = false;
         huxerui::Column {SectionTitle(title)}.With(
             huxerui::Padding(huxerui::EdgeInsets::Symmetric(inset, 0.0F)))
             .Key("settings-group-heading"),
-        Card(huxerui::ProvideEnvironment(SettingsRowInsets{inset, 10.0F, 48.0F}, content), false, 0.0F)
+        Card(huxerui::ProvideEnvironment(SettingsRowInsets{inset, 10.0F, 48.0F}, content), 0.0F)
             .Key("settings-group-surface"),
     }.With(huxerui::Spacing(theme.spacing.small),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -539,7 +539,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     const float inset = ResolveIslandTheme(theme).island_padding;
     huxerui::View content = Card(huxerui::ProvideEnvironment(
-        SettingsRowInsets{inset, 10.0F, 48.0F}, DesktopKernelSettingsContent()), false, 0.0F);
+        SettingsRowInsets{inset, 10.0F, 48.0F}, DesktopKernelSettingsContent()), 0.0F);
     if (huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) content = huxerui::Row {
       huxerui::Spacer(),
       std::move(content).With(huxerui::Frame{.max_width = 720.0F}),
@@ -839,7 +839,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                huxerui::Padding(huxerui::EdgeInsets::Symmetric(16.0F, 16.0F)),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)).Key("about-identity"),
         Card(huxerui::Column(std::move(updateRows)).With(
-            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), false, 0.0F),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), 0.0F),
         SettingsSectionCard(Localized("项目与组件"), huxerui::Column{
             AboutActionRow("Clash-Flux", "FarnaHerry/Clash-Flux", app::images::github,
                 repository("https://github.com/FarnaHerry/Clash-Flux")),
@@ -955,7 +955,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         .Key("settings-maintenance"));
 
     sections.push_back(Card(AboutActionRow(Localized("关于"), {}, app::images::info,
-                    [navigation] { navigation.Push(AboutRoutePage); }), false, 0.0F)
+                    [navigation] { navigation.Push(AboutRoutePage); }), 0.0F)
         .Key("settings-about"));
     huxerui::View content = huxerui::Column(sections).With(
         huxerui::Spacing(20.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

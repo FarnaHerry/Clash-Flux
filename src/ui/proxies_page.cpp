@@ -414,7 +414,6 @@ struct ProxySyncCache {
     }
     const auto startProbe = [appTasks, control, tests, tag = node.name, delay = node.delay,
                              timeout = node.timeout, testTime = node.urlTestTime, toast] {
-        if (tests->progress.Get().busy) return;
         RunProxyTestWhenReady(control, tests, toast,
                 [appTasks, model = control.model, tests, tag, delay, timeout, testTime]() -> huxerui::Task<void> {
             const auto valid = BindProxyTest(model, *tests);
@@ -430,8 +429,7 @@ struct ProxySyncCache {
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), detailColor}),
         delayView, dotsWidth, selected, node.displayName, std::move(onActivate),
         selectable ? SelectableTileInteraction::Selectable : SelectableTileInteraction::ReadOnly,
-        !node.isGroup && !ProxyTestUsesNativeGroup(), !node.isGroup && currentProbe.testing,
-        tests->preparing.Get() || tests->progress.Get().busy, startProbe);
+        !node.isGroup && !ProxyTestUsesNativeGroup(), !node.isGroup && currentProbe.testing, startProbe);
 }
 
 // 节点点击动作：**所有成员都只是"选中当前线路"**。成员本身是策略组时（订阅里
@@ -616,6 +614,12 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                 if (!valid()) co_return;
                 const int generation = testModel->Begin();
                 if (!generation) co_return;
+                std::vector<ProxyProbeTarget> targets;
+                for (const auto& node : nodes) {
+                    if (node.isGroup) continue;
+                    const auto probe = testModel->Get(node.name, node.delay, node.timeout, node.urlTestTime);
+                    if (testModel->Start(probe, generation, node.urlTestTime)) targets.push_back({node.name, probe});
+                }
                 bool ok = false;
                 try {
                     ok = co_await RunOnTaskThread([groupName] { return StartProxyGroupTest(groupName); });
@@ -625,12 +629,6 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                     testModel->End(generation);
                     toast.Show(Localized("测速失败：内核未运行或启动失败"));
                     co_return;
-                }
-                std::vector<ProxyProbeTarget> targets;
-                for (const auto& node : nodes) {
-                    if (node.isGroup) continue;
-                    const auto probe = testModel->Get(node.name, node.delay, node.timeout, node.urlTestTime);
-                    if (testModel->Start(probe, generation, node.urlTestTime)) targets.push_back({node.name, probe});
                 }
                 const bool native = ProxyTestUsesNativeGroup();
                 const auto pollProbe = [proxiesModel](const std::string& tag)

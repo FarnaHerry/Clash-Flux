@@ -205,7 +205,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
         content = PageBodyFrame(std::move(empty)).With(huxerui::Grow(1.0F));
     } else {
         huxerui::View body = Card(huxerui::Column(std::move(rows)).With(
-            huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), false);
+            huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
         if (!error.Get().empty()) {
             body = huxerui::Column {
                 std::move(body),
