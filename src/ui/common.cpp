@@ -465,6 +465,7 @@ std::vector<huxerui::MenuEntry> BuildProxyLineMenu(
 ProxiesSnapshot FetchProxiesSnapshot() {
     ProxiesSnapshot next;
     next.loaded = true;
+    next.profilesRevision = clashflux::data::session().profilesRevision();
     std::string body;
 #if defined(__ANDROID__)
     const char* raw = clashflux_android_proxy_groups();
@@ -1182,7 +1183,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 // （shapes.small + outline_soft），与按钮、下拉、菜单同族。
 [[huxerui::composable]] huxerui::View FileDropZone(
     huxerui::ImageVariant icon, huxerui::StringVariant title,
-    huxerui::State<std::string> picked_path, huxerui::TaskScope tasks,
+    huxerui::State<std::optional<huxerui::FileReference>> picked_file, huxerui::TaskScope tasks,
     FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     huxerui::FilePickerFilter filter, std::string key) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
@@ -1190,7 +1191,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     const bool flat = huxerui::UseEnvironment<DialogSurfaceContext>().flat;
     auto hovering = huxerui::UseState(false);
     const bool hover = hovering.Get();
-    const std::string pickedPath = picked_path.Get();
+    const auto& selection = picked_file.Get();
+    const auto selectedFile = selection ? selection->AsFile() : std::nullopt;
+    const std::string pickedPath = selectedFile ? selectedFile->Path() : std::string{};
     std::string fileName = pickedPath;
     const std::size_t slash = pickedPath.find_last_of("/\\");
     if (slash != std::string::npos) fileName = pickedPath.substr(slash + 1);
@@ -1199,11 +1202,11 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     dropOptions.extensions = filter.extensions;
     dropOptions.allows_multiple = false;
 
-    const auto open_picker = [tasks, picker, toast, filter, picked_path] {
-        tasks.Launch([picker, toast, filter, picked_path]() -> huxerui::Task<void> {
+    const auto open_picker = [tasks, picker, toast, filter, picked_file] {
+        tasks.Launch([picker, toast, filter, picked_file]() -> huxerui::Task<void> {
             const auto picked = co_await PickProfileConfigFile(picker, filter, toast);
             if (!picked) co_return;
-            if (const auto file = picked->AsFile()) picked_path = file->Path();
+            if (picked->AsFile()) picked_file = picked;
         });
     };
 
@@ -1252,10 +1255,9 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                 hovering = false;
             })
         .On<huxerui::FileDropEvents::Dropped>(
-            [picked_path](const std::vector<huxerui::FileReference>& files,
+            [picked_file](const std::vector<huxerui::FileReference>& files,
                           const huxerui::FileDropEvent&) {
-                if (files.empty()) return;
-                if (const auto file = files.front().AsFile()) picked_path = file->Path();
+                if (!files.empty() && files.front().AsFile()) picked_file = files.front();
             })
         .On<huxerui::FileDropEvents::Failed>(
             [toast](const huxerui::IoError& error, const huxerui::FileDropEvent&) {
@@ -1263,6 +1265,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
             })
         .OnClick(open_picker)
         .With(huxerui::Focusable(true),
+              ResolveCardIndication(theme, hover ? kCardEmphasisOutlineWidth : 0.0F),
               huxerui::Semantics{.role = huxerui::SemanticRole::Button,
                                  .label = huxerui::UseString(title)})
         .Key(std::move(key));
@@ -1271,16 +1274,20 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
 // 密集卡片（声明见 ui.h）：圆角阶梯的 dense 档（dense_radius 4pt），内边距
 // 减半（island_padding/2）让高密度内容（日志行等）单行更紧凑；raised 表面
 // 与卡片同层，靠圆角与留白密度区分。
-[[huxerui::composable]] huxerui::View DenseCard(huxerui::View content) {
+[[huxerui::composable]] huxerui::View DenseCard(huxerui::View content, bool hoverOutline) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
     const bool flat = huxerui::UseEnvironment<DialogSurfaceContext>().flat;
-    return huxerui::Column { std::move(content) }
+    huxerui::View card = huxerui::Column {std::move(content)}
         .With(huxerui::Padding(islands.island_padding * 0.5F),
               huxerui::Background(flat ? huxerui::Color::Transparent() : islands.raised),
               huxerui::CornerRadius(islands.dense_radius),
               huxerui::ClipChildren(),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    if (hoverOutline) {
+        card = std::move(card).With(huxerui::Indication{.hover = ResolveCardIndication(theme).hover});
+    }
+    return card;
 }
 
 // 可选中卡片与分组选择器共用 selectable_tile.cpp。

@@ -59,18 +59,24 @@ struct ProfileFormDialog {
 }
 
 auto ProfileCreateSnapshot(const ProfileCreateFields& fields) {
+    const auto& picked = fields.picked_file.Get();
+    const auto localFile = picked ? picked->AsFile() : std::nullopt;
     return std::tuple{fields.name.Get().text, fields.url.Get().text, fields.qr_content.Get().text,
         fields.desc.Get().text, fields.timeout.Get().text, fields.interval.Get().text,
         fields.system_proxy.Get(), fields.core_proxy.Get(),
         fields.pptp_server.Get().text, fields.pptp_username.Get().text, fields.pptp_password.Get().text,
-        fields.pptp_timeout.Get().text, fields.pptp_routes.Get().text, fields.pptp_mppe.Get(), fields.picked_path.Get()};
+        fields.pptp_timeout.Get().text, fields.pptp_routes.Get().text, fields.pptp_mppe.Get(),
+        localFile ? localFile->Path() : std::string{}};
 }
 
-std::function<void()> UseProfileCreateClose(ProfileCreateFields fields, std::function<void()> close) {
+std::function<void()> UseProfileCreateClose(ProfileCreateFields fields, std::function<void()> close,
+    std::optional<huxerui::State<bool>> importing = std::nullopt) {
     const auto initial = huxerui::UseState(ProfileCreateSnapshot(fields));
     // Submitted imports run in the application scope; only unsaved draft
     // changes need confirmation. A slow request cannot veto back/close.
-    return UseEditorClose([=] { return ProfileCreateSnapshot(fields) != initial.Get(); },
+    return UseEditorClose([=] {
+        return (!importing || !importing->Get()) && ProfileCreateSnapshot(fields) != initial.Get();
+    },
         [] { return false; }, close);
 }
 
@@ -150,19 +156,19 @@ huxerui::View ProfilePlatformOptions(
 
 #endif
 
-// 订阅选项表单（新建/编辑弹窗共用）：描述 + HTTP 超时/自动更新间隔 +
-// 系统代理/内核代理开关。字段值由调用方持有的 State 承载。
-[[huxerui::composable]] huxerui::View ProfileOptionsForm(
-    huxerui::State<huxerui::TextEditingValue> desc,
+huxerui::View ProfileDescriptionField(huxerui::State<huxerui::TextEditingValue> desc) {
+    return huxerui::TextField(desc.Get())
+        .Label(Localized("描述（可选）"))
+        .Variant(huxerui::TextFieldVariant::Outlined)
+        .OnChanged([desc](const huxerui::TextEditingValue& value) { desc = value; });
+}
+
+[[huxerui::composable]] huxerui::View ProfileDownloadOptions(
     huxerui::State<huxerui::TextEditingValue> timeout,
     huxerui::State<huxerui::TextEditingValue> interval,
     huxerui::State<bool> sysProxy,
     huxerui::State<bool> coreProxy) {
     return huxerui::Column {
-        huxerui::TextField(desc.Get())
-            .Label(Localized("描述（可选）"))
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .OnChanged([desc](const huxerui::TextEditingValue& v) { desc = v; }),
         huxerui::TextField(timeout.Get())
             .Label(Localized("HTTP 超时（秒）"))
             .Variant(huxerui::TextFieldVariant::Outlined)
@@ -174,6 +180,17 @@ huxerui::View ProfilePlatformOptions(
     }
         .With(huxerui::Spacing(16.0F),
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+[[huxerui::composable]] huxerui::View ProfileOptionsForm(
+    huxerui::State<huxerui::TextEditingValue> desc,
+    huxerui::State<huxerui::TextEditingValue> timeout,
+    huxerui::State<huxerui::TextEditingValue> interval,
+    huxerui::State<bool> sysProxy, huxerui::State<bool> coreProxy) {
+    return huxerui::Column {
+      ProfileDescriptionField(desc),
+      ProfileDownloadOptions(timeout, interval, sysProxy, coreProxy),
+    }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
 // PPTP 原生订阅表单：只在订阅类型为 pptp 时显示。密码属于受控输入，
@@ -264,6 +281,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         origin->Advance();
         if (on_back) on_back();
     };
+    const auto cancel = UseProfileCreateClose(fields, go_back, importing);
     const auto profilesModel = huxerui::UseService<ProfilesModel>();
     const auto configFileFilter = ProfileConfigFileFilter();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
@@ -294,7 +312,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     } else if (local) {
         typeFields = FileDropZone(app::images::file_import,
                                   Localized("拖入或点击选择配置文件"),
-                                  fields.picked_path, tasks, toast, picker,
+                                  fields.picked_file, tasks, toast, picker,
                                   configFileFilter, "profile-file-drop-zone");
     } else {
         typeFields = PptpOptionsForm(
@@ -309,7 +327,9 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
             toast.Show(Localized("订阅链接不能为空"));
             return;
         }
-        if (local && fields.picked_path.Get().empty()) {
+        const auto picked = local ? fields.picked_file.Get() : std::nullopt;
+        const auto localFile = picked ? picked->AsFile() : std::nullopt;
+        if (local && !localFile) {
             toast.Show(Localized("请先选择订阅文件"));
             return;
         }
@@ -344,9 +364,10 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         ProfileImportRequest request{
             .remote = remote, .local = local, .pptp = pptp,
             .name = fields.name.Get().text, .url = url,
-            .picked_path = fields.picked_path.Get(), .options = std::move(options)};
+            .picked_path = localFile ? localFile->Path() : std::string{}, .options = std::move(options)};
         const auto ticket = origin->Advance();
-        LaunchProfileImport(importing, [http, request = std::move(request)]() mutable -> huxerui::Task<ProfileImportResult> {
+        LaunchProfileImport(importing, [http, picked, request = std::move(request)]() mutable -> huxerui::Task<ProfileImportResult> {
+            static_cast<void>(picked); // Retain access until the path-based import completes.
             co_return co_await ImportProfileForPlatform(http, std::move(request));
         }, [=](ProfileImportResult result) {
             profilesModel->PublishCached();
@@ -362,70 +383,38 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         });
     };
 
-    huxerui::View commonFields =
-        pptp
-            ? huxerui::View{huxerui::TextField(fields.desc.Get())
-                                .Label(Localized("描述（可选）"))
-                                .Variant(huxerui::TextFieldVariant::Outlined)
-                                .OnChanged([desc = fields.desc](
-                                               const huxerui::TextEditingValue& value) {
-                                    desc = value;
-                                })}
-            : huxerui::View{ProfileOptionsForm(
-                  fields.desc, fields.timeout, fields.interval,
-                  fields.system_proxy, fields.core_proxy)};
-
+    const huxerui::View typeSelector = huxerui::ProvideEnvironment(typeStyle,
+        huxerui::SegmentedButton(types, typeIndex)
+            .OnChanged([type = fields.type_index](std::size_t index) { type = index; })
+            .Key("profile-create-type"));
     huxerui::View formFields = huxerui::Column {
-        huxerui::ProvideEnvironment(typeStyle,
-            huxerui::SegmentedButton(types, typeIndex)
-                .OnChanged([type = fields.type_index](std::size_t index) {
-                    type = index;
-                })),
-        typeFields,
-        huxerui::TextField(fields.name.Get())
-            .Label(Localized("名称（可选）"))
-            .Variant(huxerui::TextFieldVariant::Outlined)
-            .OnChanged([name = fields.name](
-                           const huxerui::TextEditingValue& value) {
-                name = value;
-            }),
-        commonFields,
+      huxerui::TextField(fields.name.Get())
+          .Label(Localized("名称（可选）"))
+          .Variant(huxerui::TextFieldVariant::Outlined)
+          .OnChanged([name = fields.name](const huxerui::TextEditingValue& value) { name = value; })
+          .Key("profile-create-name"),
+      ProfileDescriptionField(fields.desc).Key("profile-create-description"),
+      typeFields,
+      pptp ? huxerui::View{} : ProfileDownloadOptions(fields.timeout, fields.interval,
+          fields.system_proxy, fields.core_proxy),
     }.With(huxerui::Spacing(16.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    // 嵌入（对话框）模式不再套 Card：DialogCard 是唯一容器层，与编辑订阅
-    // 弹窗一致；页面模式保留表单卡片。
-    // Editing forms stay flat in both dialog and page presentations.
     if (embedded) {
-        // 对话框嵌入模式与编辑订阅弹窗同一布局：标题 + 表单 + 底部
-        // 「取消 / 创建」，不出现页面页头与页面骨架。
-        return huxerui::Column{
-            huxerui::Text(Localized("新建订阅"), huxerui::TextRole::Title)
-                .Key("profile-create-title"),
-            PageScrollView(huxerui::Column{std::move(formFields)}.With(
-                                   huxerui::Spacing(12.0F),
-                                   huxerui::CrossAlign(
-                                       huxerui::CrossAxisAlignment::Stretch)))
-                .With(huxerui::Frame{.height = kDialogFormHeight}),
-            huxerui::Row{
-                DialogAction(Localized("取消"), go_back, false),
-                importing
-                    ? huxerui::View{huxerui::ProgressCircle().With(
-                          huxerui::Frame{.width = 20.0F, .height = 20.0F})}
-                    : huxerui::View{huxerui::Button(Localized("创建"))
-                                        .OnClick(importProfile)},
-            }.With(huxerui::MainAlign(huxerui::MainAxisAlignment::SpaceBetween),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-        }.With(huxerui::Spacing(16.0F),
-               huxerui::Frame{.width = 420.0F},
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        const auto body = huxerui::Column {
+          typeSelector,
+          PageScrollView(formFields).With(huxerui::Grow(1.0F)),
+        }.With(huxerui::Spacing(16.0F), huxerui::Grow(1.0F), huxerui::Enabled(!importing.Get()),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        const auto create = DialogAction(Localized("创建"), importProfile, true, !importing.Get())
+            .With(huxerui::Semantics{.busy = importing.Get()}).Key("profile-create-submit");
+        const auto progress = importing.Get()
+            ? huxerui::View{huxerui::ProgressCircle().With(huxerui::Frame{.width = 20.0F, .height = 20.0F})}
+            : huxerui::View{};
+        return DialogScaffold(DialogHeader(Localized("新建订阅")).Key("profile-create-title"), body,
+            DialogActions({progress, DialogAction(Localized("取消"), cancel, false), create}), DialogSize::Form, true);
     }
-    huxerui::View scrollContent = huxerui::Column{std::move(formFields)}.With(
-        huxerui::Spacing(12.0F),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    scrollContent = huxerui::Column{std::move(scrollContent)}
-                        .With(huxerui::Spacing(16.0F),
-                              huxerui::CrossAlign(
-                                  huxerui::CrossAxisAlignment::Stretch));
+    const auto scrollContent = huxerui::Column {typeSelector, formFields}
+        .With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     huxerui::View content = ProfileFormScroll(scrollContent)
         .With(huxerui::Grow(1.0F));
     if (compact) content = FormPageContent(content);
@@ -926,6 +915,12 @@ void PushProfileQrScanner(
     FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     std::shared_ptr<AppHttpClient> http, bool pptp_supported,
     std::function<void()> close) {
+    if (kPageTitlesInWindow) {
+        auto dialogFields = fields;
+        dialogFields.picked_file = huxerui::UseState(std::optional<huxerui::FileReference>{});
+        return ProfileCreatePage(dialogFields, huxerui::UseTaskScope(), toast, picker, http,
+            pptp_supported, close, /*embedded=*/true);
+    }
     const auto guarded = UseProfileCreateClose(fields, close);
     return DialogCard(huxerui::ProvideEnvironment(
         ProfileFormDialog{true, std::make_shared<std::function<void()>>(guarded)},
@@ -996,7 +991,9 @@ void PushProfileQrScanner(
             toast.Show(Localized(isQr ? "请先扫描二维码" : "订阅 URL 不能为空"));
             return;
         }
-        if (local && fields.picked_path.Get().empty()) {
+        const auto picked = local ? fields.picked_file.Get() : std::nullopt;
+        const auto localFile = picked ? picked->AsFile() : std::nullopt;
+        if (local && !localFile) {
             toast.Show(Localized("请先选择配置文件"));
             return;
         }
@@ -1034,9 +1031,10 @@ void PushProfileQrScanner(
         }
 
         const std::string name = fields.name.Get().text;
-        const std::string pickedPath = fields.picked_path.Get();
+        const std::string pickedPath = localFile ? localFile->Path() : std::string{};
         const auto ticket = origin->Advance();
-        LaunchProfileImport(importing, [=]() mutable -> huxerui::Task<ProfileImportResult> {
+        LaunchProfileImport(importing, [=, picked = picked]() mutable -> huxerui::Task<ProfileImportResult> {
+            static_cast<void>(picked);
             std::pair<std::int64_t, std::string> result;
             if (!inlineConfig.empty()) {
                 result = co_await ImportProfileContent(
@@ -1081,7 +1079,7 @@ void PushProfileQrScanner(
     } else if (isFile) {
         typeFields = FileDropZone(app::images::file_import,
                                   Localized("拖入或点击选择配置文件"),
-                                  fields.picked_path, tasks, toast, picker,
+                                  fields.picked_file, tasks, toast, picker,
                                   configFileFilter, "profile-file-drop-zone");
     } else if (isQr) {
         const bool scanned = !qrContent.empty();
@@ -1183,7 +1181,7 @@ static ProfileCreateFields UseExternalProfileFields(std::string name, std::strin
         huxerui::UseState(huxerui::TextEditingValue{"30"}),
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(true),
-        huxerui::UseState(std::string{})};
+        huxerui::UseState(std::optional<huxerui::FileReference>{})};
 }
 
 #if defined(__ANDROID__)

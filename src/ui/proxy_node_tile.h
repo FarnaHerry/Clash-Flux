@@ -3,9 +3,9 @@
 #include <huxerui/huxerui.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -15,14 +15,25 @@
 #include <vector>
 
 #include "ui.h"
-#include "refresh_motion.h"
-#include "scroll_motion.h"
 
 namespace clashflux::ui {
 
 inline constexpr float kProxyDelaySlotWidth = 62.0F;
-inline constexpr float kProxyDelaySlotHeight = 16.0F;
-inline constexpr float kProxyProbeActionSize = 16.0F;
+inline constexpr float kProxyDelaySlotHeight = 18.0F;
+
+class ProxyProbeDotsMetrics {
+public:
+    float Width() const {
+        if (!width_) {
+            const huxerui::TextStyle style{huxerui::Font::System(font_size::kCaption), huxerui::Color::Transparent()};
+            width_ = huxerui::UseTextMeasurer().MeasureText("000", style, kProxyDelaySlotWidth).size.width;
+        }
+        return *width_;
+    }
+
+private:
+    mutable std::optional<float> width_;
+};
 
 inline std::string BoundSingleLineRun(std::string_view input, std::size_t maxCodePoints = 64) {
     std::string out;
@@ -221,152 +232,163 @@ inline huxerui::View SingleLineEllipsisText(std::string_view text, huxerui::Text
               SingleLineEllipsisLabel{BoundSingleLineRun(text), std::move(style)});
 }
 
-inline const huxerui::Indication& ResolveProxyProbeIndication(const huxerui::ThemeSpec& theme) {
-    struct CachedProbeIndication {
-        huxerui::Color primary{};
-        double fast = -1.0;
-        bool reducedMotion = false;
-        huxerui::Indication indication{};
-    };
-    thread_local CachedProbeIndication cache;
-    if (cache.fast != theme.motion.fast ||
-        cache.reducedMotion != theme.motion.reduced_motion ||
-        cache.primary != theme.colors.primary) {
-        huxerui::Indication indication = ResolveFluxIndication(theme);
-        indication.geometry.layer_size = huxerui::Size{kProxyProbeActionSize, kProxyProbeActionSize};
-        indication.geometry.clip_corner_radii = huxerui::CornerRadii{kProxyProbeActionSize * 0.5F};
-        cache = CachedProbeIndication{
-            theme.colors.primary,
-            theme.motion.fast,
-            theme.motion.reduced_motion,
-            std::move(indication)};
+struct ProxyProbeDotsPaint {
+    class Extension;
+    huxerui::Color color;
+    bool animated = false;
+    bool operator==(const ProxyProbeDotsPaint&) const = default;
+};
+
+class ProxyProbeDotsPaint::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const ProxyProbeDotsPaint& value) : value_(value) {}
+    void Update(huxerui::ViewNode&, const ProxyProbeDotsPaint& value) {
+        value_ = value;
+        InvalidatePaint(PaintInvalidation::Foreground);
     }
-    return cache.indication;
+
+    FrameResult OnFrame(huxerui::ViewNode&, const huxerui::FrameInfo& frame) override {
+        if (!value_.animated || frame.reduced_motion) {
+            if (startedAt_) {
+                startedAt_.reset();
+                elapsed_ = 0.0;
+                InvalidatePaint(PaintInvalidation::Foreground);
+            }
+            return {};
+        }
+        const bool starting = !startedAt_;
+        if (starting) {
+            startedAt_ = frame.timestamp;
+            fade_.Set(0.0F);
+            fade_.AnimateTo(1.0F, huxerui::TweenSpec{0.2, huxerui::CubicBezierCurve{0.0F, 0.0F, 0.58F, 1.0F}});
+            for (std::size_t i = 0; i < dots_.size(); ++i) {
+                dots_[i].Set(0.0F);
+                dots_[i].AnimateTo(1.0F,
+                    huxerui::TweenSpec{0.45, huxerui::CubicBezierCurve{0.42F, 0.0F, 0.58F, 1.0F}},
+                    huxerui::AnimationPlayback{.delay = kStagger * i,
+                        .iterations = std::nullopt, .repeat_mode = huxerui::RepeatMode::Reverse});
+            }
+        }
+        fade_.Advance(frame);
+        for (auto& dot : dots_) dot.Advance(frame);
+        const double elapsed = frame.timestamp - *startedAt_;
+        if (starting || elapsed != elapsed_) {
+            elapsed_ = elapsed;
+            InvalidatePaint(PaintInvalidation::Foreground);
+        }
+        return {.wake_after = 1.0 / 60.0};
+    }
+
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        const auto bounds = node.ContentBounds();
+        const float scale = std::min(bounds.width / 33.0F, bounds.height / kProxyDelaySlotHeight);
+        const float radius = 3.5F * scale;
+        const float step = (bounds.width - 2.0F * radius) * 0.5F;
+        const float opacity = startedAt_ ? fade_.Value() : 1.0F;
+        for (std::size_t i = 0; i < dots_.size(); ++i) {
+            const bool bouncing = startedAt_ && elapsed_ >= kStagger * i;
+            const float progress = dots_[i].Value();
+            const float offset = bouncing ? std::lerp(5.0F, -6.0F, progress) : 0.0F;
+            auto color = value_.color;
+            color.alpha *= opacity * (bouncing ? std::lerp(0.4F, 1.0F, progress) : 0.9F);
+            paint.DrawCircle({bounds.x + radius + step * static_cast<float>(i),
+                              bounds.y + bounds.height * 0.5F + (0.5F + offset) * scale},
+                             radius, color);
+        }
+    }
+
+private:
+    static constexpr double kStagger = 0.15;
+    ProxyProbeDotsPaint value_;
+    std::array<huxerui::MotionController, 3> dots_;
+    huxerui::MotionController fade_;
+    std::optional<double> startedAt_;
+    double elapsed_ = 0.0;
+};
+
+inline huxerui::View ProxyProbeDots(huxerui::Color color, float width) {
+    return huxerui::Scope([color, width] {
+        const bool foreground = huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background;
+        return huxerui::Row {}
+            .With(huxerui::Frame{.width = width, .height = kProxyDelaySlotHeight},
+                  ProxyProbeDotsPaint{color, foreground})
+            .Key("node-probe-dots");
+    });
 }
 
 inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
-    huxerui::View delay, bool selected, std::string label, std::function<void()> activate,
+    huxerui::View delay, float dotsWidth, bool selected, std::string label, std::function<void()> activate,
     SelectableTileInteraction interaction, bool canProbe, bool testing, bool blocked,
     std::function<void()> startProbe) {
+    title = std::move(title).With(huxerui::Semantics{.hidden = true});
+    detail = std::move(detail).With(huxerui::Grow(1.0F), huxerui::Semantics{.hidden = true});
     return huxerui::Scope([=] {
-        constexpr std::uint8_t kHovered = 1U << 0U;
-        constexpr std::uint8_t kButtonFocused = 1U << 1U;
-        constexpr std::uint8_t kAnimationReady = 1U << 2U;
-        auto flags = huxerui::UseState<std::uint8_t>(0U);
-        huxerui::Lifecycle([flags, testing] {
-            const std::uint8_t current = flags.Get();
-            const std::uint8_t next = testing
-                ? static_cast<std::uint8_t>(current | kAnimationReady)
-                : static_cast<std::uint8_t>(current & ~kAnimationReady);
-            if (next != current) flags = next;
-            return [] {};
-        }, testing);
-        const std::uint8_t state = flags.Get();
-        const bool isHovered = (state & kHovered) != 0U;
-        const bool isButtonFocused = (state & kButtonFocused) != 0U;
-        const bool isAnimationReady = (state & kAnimationReady) != 0U;
         const auto& theme = huxerui::UseTheme();
-        const auto wheelRoute = huxerui::UseEnvironment<ScrollMotionContext>().wheel;
         const auto colors = ResolveSelectableTileColors(theme, selected);
-        const bool showButton = canProbe && (!delay || testing || isHovered || isButtonFocused);
-        const bool activeProbeTarget = canProbe && (testing || isHovered || isButtonFocused);
-        huxerui::View action;
+        huxerui::View status = testing ? ProxyProbeDots(selected ? colors.fg : colors.muted, dotsWidth) : delay;
         if (canProbe) {
-            const auto probeLabel = huxerui::UseString(Localized("测速")) + ": " + label;
-            huxerui::Color iconColor = colors.fg;
-            if (blocked) iconColor.alpha *= theme.interactions.disabled_opacity;
-            huxerui::View button =
-                huxerui::Image(huxerui::ImageResource{"app", "images/refresh"})
-                    .Fit(huxerui::ImageFit::Contain)
-                    .Align(huxerui::HorizontalAlignment::Center, huxerui::VerticalAlignment::Center)
-                    .Tint(showButton ? iconColor : huxerui::Color::Transparent())
-                    .With(huxerui::Frame{.width = kProxyProbeActionSize, .height = kProxyProbeActionSize},
-                          huxerui::Padding(1.0F),
-                          huxerui::CornerRadius(kProxyProbeActionSize * 0.5F),
-                          huxerui::Opacity(showButton ? 1.0F : 0.0F),
-                          huxerui::Focusable(true),
-                          huxerui::Enabled(!blocked),
-                          huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                             .label = probeLabel,
-                                             .identifier = "node-probe:" + label,
-                                             .busy = testing})
-                    .OnClick([startProbe, testing] { if (!testing) startProbe(); })
-                    .On<huxerui::ViewEvents::FocusChanged>([flags](bool focused) {
-                        const std::uint8_t current = flags.Get();
-                        const bool wantFocus = focused && (current & kHovered) == 0U;
-                        const std::uint8_t next = wantFocus
-                            ? static_cast<std::uint8_t>(current | kButtonFocused)
-                            : static_cast<std::uint8_t>(current & ~kButtonFocused);
-                        if (next != current) flags = next;
-                    });
-            if (testing) {
-                button = std::move(button).With(
-                    huxerui::Rotation(RefreshIconRotation(theme, isAnimationReady)));
+            if (!status) {
+                auto color = selected ? colors.fg : colors.muted;
+                if (blocked) color.alpha *= theme.interactions.disabled_opacity;
+                status = huxerui::Text(Localized("测速"))
+                    .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+                    .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
             }
-            if (activeProbeTarget) {
-                button = std::move(button).With(
-                    ResolveProxyProbeIndication(theme),
+            const auto probeLabel = huxerui::UseString(Localized("测速")) + ": " + label;
+            huxerui::View action = huxerui::Row {status}
+                .With(huxerui::Frame{.min_height = kProxyDelaySlotHeight},
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+                      huxerui::Focusable(true),
+                      huxerui::Enabled(!blocked || testing),
+                      huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                         .label = probeLabel,
+                                         .identifier = "node-probe:" + label,
+                                         .busy = testing})
+                .OnClick([startProbe, testing, blocked] {
+                    if (!testing && !blocked) startProbe();
+                })
+                .Key("node-probe-action");
+            if (!blocked && !testing) {
+                action = std::move(action).With(
                     huxerui::PointerCursor(huxerui::PointerCursorKind::Hand),
                     huxerui::Tooltip(Localized("测速")));
             }
-            action = std::move(button).Key("node-probe-action");
+            status = std::move(action);
+        } else if (testing) {
+            status = std::move(status).With(huxerui::Semantics{
+                .label = Localized("测速中…"), .busy = true});
         }
-        std::vector<huxerui::View> slotChildren;
-        slotChildren.reserve(2);
-        if (action) slotChildren.push_back(std::move(action));
-        if (!showButton && delay) slotChildren.push_back(delay);
+
         const bool interactive = interaction != SelectableTileInteraction::Disabled &&
                                  static_cast<bool>(activate);
-        huxerui::View tile =
-            huxerui::Row {
-              huxerui::Column {
-                title,
-                detail,
-              }.With(huxerui::Grow(1.0F), huxerui::Spacing(2.0F),
-                     huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-                     huxerui::Semantics{.hidden = true}),
-              huxerui::Stack(std::move(slotChildren))
-                  .With(huxerui::Frame{.width = kProxyDelaySlotWidth, .min_height = kProxyDelaySlotHeight},
-                        huxerui::Align(huxerui::HorizontalAlignment::End, huxerui::VerticalAlignment::Center))
-                  .Key("node-probe-slot"),
-            }.With(huxerui::Spacing(4.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-                   huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
-                   huxerui::Background(colors.surface),
-                   huxerui::CornerRadius(kSelectableTileRadius),
-                   huxerui::Grow(1.0F),
-                   huxerui::Semantics{.role = interactive ? huxerui::SemanticRole::Button
-                                                            : huxerui::SemanticRole::Generic,
-                                      .label = label,
-                                      .selected = selected},
-                   huxerui::Focusable(interactive),
-                   huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
+        huxerui::View tile = huxerui::Column {
+          title,
+          huxerui::Row {
+            detail,
+            huxerui::Stack {status}
+                .With(huxerui::Frame{.width = kProxyDelaySlotWidth, .min_height = kProxyDelaySlotHeight},
+                      huxerui::Align(huxerui::HorizontalAlignment::End, huxerui::VerticalAlignment::Center))
+                .Key("node-probe-slot"),
+          }.With(huxerui::Spacing(4.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        }.With(huxerui::Spacing(2.0F),
+               huxerui::MainAlign(huxerui::MainAxisAlignment::SpaceBetween),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+               huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
+               huxerui::Background(colors.surface),
+               huxerui::CornerRadius(kSelectableTileRadius),
+               huxerui::Grow(1.0F),
+               huxerui::Semantics{.role = interactive ? huxerui::SemanticRole::Button
+                                                      : huxerui::SemanticRole::Generic,
+                                  .label = label,
+                                  .selected = selected},
+               huxerui::Focusable(interactive),
+               huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
         if (selected) {
             tile = std::move(tile).With(huxerui::Border(theme.colors.primary, kCardSelectedOutlineWidth));
         }
         if (interactive) {
-            tile = std::move(tile).OnClick(activate);
-        }
-        if (canProbe) {
-            tile = std::move(tile).On<huxerui::ViewEvents::Hover>(
-                [flags, wheelRoute](const huxerui::HoverEvent& event) {
-                    thread_local std::optional<huxerui::Point> stationaryLeavePos;
-                    const std::uint8_t current = flags.Get();
-                    if (event.type == huxerui::HoverEventType::Leave) {
-                        stationaryLeavePos = event.window_position;
-                        const auto next = static_cast<std::uint8_t>(current & ~kHovered);
-                        if (next != current) flags = next;
-                        return;
-                    }
-                    if (event.type == huxerui::HoverEventType::Enter &&
-                        stationaryLeavePos && *stationaryLeavePos == event.window_position) {
-                        const auto motion = wheelRoute ? wheelRoute->target.lock() : nullptr;
-                        if (motion && motion->IsActive()) return;
-                    }
-                    stationaryLeavePos.reset();
-                    const auto next = static_cast<std::uint8_t>(current | kHovered);
-                    if (next != current) flags = next;
-                });
+            tile = std::move(tile).With(ResolveCardIndication(theme, selected ? kCardSelectedOutlineWidth : 0.0F))
+                .OnClick(activate);
         }
         return tile;
     });

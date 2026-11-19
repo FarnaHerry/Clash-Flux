@@ -114,7 +114,7 @@ struct ProfileReorderSession {
     auto newPptpRoutes = huxerui::UseState(huxerui::TextEditingValue{""});
     auto newPptpMppe = huxerui::UseState(true);
     auto newQrContent = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto pickedPath = huxerui::UseState<std::string>("");
+    auto pickedFile = huxerui::UseState(std::optional<huxerui::FileReference>{});
     auto createPageOpen = huxerui::UseState(false);
 
     // ---- 编辑订阅弹窗（页面级一份；卡片按 id 打开，避免 N 卡 × N 状态）----

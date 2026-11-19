@@ -24,7 +24,6 @@ struct ProfilesModel;
 huxerui::View ProfileLinkImportEffects(std::shared_ptr<ProfilesModel> model,
     huxerui::NavigationController navigation, bool navigation_enabled, bool active);
 
-inline constexpr float kDialogFormHeight = 340.0F;
 
 struct NativeProfileSupport {
     bool pptp = false;
@@ -59,7 +58,7 @@ struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> pptp_timeout;
     huxerui::State<huxerui::TextEditingValue> pptp_routes;
     huxerui::State<bool> pptp_mppe;
-    huxerui::State<std::string> picked_path;
+    huxerui::State<std::optional<huxerui::FileReference>> picked_file;
 };
 
 enum class ProfileAddMethod { Qr, File, Url, Direct };

@@ -37,10 +37,12 @@ composable 体内不能使用条件编译，沿用现有 DSL；UI 经过 HuxerUI
 
 - 桌面 Medium/Expanded 平面两栏，标题在自定义标题栏，PageScaffold 承载本页动作；分隔线统一 kDesktopChromeDividerThickness=0.5pt。Compact 底部四项导航，桌面窄窗保留独立系统标题栏；侧栏入口转入“更多”和普通二级入口分组遵循 UI 文档“响应式与平台边界”。宽窄变化保留页面身份、状态和平台能力。
 - 外框/标题/侧栏用 background，内容用 IslandTheme::base（surface_container_low），卡片 raised；深浅色均为外框较亮、内容较暗、卡片提亮。阴影统一 ResolveFluxShadows，不在页面自写参数；标题投影最后绘制、不占布局/输入，抽屉投影裁在标题下。
+- 已有鼠标悬停反馈的卡片优先用 `ResolveCardIndication` 在原圆角内显示主题描边，悬停不改变底色、不占布局。没有悬停反馈的卡片保持原样；选中、焦点、按压及卡内控件反馈各按原有规则。
 - 长条操作行的 hover/focus/press/ripple 与命中范围统一使用容器分配的完整单元格；留白放行内、组级裁切圆角，复用 SettingsActionRow/SettingsContentRow，不另造缩小或外溢的反馈区域。独立开关/下拉/输入保持自身控件语义；细节及验收见 UI 文档“长条操作行的交互范围”。
 - 首页真实固定卡片与设置首页无整页骨架；设置控件就绪规则见 [设置首页就绪](../../docs/ui-development.md#设置首页就绪)。其它页面仅首份真实数据未就绪时挂 page_loading，缓存就绪直接显示。流光只绘制，退出加载/切页/后台/reduced motion 停止；桌面宽屏一级切换不横滑、不翻页，不能关闭页内动画。
 - 全项目未就绪、缺省或未填充的字段/控件槽位**统一使用视觉空白占位**，禁止展示 `—`、`--`、`-` 等横线字符；复用 `placeholder_value.h`（`PlaceholderSlot`、`PlaceholderText`、`SettingsValue`、`FittedSingleLineLabel("")`）保留单行字高/最小控件尺寸、未 hydrate 控件扣留闸门及 `kValuePlaceholderId`（`value-placeholder`）语义标识，避免数据到达时行高或排版跳变，空白槽位不挂空 Tooltip。
 - 首页每张卡左上用 HomeCardHeading(icon,title) 或开关行：语义图标 20pt、primary 色、间距 8pt、居中对齐 SemiBold 标题。HomeGrid 固定目录/跨度、88pt 行高、12pt 卡距、两行 188pt；不借缩窄合并系统代理/TUN 卡或放大其它卡。
+- 首页流量与流量统计卡的无数据展示见 [首页卡片](../../docs/ui-development.md#首页卡片)，速率、累计量与比例使用对应零值。
 - DenseCard 的 dense_radius（当前 4pt）、每卡底距（当前 4pt）和 VirtualList::EstimatedItemExtent 一起调整；估算包括减半内边距×2、单行文本及底距。连接条目保留虚拟化与稳定 ID。
 - 拖动预览跟随原始抓取点；拖放目标注册在滚动视口，间隙/边缘仍可拖并触发自动滚动。
 - 二级标签用 SectionTabPages 的框架 Pager，标签在外、点击/菜单/滑动共用受控索引，稳定 Key、有界 Column+Grow 和虚拟列表；不额外 PointerIntercept 或逐页 Offset/Opacity。嵌套边缘交给外层，取消回弹、反向不崩，首次无入场、切回保留滚动。

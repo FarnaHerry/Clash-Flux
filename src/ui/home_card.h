@@ -46,8 +46,6 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
             : pressed ? huxerui::AnimationSpec{huxerui::TweenSpec{.duration = 0.07}}
                       : huxerui::AnimationSpec{huxerui::SpringSpec{.stiffness = 480.0F, .damping_ratio = 0.72F}};
         const auto islands = ResolveIslandTheme(theme);
-        auto hoverFill = theme.colors.primary;
-        hoverFill.alpha = 0.05F;
         huxerui::View faceContent = content;
         if (allowFlip) {
             faceContent = huxerui::Stack {
@@ -80,12 +78,8 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
             huxerui::Scale(huxerui::AnimateTo(compress ? 0.985F : 1.0F, animation)),
             huxerui::Offset(huxerui::AnimateTo(huxerui::Point{0.0F, compress ? 1.0F : 0.0F}, animation)),
-            huxerui::Indication{
-                .hover = huxerui::IndicationLayer{
-                    .fill = huxerui::VisualFill{huxerui::Brush{hoverFill}},
-                    .placement = huxerui::IndicationPlacement::BehindContent,
-                },
-            }).On<huxerui::ViewEvents::PointerIntercept>([pointer](const huxerui::PointerEvent& event) {
+            huxerui::Indication{.hover = ResolveCardIndication(theme).hover}
+        ).On<huxerui::ViewEvents::PointerIntercept>([pointer](const huxerui::PointerEvent& event) {
                 if (event.type == huxerui::PointerEventType::Down && !pointer.Get() &&
                     (event.device_kind == huxerui::PointerDeviceKind::Touch ||
                      event.changed_button == huxerui::PointerButton::Primary))

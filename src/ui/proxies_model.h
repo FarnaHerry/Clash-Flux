@@ -19,7 +19,7 @@
 #include <string>
 #include <vector>
 
-#include "wire_codec.h"
+#include "../wire_codec.h"
 #include "active_proxy_selection.h"
 #include "proxy_test_model.h"
 #include "ui.h" // ProxyGroupSnapshot
@@ -36,6 +36,7 @@ enum class ProxiesSource {
 
 struct ProxiesSnapshot {
     bool loaded = false;                     // 首轮获取（成功或失败）已结束
+    std::uint64_t profilesRevision = 0;       // 取样时的订阅版本
     std::vector<ProxyGroupSnapshot> groups; // 扁平表示（首页卡片 / 托盘菜单）
     std::map<std::string, std::string> labels; // 稳定 tag → 来源限定的显示名
     std::string body;                       // 内容版本比较用的原文
@@ -48,7 +49,8 @@ struct ProxiesSnapshot {
     bool operator==(const ProxiesSnapshot& other) const {
         // DTO is a deterministic projection of body. Pointer identity changes
         // on each fetch and must not force State notifications for equal data.
-        return loaded == other.loaded && labels == other.labels && groups == other.groups &&
+        return loaded == other.loaded && profilesRevision == other.profilesRevision &&
+               labels == other.labels && groups == other.groups &&
                body == other.body && source == other.source &&
                error == other.error;
     }
@@ -68,6 +70,7 @@ struct ProxiesModel {
     // 必须带初值：huxerui::State 的默认构造是「空 cell」，读取/写入都会抛
     // "Lifecycle dependency State is empty"。
     huxerui::State<ProxiesSnapshot> snapshot{ProxiesSnapshot{}};
+    huxerui::State<bool> homeSelectionPending{false};
     // 用户动作（切节点 / 测速 / 切换订阅）后自增：驱动循环看到计数变化就跳过
     // 本次等待、立即再拉一拍。动作方不需要知道数据怎么取。
     huxerui::State<std::uint64_t> refreshTick{0};

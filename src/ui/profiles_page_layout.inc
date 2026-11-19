@@ -191,15 +191,14 @@
         newPptpRoutes = huxerui::TextEditingValue{""};
         newPptpMppe = true;
         newQrContent = huxerui::TextEditingValue{""};
-        pickedPath = "";
+        pickedFile = std::nullopt;
     };
     const ProfileCreateFields createFields{
         newName, newUrl, newQrContent, newTypeIdx, newDesc,
         newTimeout, newInterval, newSys, newCore,
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
         newPptpRoutes, newPptpMppe,
-        pickedPath};
-    // Wide windows keep the full add-method flow in a dialog-owned stack.
+        pickedFile};
     const auto showCreateDialog = [createFields, tasks, toast, picker, http,
                                     pptpSupported, dialog] {
         ShowEditorDialog(dialog, [=](huxerui::DialogContext ctx) {

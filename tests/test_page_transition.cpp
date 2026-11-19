@@ -38,6 +38,7 @@
 #include "home_easter_eggs.h"
 #include "home_mode_choices.h"
 #include "home_network_model.h"
+#include "home_proxy_picker.h"
 #include "interaction_theme.h"
 #include "home_vpn_status.h"
 #include "../src/runtime_plan_state.h"
@@ -80,6 +81,7 @@
 #include "proxy_display_name.h"
 #include "proxy_test_model.h"
 #include "proxy_node_tile.h"
+#include "proxy_speed_button.h"
 #include "settings_group_layout.h"
 #include "settings_value.h"
 
@@ -2232,6 +2234,93 @@ void testFixedHomeGeometry() {
     }
 }
 
+struct HomeProxyPickerFixture {
+    huxerui::State<clashflux::ui::ProxiesSnapshot> snapshot{clashflux::ui::ProxiesSnapshot{}};
+    huxerui::State<std::uint64_t> revision{1};
+    std::vector<std::pair<std::string, std::string>> selections;
+};
+std::shared_ptr<HomeProxyPickerFixture> homeProxyPickerFixture;
+
+void InstallHomeProxyPickerFixture(huxerui::ApplicationContext& context) {
+    homeProxyPickerFixture = std::make_shared<HomeProxyPickerFixture>();
+    context.Provide(homeProxyPickerFixture);
+}
+
+huxerui::View HomeProxyPickerRoot() {
+    return huxerui::MaterialTheme {huxerui::Scope([] {
+        const auto fixture = huxerui::UseService<HomeProxyPickerFixture>();
+        return clashflux::ui::HomeProxyPickers(fixture->snapshot, fixture->revision.Get(), false, true,
+            [fixture](std::string group, std::string node, std::uint64_t) {
+                fixture->selections.emplace_back(std::move(group), std::move(node));
+            }).With(huxerui::Frame{.width = 132.0F});
+    })};
+}
+const huxerui::Application kHomeProxyPickerApplication{
+    HomeProxyPickerRoot, {.show_debug_overlay = false, .application_hooks = {InstallHomeProxyPickerFixture}}};
+
+void testHomeProxyPickers() {
+    huxerui::testing::UiTest ui(kHomeProxyPickerApplication, {
+        .viewport = {320.0F, 480.0F}, .resource_provider = AppResources()});
+    const auto fixture = homeProxyPickerFixture;
+    const auto group = ui.Find(UiSelector::Key("home-proxy-group"));
+    const auto node = ui.Find(UiSelector::Key("home-proxy-node"));
+    const auto groupInput = group.Find(UiSelector::Type<huxerui::TextField>());
+    const auto nodeInput = node.Find(UiSelector::Type<huxerui::TextField>());
+    ui.PumpAndSettle();
+    check(!group.Exists() && !node.Exists(), "unloaded home proxy pickers expose no editable fields");
+
+    clashflux::ui::ProxiesSnapshot snapshot{
+        .loaded = true,
+        .profilesRevision = 1,
+        .groups = {
+            {.name = "primary", .displayName = "Primary", .current = "alpha",
+             .nodes = {"alpha"}, .selectable = true},
+            {.name = "secondary", .displayName = "Backup",
+             .nodeLabels = {{"b0", "Bravo"}, {"b1", "Charlie"}},
+             .current = "b0", .nodes = {"b0", "b1"}, .selectable = true},
+            {.name = "auto", .displayName = "Automatic", .current = "delta", .nodes = {"delta"}},
+        },
+    };
+    fixture->snapshot = snapshot;
+    ui.PumpAndSettle();
+    check(groupInput.One().value == "Primary" && nodeInput.One().value == "alpha",
+          "home pickers display the current group member in a narrow card");
+
+    group.Tap(); ui.Pump(kSettle);
+    groupInput.ReplaceText("BACK"); ui.Pump(kSettle);
+    check(ui.Find(UiSelector::Text("Backup")).Exists() && !ui.Find(UiSelector::Text("Automatic")).Exists(),
+          "group ComboBox filters by label without changing the selected node");
+    ui.Find(UiSelector::Text("Backup")).Tap(); ui.Pump(kSettle);
+    check(nodeInput.One().value == "Bravo" && fixture->selections.empty(),
+          "changing the browsed group updates its current member without selecting an outbound");
+
+    node.Tap(); ui.Pump(kSettle);
+    nodeInput.ReplaceText("not a node"); ui.Pump(kSettle);
+    ui.PressKey(huxerui::Key::Escape); ui.Pump(kSettle);
+    check(nodeInput.One().value == "Bravo" && fixture->selections.empty(),
+          "cancelled search restores the authoritative node without submitting free-form text");
+
+    node.Tap(); ui.Pump(kSettle);
+    nodeInput.ReplaceText("charl"); ui.Pump(kSettle);
+    ui.PressKey(huxerui::Key::ArrowDown); ui.PressKey(huxerui::Key::Enter); ui.Pump(kSettle);
+    check(fixture->selections == std::vector<std::pair<std::string, std::string>>{{"secondary", "b1"}} &&
+              nodeInput.One().value == "Bravo",
+          "keyboard selection sends stable group and node tags and waits for the model");
+    snapshot.groups[1].current = "b1";
+    fixture->snapshot = snapshot;
+    ui.Pump(kSettle);
+    check(nodeInput.One().value == "Charlie", "the node field follows the confirmed selection");
+
+    group.Tap(); ui.Pump(kSettle);
+    ui.Find(UiSelector::Text("Automatic")).Tap(); ui.Pump(kSettle);
+    check(nodeInput.One().value == "delta" && !nodeInput.One().enabled,
+          "automatic groups expose the current member as read-only");
+    fixture->revision = 2;
+    ui.PumpAndSettle();
+    check(!group.Exists() && !node.Exists() && fixture->selections.size() == 1,
+          "an obsolete profile snapshot cannot offer or submit selectable nodes");
+}
+
 struct LoadingSkeletonFixture {
     huxerui::State<bool> ready{false};
     huxerui::State<bool> active{true};
@@ -3983,16 +4072,17 @@ huxerui::View ProxyGridProfileRoot() {
     const auto model = huxerui::UseState(std::make_shared<ProxyGridProfileFixture>()).Get();
     proxyGridProfileFixture = model;
     const int generation = model->generation.Get();
-    const auto item = [](std::size_t index) -> huxerui::View {
+    const float dotsWidth = huxerui::UseState(ProxyProbeDotsMetrics{})->Width();
+    const auto item = [dotsWidth](std::size_t index) -> huxerui::View {
         ++proxyGridBuilt;
         const auto title = SingleLineEllipsisText("node-" + std::to_string(index),
             huxerui::TextStyle{huxerui::Font::System(font_size::kBodySmall),
                 huxerui::Color::Transparent()});
-        return huxerui::Scope([index, title] {
+        return huxerui::Scope([index, title, dotsWidth] {
             return ProxyNodeTile(title,
                 huxerui::Text("VLESS"),
                 huxerui::Text(std::to_string(20 + static_cast<int>(index % 980))),
-                index == 0, "node-" + std::to_string(index), [] {},
+                dotsWidth, index == 0, "node-" + std::to_string(index), [] {},
                 SelectableTileInteraction::Selectable, true, false, false, [] {});
         }).Key("proxy-grid-card-" + std::to_string(index));
     };
@@ -5342,7 +5432,8 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
             co_return 81;
         }, [] { return true; })) fixture->releases.push_back(release);
 }
-[[huxerui::composable]] huxerui::View SingleProbeTile(std::string tag, int initialDelay, bool canProbe = true) {
+[[huxerui::composable]] huxerui::View SingleProbeTile(std::string tag, int initialDelay, float dotsWidth,
+    bool canProbe = true) {
     using namespace clashflux::ui;
     const auto fixture = huxerui::UseService<ProxyProbeFixture>();
     const auto tasks = huxerui::UseApplicationTaskScope();
@@ -5352,8 +5443,9 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
     const auto text = value.timeout ? "TIMEOUT" : value.delay > 0 ? std::to_string(value.delay) : "";
     huxerui::View delay = text.empty()
         ? huxerui::View{}
-        : huxerui::View{huxerui::Text(text)};
-    return ProxyNodeTile(huxerui::Text(tag), huxerui::Text("TLS"), std::move(delay), false,
+        : huxerui::View{huxerui::Text(text).Style(huxerui::TextStyle{
+              huxerui::Font::System(font_size::kCaption), huxerui::UseTheme().colors.on_surface})};
+    return ProxyNodeTile(huxerui::Text(tag), huxerui::Text("TLS"), std::move(delay), dotsWidth, false,
         tag, [fixture] { fixture->selected += 1; }, SelectableTileInteraction::Selectable,
         canProbe, value.testing, fixture->model->progress.Get().busy,
         [fixture, tasks, tag, entry] { StartSingleProbeFixture(fixture, tasks, tag, entry); });
@@ -5361,14 +5453,15 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
 [[huxerui::composable]] huxerui::View SingleProbeFixtureContent() {
     const auto fixture = huxerui::UseService<ProxyProbeFixture>();
     auto shown = huxerui::UseState(true);
+    const float dotsWidth = huxerui::UseState(clashflux::ui::ProxyProbeDotsMetrics{})->Width();
     return huxerui::Column{
         huxerui::Button("Toggle single page").OnClick([shown] { shown = !shown.Get(); }),
         shown.Get() ? huxerui::View{huxerui::Column{
-            huxerui::Row{SingleProbeTile("single-a", 0).Key("single-a")}
+            huxerui::Row{SingleProbeTile("single-a", 0, dotsWidth).Key("single-a")}
                 .With(huxerui::Frame{.width = 220.0F, .height = 52.0F}),
-            huxerui::Row{SingleProbeTile("single-b", 234).Key("single-b")}
+            huxerui::Row{SingleProbeTile("single-b", 234, dotsWidth).Key("single-b")}
                 .With(huxerui::Frame{.width = 220.0F, .height = 52.0F}),
-            huxerui::Row{SingleProbeTile("group", 0, false).Key("group")}
+            huxerui::Row{SingleProbeTile("group", 0, dotsWidth, false).Key("group")}
                 .With(huxerui::Frame{.width = 220.0F, .height = 52.0F}),
         }} : huxerui::View{huxerui::Row{}},
     };
@@ -5376,6 +5469,84 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
 huxerui::View SingleProbeFixtureRoot() { return huxerui::FlatTheme{SingleProbeFixtureContent()}; }
 const huxerui::Application kSingleProbeFixtureApplication{SingleProbeFixtureRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallProxyProbeFixture}}};
+void testProxySpeedShutter() {
+    using namespace std::chrono_literals;
+    struct Fixture {
+        clashflux::ui::ProxyTestModel tests;
+        huxerui::State<bool> reducedMotion{false};
+        int clicks = 0;
+    };
+    std::shared_ptr<Fixture> fixture;
+    const huxerui::Application app{[]() -> huxerui::View {
+        return huxerui::Scope([] {
+            const auto state = huxerui::UseService<Fixture>();
+            auto theme = huxerui::MaterialLightThemeSpec();
+            theme.motion.reduced_motion = state->reducedMotion.Get();
+            return huxerui::MaterialTheme {
+              theme,
+              clashflux::ui::ProxySpeedButton(state->tests.progress.Get().busy, true, [state] {
+                  ++state->clicks;
+                  state->tests.Begin();
+              }),
+            };
+        });
+    }, {.show_debug_overlay = false, .application_hooks = {
+        [&fixture](huxerui::ApplicationContext& context) {
+            fixture = std::make_shared<Fixture>();
+            context.Provide(fixture);
+        },
+    }}};
+    huxerui::testing::UiTest ui(app, {.viewport = {160.0F, 160.0F}, .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.Pump();
+    const auto action = ui.Find(UiSelector::Key("proxy-speed-action"));
+    const auto slot = ui.Find(UiSelector::Key("proxy-speed-button"));
+    const auto bounds = slot.One().bounds;
+    const huxerui::Point center{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
+    const auto finishTest = [&] {
+        fixture->tests.End(fixture->tests.progress.Get().generation);
+        ui.Pump();
+    };
+    const auto aperture = [&] {
+        const auto snapshot = ui.CaptureSnapshot().ToString();
+        static const std::regex clip{R"(push-clip\s*\{\s*bounds\s*\{[^}]*\}\s*corner_radius=([\d.]+))"};
+        std::smatch match;
+        return std::regex_search(snapshot, match, clip) ? std::stof(match[1]) : 0.0F;
+    };
+
+    action.Tap(); ui.Pump();
+    const float startingRadius = aperture();
+    ui.Pump(260ms);
+    const float midClosingRadius = aperture();
+    check(fixture->clicks == 1 && !action.Exists() && std::abs(startingRadius - 42.0F) < 0.1F &&
+              midClosingRadius > 0.0F && midClosingRadius < startingRadius,
+          "group test hides the action and closes a centered circle over the speed button");
+    ui.Pump(270ms);
+    const auto hidden = ui.CaptureSnapshot();
+    ui.TapAt(center); ui.Pump(700ms);
+    check(fixture->clicks == 1 && !action.Exists() && aperture() == 0.0F && hidden == ui.CaptureSnapshot(),
+          "the speed button stays invisible and inactive while the group test runs");
+
+    finishTest(); ui.Pump(260ms);
+    check(!action.Exists() && std::abs(aperture() - midClosingRadius) < 0.1F && slot.One().bounds == bounds,
+          "the shutter opens with the same circular geometry played backwards in the same slot");
+    ui.Pump(270ms); ui.Pump();
+    check(action.Exists() && aperture() == 0.0F, "reverse shutter restores the real button on completion");
+
+    action.Tap(); ui.Pump(); ui.Pump(260ms);
+    const float interruptedRadius = aperture();
+    finishTest();
+    check(std::abs(aperture() - interruptedRadius) < 0.1F, "fast measurement completion reverses without a jump");
+    ui.Pump(520ms); ui.Pump();
+    check(action.Exists(), "the button can be used again after a short measurement");
+
+    fixture->reducedMotion = true; ui.Pump();
+    action.Tap(); ui.Pump();
+    check(!action.Exists() && aperture() == 0.0F, "reduced motion skips the shutter close");
+    finishTest(); ui.Pump();
+    check(action.Exists() && aperture() == 0.0F, "reduced motion restores the button immediately");
+}
+
 void testSingleProxyProbeCard() {
     huxerui::testing::UiTest ui(kSingleProbeFixtureApplication, {.viewport = {600.0F, 700.0F},
         .resource_provider = AppResources()});
@@ -5399,67 +5570,105 @@ void testSingleProxyProbeCard() {
     };
     const auto toggle = [&] { ui.Find(UiSelector::Text("Toggle single page")).Tap(); ui.Pump(); };
     const auto advance = [&] { for (int step = 0; step < 25; ++step) ui.Pump(std::chrono::milliseconds(20)); };
-    const auto before = action("single-a").One().bounds;
-    const auto rotates = [&](const char* tag) {
+    struct ProbeDot {
+        huxerui::Point center;
+        float radius;
+        bool operator==(const ProbeDot&) const = default;
+    };
+    const auto dotCenters = [&] {
+        const std::string snapshot = ui.CaptureSnapshot().ToString();
+        static const std::regex circle{
+            R"(circle\s+\{\s+center\s+\{\s+x=([\d.-]+)\s+y=([\d.-]+)\s+\}\s+radius=([\d.]+))"};
+        std::vector<ProbeDot> centers;
+        for (std::sregex_iterator dot(snapshot.begin(), snapshot.end(), circle), end; dot != end; ++dot) {
+            centers.push_back({{std::stof((*dot)[1]), std::stof((*dot)[2])}, std::stof((*dot)[3])});
+        }
+        return centers;
+    };
+    const auto measured = tile("single-b");
+    const auto number = measured.Find(UiSelector::Text("234")).One().bounds;
+    const auto bounces = [&] {
+        ui.Pump(std::chrono::milliseconds(20));
+        const auto initial = dotCenters();
+        if (initial.size() != 3) return false;
+        const float width = initial.back().center.x - initial.front().center.x + 2.0F * initial.front().radius;
+        if (std::abs(width - number.width) > 0.1F ||
+            std::abs(initial.front().radius - width * (3.5F / 33.0F)) > 0.1F) return false;
         for (int step = 0; step < 6; ++step) {
             ui.Pump(std::chrono::milliseconds(56));
-            const auto frame = action(tag).One();
-            if (frame.bounds.width > frame.size.width * 1.2F) return true;
+            const auto next = dotCenters();
+            if (next.size() != 3 || next == initial) continue;
+            const auto range = std::ranges::minmax_element(next, {}, [](const ProbeDot& dot) { return dot.center.y; });
+            if (range.max->center.y - range.min->center.y > 1.0F) return true;
         }
         return false;
     };
-    check(tile("single-a").Find(UiSelector::Type<huxerui::Text>()).Count() == 2 &&
+    check(tile("single-a").Find(UiSelector::Type<huxerui::Text>()).Count() == 3 &&
           action("single-a").Exists(),
-          "untested node exposes the speed button in the shared slot");
-    const auto measured = tile("single-b");
-    const auto number = measured.Find(UiSelector::Text("234")).One().bounds;
+          "untested node exposes the speed test label in the bottom slot");
     const auto measuredAction = action("single-b").One().bounds;
     const auto measuredTile = measured.One().bounds;
     const auto title = measured.Find(UiSelector::Text("single-b")).One().bounds;
     const auto detail = measured.Find(UiSelector::Text("TLS")).One().bounds;
-    check(std::abs(number.y + number.height / 2 - measuredAction.y - measuredAction.height / 2) < 0.1F &&
-          std::abs(number.y + number.height / 2 - measuredTile.y - measuredTile.height / 2) < 0.1F &&
+    check(std::abs(number.y + number.height / 2 - detail.y - detail.height / 2) < 0.1F &&
+          number.y + number.height / 2 > measuredTile.y + measuredTile.height / 2 &&
           std::abs(number.x + number.width - measuredAction.x - measuredAction.width) < 0.1F &&
+          std::abs(number.x + number.width - (measuredTile.x + measuredTile.width - 10.0F)) < 0.1F &&
           std::abs(title.x - detail.x) < 0.1F && title.y < detail.y,
-          "delay and speed button share the vertically centered right-aligned slot");
-    hover("single-b");
-    check(!measured.Find(UiSelector::Text("234")).Exists() && action("single-b").One().bounds == measuredAction,
-          "hover replaces the number with the button without shifting the slot");
+          "delay uses the padded bottom-right corner on the protocol row");
+    const auto countPaint = [&](const std::regex& command) {
+        const auto snapshot = ui.CaptureSnapshot().ToString();
+        return std::distance(std::sregex_iterator(snapshot.begin(), snapshot.end(), command), std::sregex_iterator{});
+    };
+    const std::regex borderPaint{R"(\bborder \{)"};
+    const std::regex rectPaint{R"(\brect \{)"};
+    const auto existingBorders = countPaint(borderPaint);
+    const auto existingFills = countPaint(rectPaint);
+    hover("single-b"); ui.Pump(std::chrono::milliseconds(100));
+    check(countPaint(borderPaint) == existingBorders + 1 && countPaint(rectPaint) == existingFills,
+          "node card hover adds one border without adding a surface fill");
+    check(measured.Find(UiSelector::Text("234")).One().bounds == number &&
+              action("single-b").One().bounds == measuredAction,
+          "hover leaves the numeric result and its hit target in place");
     move({500.0F, 650.0F});
-    check(measured.Find(UiSelector::Text("234")).Exists(), "leaving the card restores the delay");
     for (int step = 0; step < 8 && !action("single-b").One().focused; ++step)
         ui.PressKey(huxerui::Key::Tab);
-    check(action("single-b").One().focused && !measured.Find(UiSelector::Text("234")).Exists(),
-          "keyboard focus also reveals the speed button");
+    check(action("single-b").One().focused && measured.Find(UiSelector::Text("234")).Exists(),
+          "the numeric result remains visible on keyboard focus");
     ui.PressKey(huxerui::Key::Tab);
-    check(measured.Find(UiSelector::Text("234")).Exists(), "losing keyboard focus restores the delay");
     const auto slot = tile("single-a").Find(UiSelector::Key("node-probe-slot")).One().bounds;
-    check(before.width == clashflux::ui::kProxyProbeActionSize && before.height == before.width &&
-          std::abs(before.x + before.width - slot.x - slot.width) < 0.1F &&
-          std::abs(before.y + before.height / 2 - slot.y - slot.height / 2) < 0.1F,
-          "refresh icon, round feedback and hit target share one square at the right end of the slot");
-    ui.TapAt({slot.x + 4.0F, slot.y + slot.height / 2}); ui.Pump();
+    const auto measuredSlot = measured.Find(UiSelector::Key("node-probe-slot")).One().bounds;
+    ui.TapAt({measuredSlot.x + 4.0F, measuredSlot.y + measuredSlot.height / 2}); ui.Pump();
     check(fixture->selected.Get() == 1 && fixture->singleTags.empty(),
-          "empty space to the left of the round button remains a card selection target");
+          "empty space outside the result remains a card selection target");
     fixture->selected = 0;
     action("single-a").Tap(); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a"} && fixture->selected.Get() == 0 &&
           probing("single-a"),
           "single probe targets the clicked runtime tag and does not activate the parent selection");
-    const auto busy = action("single-a").One().bounds;
-    check(busy.width == before.width && busy.height == before.height && fixture->model->Begin() == 0,
-          "single loading preserves geometry and excludes a simultaneous group sweep");
-    check(rotates("single-a"),
-          "pending measurement rotates the retained refresh button using the shared refresh animation");
-    hover("single-b"); action("single-b").Tap(); ui.Pump();
+    check(tile("single-a").Find(UiSelector::Key("node-probe-slot")).One().bounds == slot &&
+              fixture->model->Begin() == 0,
+          "single loading preserves the bottom slot and excludes a simultaneous group sweep");
+    action("single-a").Tap(); ui.Pump();
+    check(fixture->singleTags.size() == 1 && fixture->selected.Get() == 0,
+          "tapping the pending dots does not start another request or select the card");
+    check(bounces(), "one pending node paints three staggered dots across three delay digits");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background); ui.Pump();
+    const auto resting = dotCenters();
+    ui.Pump(std::chrono::milliseconds(180));
+    check(resting.size() == 3 && resting == dotCenters(), "backgrounded cards stop animating their dots");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.Pump();
+    measured.Find(UiSelector::Text("234")).Tap(); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a", "single-b"} &&
-          fixture->model->singlePending.Get() == 2, "different nodes can run independent single probes");
+          fixture->model->singlePending.Get() == 2 && fixture->selected.Get() == 0 &&
+          !measured.Find(UiSelector::Text("234")).Exists() &&
+          measured.Find(UiSelector::Key("node-probe-dots")).Exists(),
+          "clicking the delay starts an independent probe and replaces only that delay with dots");
     toggle(); fixture->releases.at(0) = true; advance(); toggle(); move({500.0F, 650.0F});
     check(tile("single-a").Find(UiSelector::Text("81")).Exists() &&
           probing("single-b"),
           "single result and another node's pending state survive real page retirement");
-    check(rotates("single-b"),
-          "returning to a pending measurement restarts the retained refresh rotation");
+    check(bounces(), "returning to a pending measurement resumes the bouncing dots");
     fixture->releases.at(1) = true; advance();
     check(fixture->model->singlePending.Get() == 0, "all single completions release their busy counts");
     tile("single-a").Find(UiSelector::Text("single-a")).Tap(); ui.Pump();
@@ -5487,9 +5696,10 @@ void testSingleProxyProbeCard() {
         const huxerui::Application singleMountApp{[]() -> huxerui::View {
             return huxerui::FlatTheme{huxerui::Scope([] {
                 ++idleTileMounts;
+                const float dotsWidth = huxerui::UseState(clashflux::ui::ProxyProbeDotsMetrics{})->Width();
                 return clashflux::ui::ProxyNodeTile(
                     huxerui::Text("idle-node"), huxerui::Text("VLESS"),
-                    huxerui::Text("42"), false, "idle-node", [] {},
+                    huxerui::Text("42"), dotsWidth, false, "idle-node", [] {},
                     clashflux::ui::SelectableTileInteraction::Selectable,
                     true, false, false, [] {});
             })};
@@ -5520,16 +5730,17 @@ void testSingleProxyProbeCard() {
                                                     theme.colors.on_surface};
                 const huxerui::TextStyle detailStyle{huxerui::Font::System(font_size::kCaption),
                                                      theme.colors.on_surface_variant};
-                auto grid = PageVirtualGrid(60, [titleStyle, detailStyle](std::size_t index) -> huxerui::View {
+                const float dotsWidth = huxerui::UseState(ProxyProbeDotsMetrics{})->Width();
+                auto grid = PageVirtualGrid(60, [titleStyle, detailStyle, dotsWidth](std::size_t index) -> huxerui::View {
                     const std::string name = "节点" + std::to_string(index) +
                         "台湾代注册版本有网慢的问题直接联系客服禁止多设备未经允许多设备封号测试长文本";
-                    return huxerui::Scope([index, name, titleStyle, detailStyle] {
+                    return huxerui::Scope([index, name, titleStyle, detailStyle, dotsWidth] {
                         ++wheelTileCompositions;
                         return ProxyNodeTile(
-                            SingleLineEllipsisText(name, titleStyle),
+                            SingleLineEllipsisText(name, titleStyle).Key("long-cjk-title"),
                             huxerui::Text("VMESS · UDP").Style(detailStyle),
                             huxerui::Text("128").Style(detailStyle),
-                            index == 0, name, [] {},
+                            dotsWidth, index == 0, name, [] {},
                             SelectableTileInteraction::Selectable, true, false, false, [] {});
                     }).Key("long-cjk-card-" + std::to_string(index));
                 }, kSectionCardSpacing)
@@ -5548,9 +5759,14 @@ void testSingleProxyProbeCard() {
             {.viewport = {980.0F, 640.0F}, .resource_provider = AppResources()});
         wheelUi.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
         wheelUi.PumpAndSettle();
-        const auto card0 = wheelUi.Find(UiSelector::Key("long-cjk-card-0")).One().bounds;
+        const auto firstCard = wheelUi.Find(UiSelector::Key("long-cjk-card-0"));
+        const auto card0 = firstCard.One().bounds;
+        const auto title0 = firstCard.Find(UiSelector::Key("long-cjk-title")).One().bounds;
+        const auto slot0 = firstCard.Find(UiSelector::Key("node-probe-slot")).One().bounds;
         check(card0.height > 40.0F && card0.height < 64.0F,
               "long CJK single-line ellipsis title preserves compact single-row card height");
+        check(title0.y < slot0.y && std::abs(title0.x + title0.width - slot0.x - slot0.width) < 0.1F,
+              "long names can use the full first row above the delay slot");
         wheelUi.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 51,
                              .position = {120.0F, 120.0F},
                              .device_kind = huxerui::PointerDeviceKind::Mouse});
@@ -5560,8 +5776,7 @@ void testSingleProxyProbeCard() {
         for (int frame = 0; frame < 8; ++frame) {
             wheelUi.Pump(std::chrono::milliseconds(16));
         }
-        // Only the single initially hovered card leaves once (and any newly realized trailing rows mount once);
-        // rows sliding past the stationary cursor during active wheel motion do not trigger Enter/Leave churn.
+        // Newly realized rows mount once; the stationary cursor does not trigger view recomposition.
         check(wheelTileCompositions <= beforeWheel + 12,
               "active wheel scrolling under a stationary cursor avoids hover recomposition churn on passing cards");
     }
@@ -8841,6 +9056,9 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-node-card") {
         testSingleProxyProbeCard(); return failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--proxy-speed-shutter") {
+        testProxySpeedShutter(); return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--rules-cache") {
         testSharedRulesCache(); return failures == 0 ? 0 : 1;
     }
@@ -8849,6 +9067,7 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); testWebsiteFormScroll(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--home-network") { testHomeNetworkModel(); return failures == 0 ? 0 : 1; }
+    if (argc == 2 && std::string_view(argv[1]) == "--home-proxy-pickers") { testHomeProxyPickers(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--scroll-profile") {
         profileScrollWork();
         return failures == 0 ? 0 : 1;
@@ -9045,7 +9264,7 @@ int main(int argc, char** argv) {
     testBoxCatMorphAfterSuccess();
     testHomeHeaderControl();
     testHomeHeaderColdStart();
-    try { testFixedHomeGeometry(); testSkeletonShimmer(); }
+    try { testFixedHomeGeometry(); testHomeProxyPickers(); testSkeletonShimmer(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: home geometry / skeleton shimmer: %s\n", error.what());
         ++failures;
@@ -9183,6 +9402,11 @@ int main(int argc, char** argv) {
     try { testProxyProbesSurvivePageRetirement(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
+        ++failures;
+    }
+    try { testProxySpeedShutter(); }
+    catch (const std::exception& error) {
+        std::fprintf(stderr, "FAIL: proxy speed shutter: %s\n", error.what());
         ++failures;
     }
     try { testSingleProxyProbeCard(); }

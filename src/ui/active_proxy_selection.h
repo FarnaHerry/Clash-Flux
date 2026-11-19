@@ -19,6 +19,25 @@ struct ActiveProxySelection {
     bool operator==(const ActiveProxySelection&) const = default;
 };
 
+inline const ProxyGroupSnapshot* DefaultProxyGroup(
+    const std::vector<ProxyGroupSnapshot>& groups, bool globalMode = false) {
+    const auto global = std::ranges::find(groups, "GLOBAL", &ProxyGroupSnapshot::name);
+    if (global != groups.end() && globalMode) return &*global;
+    if (global != groups.end() && !global->current.empty()) {
+        const auto target = std::ranges::find(groups, global->current, &ProxyGroupSnapshot::name);
+        return target != groups.end() ? &*target : &*global;
+    }
+    const auto selector = std::ranges::find_if(groups, [](const ProxyGroupSnapshot& group) {
+        return group.name != "GLOBAL" && group.selectable;
+    });
+    if (selector != groups.end()) return &*selector;
+    const auto other = std::ranges::find_if(groups, [](const ProxyGroupSnapshot& group) {
+        return group.name != "GLOBAL";
+    });
+    if (other != groups.end()) return &*other;
+    return groups.empty() ? nullptr : &groups.front();
+}
+
 // 解析当前出站模式与策略组快照实际落到的具体节点（跟随 GLOBAL/主组 → 嵌套组 → 叶子节点）。
 // preview=true 时非手动可选组（URLTest/Fallback）尚未经运行内核测速选线，停在该组本身而不伪造叶子结果。
 inline ActiveProxySelection ResolveActiveProxySelection(
@@ -40,31 +59,7 @@ inline ActiveProxySelection ResolveActiveProxySelection(
         return nullptr;
     };
 
-    const ProxyGroupSnapshot* start = nullptr;
-    const ProxyGroupSnapshot* syntheticGlobal = findGroup("GLOBAL");
-    if (syntheticGlobal != nullptr && !syntheticGlobal->current.empty()) {
-        const ProxyGroupSnapshot* target = findGroup(syntheticGlobal->current);
-        start = (target != nullptr && target != syntheticGlobal) ? target : syntheticGlobal;
-    }
-    if (start == nullptr) {
-        for (const auto& group : groups) {
-            if (group.name != "GLOBAL" && group.selectable) {
-                start = &group;
-                break;
-            }
-        }
-    }
-    if (start == nullptr) {
-        for (const auto& group : groups) {
-            if (group.name != "GLOBAL") {
-                start = &group;
-                break;
-            }
-        }
-    }
-    if (start == nullptr) start = &groups.front();
-
-    const ProxyGroupSnapshot* current = start;
+    const ProxyGroupSnapshot* current = DefaultProxyGroup(groups);
     std::vector<std::string> visited{current->name};
     visited.reserve(8);
     if (preview && !current->selectable) {

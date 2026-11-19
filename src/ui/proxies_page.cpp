@@ -56,6 +56,7 @@
 #include "search_text.h"
 #include "task_bridge.h"
 #include "proxy_node_tile.h"
+#include "proxy_speed_button.h"
 
 #include "wire_codec.h"
 import clashflux.config;
@@ -375,9 +376,9 @@ struct ProxySyncCache {
     std::uint64_t ticket = 0;
 };
 
-// 左侧两行显示节点名和协议或组信息，右侧共用延迟和单节点测速位置。
+// 节点名占满首行，末行左侧显示协议或组信息，右侧显示延迟或测速动画。
 [[huxerui::composable]] huxerui::View NodeCard(
-    const ProxyNode& node, std::string groupName, std::string groupNow,
+    const ProxyNode& node, std::string groupName, std::string groupNow, float dotsWidth,
     huxerui::State<SelectionIntent> selectionIntent, bool selectable,
     huxerui::TaskScope appTasks, CoreControl control, FluxToastHandle toast,
     std::shared_ptr<ProxyTestModel> tests, std::function<void()> onActivate) {
@@ -402,13 +403,13 @@ struct ProxySyncCache {
     const auto tile = ResolveSelectableTileColors(theme, selected);
     const auto detailColor = selected ? tile.fg : tile.muted;
     huxerui::View delayView;
-    if (!node.isGroup && (currentProbe.testing || delay > 0 || timeout)) {
-        const auto text = currentProbe.testing ? huxerui::StringVariant{Localized("测速中…")}
-            : delay > 0 ? huxerui::StringVariant{std::to_string(delay)}
-                        : huxerui::StringVariant{Localized("超时")};
-        const auto color = selected ? tile.fg : currentProbe.testing ? tile.muted
+    if (!node.isGroup && !currentProbe.testing && (delay > 0 || timeout)) {
+        const auto text = delay > 0 ? huxerui::StringVariant{std::to_string(delay)}
+                                    : huxerui::StringVariant{Localized("超时")};
+        const auto color = selected ? tile.fg
             : delay > 0 ? DelayLevelColor(theme, delay, false) : theme.colors.error;
         delayView = huxerui::Text(text)
+            .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
     }
     const auto startProbe = [appTasks, control, tests, tag = node.name, delay = node.delay,
@@ -425,10 +426,11 @@ struct ProxySyncCache {
     };
     return ProxyNodeTile(NodeTitle(node.displayName, tile.fg),
         huxerui::Text(node.detail)
+            .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), detailColor}),
-        delayView, selected, node.displayName, std::move(onActivate),
+        delayView, dotsWidth, selected, node.displayName, std::move(onActivate),
         selectable ? SelectableTileInteraction::Selectable : SelectableTileInteraction::ReadOnly,
-        !node.isGroup && !ProxyTestUsesNativeGroup(), currentProbe.testing,
+        !node.isGroup && !ProxyTestUsesNativeGroup(), !node.isGroup && currentProbe.testing,
         tests->preparing.Get() || tests->progress.Get().busy, startProbe);
 }
 
@@ -552,44 +554,10 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     std::shared_ptr<ProxyTestModel> testModel,
     std::function<void(const std::string&)> triggerGroupTest) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const GroupTestProgress progress = testModel->progress.Get();
-    const bool testing = progress.busy || testModel->preparing.Get();
-    huxerui::View floatingSpeed =
-        huxerui::IconButton(app::images::speed, Localized("测速"))
-            .With(huxerui::Tooltip(Localized("测试当前分组延迟")),
-                  huxerui::Frame{.width = 56.0F, .height = 56.0F},
-                  huxerui::Enabled(!testing && testModel->singlePending.Get() == 0),
-                  huxerui::Opacity(testing ? 0.0F : 1.0F),
-                  huxerui::Foreground(theme.colors.on_primary),
-                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,
-                                     .label = huxerui::UseString(Localized("测速"))})
-            .OnClick([triggerGroupTest, groupName] {
-                triggerGroupTest(groupName);
-            });
-    floatingSpeed = WithoutIconButtonOutlines(floatingSpeed);
-    floatingSpeed = huxerui::Stack {
-        std::move(floatingSpeed),
-        testing ? huxerui::View{huxerui::ProgressCircle().With(
-                      huxerui::Frame{.width = 28.0F, .height = 28.0F})}
-                : huxerui::View{huxerui::Row{}},
-    }.With(huxerui::Frame{.width = 56.0F, .height = 56.0F},
-           huxerui::Align(huxerui::HorizontalAlignment::Center,
-                          huxerui::VerticalAlignment::Center),
-           huxerui::Background(testing ? theme.colors.primary_container
-                                       : theme.colors.primary),
-           huxerui::Foreground(testing ? theme.colors.on_primary_container
-                                       : theme.colors.on_primary),
-           huxerui::CornerRadius(kFloatingActionCornerRadius),
-           kPageTitlesInWindow ? ResolveFluxShadows(theme).floating_action
-               : huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F},
-           huxerui::Scale(huxerui::AnimateTo(
-               testing ? 0.94F : 1.0F,
-               huxerui::TweenSpec{.duration = 0.18,
-                                  .easing = huxerui::Easing::EaseOut})),
-           huxerui::Semantics{.label = huxerui::UseString(
-               Localized(testing ? "测速中…" : "测速"))});
+    const bool testing = testModel->progress.Get().busy || testModel->preparing.Get();
+    const auto start = [triggerGroupTest, groupName] { triggerGroupTest(groupName); };
     return huxerui::Column {
-        std::move(floatingSpeed),
+      WithoutIconButtonOutlines(ProxySpeedButton(testing, testModel->singlePending.Get() == 0, start)),
     }.With(huxerui::Padding(huxerui::EdgeInsets{
                .right = theme.spacing.medium + (compact ? 0.0F : kScrollBarGutter),
                .bottom = compact ? kCompactFloatingNavigationInset
@@ -623,6 +591,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     auto rulePath = huxerui::UseState<std::vector<std::string>>({});
     auto globalPath = huxerui::UseState<std::vector<std::string>>({});
     const auto syncCache = huxerui::UseState(std::make_shared<ProxySyncCache>()).Get();
+    const auto probeDotsMetrics = huxerui::UseState(ProxyProbeDotsMetrics{});
     huxerui::Lifecycle([syncCache] { return [syncCache] { ++syncCache->ticket; }; }, 0);
     // 乐观选中意图（见 SelectionIntent）：只写这个小组 State，不动 groups。
     auto selectionIntent = huxerui::UseState<SelectionIntent>(SelectionIntent{});
@@ -800,6 +769,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                               huxerui::VerticalAlignment::Stretch));
     }
 
+    const float dotsWidth = probeDotsMetrics->Width();
     // 一个根分组一页。VirtualGrid 直接用索引读取组节点，不再为所有组预先
     // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
     // 每个根组仅声明轻量虚拟网格；Pager 提供有界视口并只测量参与显示的页。
@@ -852,7 +822,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                                  [groupSnapshot, visibleNodes = std::move(visibleNodes),
                                   tasks, testTasks, control, toast, testModel,
                                   onSelectFailure, onSelectReadOnly,
-                                  nodeCount, proxiesModel,
+                                  nodeCount, proxiesModel, dotsWidth,
                                   selectionIntent](std::size_t index)
                                      -> huxerui::View {
                                      if (index >= nodeCount ||
@@ -863,7 +833,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                                          groupSnapshot->nodes[visibleNodes[index]];
                                      const std::string& nodeName = node.name;
                                      return NodeCard(
-                                                node, groupSnapshot->name, groupSnapshot->now,
+                                                node, groupSnapshot->name, groupSnapshot->now, dotsWidth,
                                                 selectionIntent, groupSnapshot->selectable,
                                                 testTasks, control, toast, testModel,
                                                 NodeSelectAction(

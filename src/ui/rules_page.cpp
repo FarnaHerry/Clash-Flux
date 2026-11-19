@@ -593,6 +593,8 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
                     .OnClick([=] { context.Dismiss(); remove(resource->id); }))}), DialogSize::Small);
         });
     };
+    auto detailsIndication = theme.interactions.indication;
+    detailsIndication.hover.reset();
     return DenseCard(huxerui::Row {
       huxerui::Column {
         huxerui::Row {
@@ -609,7 +611,7 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
             LocalizedFormat("被 {} 条规则引用", references.size())),
         receipt.empty() ? huxerui::View{} : huxerui::View{huxerui::Text(receipt)},
       }.With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
-             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).OnClick(openDetails),
+             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), detailsIndication).OnClick(openDetails),
       resource->type != "remote" ? huxerui::View{} : refreshing
           ? huxerui::View{huxerui::ProgressCircle().With(
               huxerui::Frame{.width = 20.0F, .height = 20.0F}, huxerui::Padding(10.0F))}
@@ -628,7 +630,7 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
                       .Enabled(!busy && !refreshing).Danger(),
               });
           }),
-    }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
+    }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)), /*hoverOutline=*/true);
 }
 
 [[huxerui::composable]] huxerui::View RuleSetLibraryPanel(

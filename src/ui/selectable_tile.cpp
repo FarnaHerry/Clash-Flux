@@ -33,6 +33,8 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
         ResolveSelectableTileColors(theme, selected);
     const bool interactive = interaction != SelectableTileInteraction::Disabled &&
                              static_cast<bool>(on_click);
+    const float outline = !selected ? 0.0F : style == SelectableTileStyle::Subscription
+        ? kSubscriptionSelectedOutlineWidth : kCardSelectedOutlineWidth;
     // 表面/圆角/描边在建树时就落在 Column 上（不能在返回值外面补修饰符，原因见
     // Card 的注释）：未选中 islands.active，选中 primary_container 淡染底 +
     // primary 描边。
@@ -43,8 +45,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                   huxerui::CornerRadius(kSelectableTileRadius),
                   huxerui::Border(selected ? theme.colors.primary
                                            : huxerui::Color::Transparent(),
-                                  selected ? (style == SelectableTileStyle::Subscription
-                                      ? kSubscriptionSelectedOutlineWidth : kCardSelectedOutlineWidth) : 0.0F),
+                                  outline),
                   huxerui::ClipChildren(),
                   huxerui::Grow(1.0F),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
@@ -54,7 +55,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                   huxerui::Focusable(interactive),
                   huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
     if (interactive) {
-        tile = std::move(tile).OnClick(std::move(on_click));
+        tile = std::move(tile).With(ResolveCardIndication(theme, outline)).OnClick(std::move(on_click));
     }
     return tile;
 }

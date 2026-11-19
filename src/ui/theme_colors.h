@@ -452,6 +452,17 @@ inline huxerui::Indication ResolveFluxIndication(const huxerui::ThemeSpec& theme
     };
 }
 
+inline huxerui::Indication ResolveCardIndication(const huxerui::ThemeSpec& theme,
+                                                 float existingOutline = 0.0F) {
+    auto indication = theme.interactions.indication;
+    auto hover = indication.hover.value_or(huxerui::IndicationLayer{});
+    hover.fill.reset();
+    hover.border = huxerui::Border{theme.colors.primary, existingOutline + kCardOutlineWidth};
+    hover.placement = huxerui::IndicationPlacement::AboveContent;
+    indication.hover = hover;
+    return indication;
+}
+
 inline void ApplyFluxInteractionTheme(huxerui::ThemeSpec& theme) {
     theme.interactions.indication = ResolveFluxIndication(theme);
 }

@@ -535,7 +535,7 @@ huxerui::View Card(huxerui::View content, bool outlined = true,
 
 // 密集卡片：圆角阶梯的 dense 档（IslandTheme::dense_radius 4pt）+ 减半
 // 内边距，用于日志行等高密度内容——嵌套圆角 14pt 在密集列表里过圆。
-huxerui::View DenseCard(huxerui::View content);
+huxerui::View DenseCard(huxerui::View content, bool hoverOutline = false);
 
 // 可选中卡片（全项目统一的列表项原语，形状以代理页节点卡为标准）：
 // 8pt 圆角、Symmetric(10, 8) 内边距、未选中 islands.active 表面 / 选中
