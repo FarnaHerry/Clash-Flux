@@ -4,12 +4,16 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `cbd3ce2eaf501cffa4dd785a9904776f0c83730b`，各平台 CI 共用
+Clash-Flux 当前固定 `21b811e9db0a421b8746aa8ed1044c3425f66158`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
+
+2026-11-20 跟进 `farna/main` 的 [`21b811e`](https://github.com/FarnaHerry/HuxerUI/commit/21b811e9db0a421b8746aa8ed1044c3425f66158)。
+Linux 托盘按已读取的菜单深度清除待刷新标记，保留相同动作 ID，并减少重复的图标与提示更新。
+此提交增加隔离 D-Bus 测试，覆盖注册、属性和结构更新、过期动作 ID 以及退出清理。
 
 2026-11-19 采用 `farna/main` 的 [`cbd3ce2`](https://github.com/FarnaHerry/HuxerUI/commit/cbd3ce2eaf501cffa4dd785a9904776f0c83730b)，
 包含 0.5.0 源码基线的 GTK PlatformView、窗口宿主 API 和 Windows HTTP 流更新，以及
@@ -370,7 +374,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout cbd3ce2eaf501cffa4dd785a9904776f0c83730b
+git -C third_party/huxerui checkout 21b811e9db0a421b8746aa8ed1044c3425f66158
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`

@@ -2237,9 +2237,11 @@ void testFixedHomeGeometry() {
 struct HomeProxyPickerFixture {
     huxerui::State<clashflux::ui::ProxiesSnapshot> snapshot{clashflux::ui::ProxiesSnapshot{}};
     huxerui::State<std::uint64_t> revision{1};
+    huxerui::State<bool> hasProfile{false};
     std::vector<std::pair<std::string, std::string>> selections;
 };
 std::shared_ptr<HomeProxyPickerFixture> homeProxyPickerFixture;
+constexpr float kHomeProxyCardFixtureWidth = 154.0F;
 
 void InstallHomeProxyPickerFixture(huxerui::ApplicationContext& context) {
     homeProxyPickerFixture = std::make_shared<HomeProxyPickerFixture>();
@@ -2249,16 +2251,35 @@ void InstallHomeProxyPickerFixture(huxerui::ApplicationContext& context) {
 huxerui::View HomeProxyPickerRoot() {
     return huxerui::MaterialTheme {huxerui::Scope([] {
         const auto fixture = huxerui::UseService<HomeProxyPickerFixture>();
-        return clashflux::ui::HomeProxyPickers(fixture->snapshot, fixture->revision.Get(), false, true,
+        const auto expandedPicker = huxerui::UseState(std::string{});
+        const auto pickers = clashflux::ui::HomeProxyPickers(
+            fixture->snapshot, fixture->revision.Get(), fixture->hasProfile.Get(), false, true, expandedPicker,
             [fixture](std::string group, std::string node, std::uint64_t) {
                 fixture->selections.emplace_back(std::move(group), std::move(node));
-            }).With(huxerui::Frame{.width = 132.0F});
+            });
+        return clashflux::ui::HomeGrid {
+          clashflux::ui::HomeCardSurface(huxerui::UseTheme(), huxerui::Column {
+              huxerui::Text("Profile").With(huxerui::Frame{.height = 20.0F}),
+              pickers,
+              huxerui::Spacer(),
+            }.With(huxerui::Spacing(5.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+            "profile", [] {
+                return clashflux::ui::HomeEasterEggContent(
+                    clashflux::ui::kHomeEasterEggPool.front(), [](std::string_view) {});
+            }, expandedPicker)
+              .LayoutValue<clashflux::ui::HomeCardSpan>({1, 2})
+              .Key("home-proxy-card-fixture"),
+          huxerui::Spacer().LayoutValue<clashflux::ui::HomeCardSpan>({2, 1}).Key("home-next-card-fixture"),
+        }.LayoutValue<clashflux::ui::HomeGridCompact>(true);
     })};
 }
 const huxerui::Application kHomeProxyPickerApplication{
     HomeProxyPickerRoot, {.show_debug_overlay = false, .application_hooks = {InstallHomeProxyPickerFixture}}};
 
+float paintedHomeProxyCardOutline(huxerui::testing::UiTest& ui);
+
 void testHomeProxyPickers() {
+    using huxerui::testing::UiSemanticSelector;
     huxerui::testing::UiTest ui(kHomeProxyPickerApplication, {
         .viewport = {320.0F, 480.0F}, .resource_provider = AppResources()});
     const auto fixture = homeProxyPickerFixture;
@@ -2266,8 +2287,42 @@ void testHomeProxyPickers() {
     const auto node = ui.Find(UiSelector::Key("home-proxy-node"));
     const auto groupInput = group.Find(UiSelector::Type<huxerui::TextField>());
     const auto nodeInput = node.Find(UiSelector::Type<huxerui::TextField>());
+    const auto panel = ui.Find(UiSelector::Key("home-proxy-panel"));
+    const auto panelInput = panel.Find(UiSelector::Type<huxerui::TextField>());
+    const auto suggestions = panel.Find(UiSelector::Key("home-proxy-suggestions"));
+    const auto card = ui.Find(UiSelector::Key("home-proxy-card-fixture"));
+    const auto nextCard = ui.Find(UiSelector::Key("home-next-card-fixture"));
+    const auto focusedCombo = ui.FindSemantics(UiSemanticSelector::AllOf(
+        UiSemanticSelector::Role(huxerui::SemanticRole::ComboBox), UiSemanticSelector::Focused(true)));
+    const auto options = ui.FindSemantics(UiSemanticSelector::Role(huxerui::SemanticRole::ListItem));
+    const auto hoverAt = [&ui](huxerui::Point position) {
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 84,
+                        .position = position, .device_kind = huxerui::PointerDeviceKind::Mouse});
+        ui.Pump(kSettle);
+    };
+    const huxerui::Point outside{300.0F, 430.0F};
     ui.PumpAndSettle();
-    check(!group.Exists() && !node.Exists(), "unloaded home proxy pickers expose no editable fields");
+    const auto groupBounds = groupInput.One().bounds;
+    const auto nodeBounds = nodeInput.One().bounds;
+    const auto cardBounds = card.One().bounds;
+    const auto nextCardBounds = nextCard.One().bounds;
+    const auto checkLayout = [&] {
+        check(card.One().bounds == cardBounds && nextCard.One().bounds == nextCardBounds &&
+                  groupInput.One().bounds == groupBounds && nodeInput.One().bounds == nodeBounds,
+              "opening and closing a picker preserves the subscription card, neighboring row, and input bounds");
+    };
+    check(groupInput.One().value == "" && nodeInput.One().value == "",
+          "home pickers show both fields without a subscription");
+    group.Tap(); ui.Pump(kSettle);
+    check(focusedCombo.One().expanded == true && !options.Exists(),
+          "the group opens an empty list without a subscription");
+    ui.TapAt(outside); ui.Pump(kSettle);
+    node.Tap(); ui.Pump(kSettle);
+    check(focusedCombo.One().expanded == true && !options.Exists(),
+          "the node opens an empty list without a subscription");
+    panelInput.Tap(); ui.Pump(kSettle);
+    check(!panel.Exists(), "tapping the expanded editor closes an empty popup on touch devices");
+    checkLayout();
 
     clashflux::ui::ProxiesSnapshot snapshot{
         .loaded = true,
@@ -2282,43 +2337,155 @@ void testHomeProxyPickers() {
         },
     };
     fixture->snapshot = snapshot;
-    ui.PumpAndSettle();
-    check(groupInput.One().value == "Primary" && nodeInput.One().value == "alpha",
-          "home pickers display the current group member in a narrow card");
-
-    group.Tap(); ui.Pump(kSettle);
-    groupInput.ReplaceText("BACK"); ui.Pump(kSettle);
-    check(ui.Find(UiSelector::Text("Backup")).Exists() && !ui.Find(UiSelector::Text("Automatic")).Exists(),
-          "group ComboBox filters by label without changing the selected node");
-    ui.Find(UiSelector::Text("Backup")).Tap(); ui.Pump(kSettle);
-    check(nodeInput.One().value == "Bravo" && fixture->selections.empty(),
-          "changing the browsed group updates its current member without selecting an outbound");
-
-    node.Tap(); ui.Pump(kSettle);
-    nodeInput.ReplaceText("not a node"); ui.Pump(kSettle);
+    fixture->hasProfile = true;
+    ui.Pump(kSettle);
+    check(groupInput.One().bounds == groupBounds && nodeInput.One().bounds == nodeBounds,
+          "loading a subscription preserves the locations and sizes of both fields");
+    const auto backLink = card.Find(UiSelector::Key("home-easter-egg-link"));
+    check(!backLink.Exists(), "the initial subscription card does not mount its back link");
+    const auto flipCard = [&] {
+        const huxerui::Point corner{cardBounds.x + 8.0F, cardBounds.y + 8.0F};
+        ui.TapAt(corner);
+        ui.Pump(std::chrono::milliseconds(70));
+        ui.TapAt(corner);
+        ui.Pump();
+    };
+    flipCard(); ui.Pump(kSettle);
+    const auto linkBounds = backLink.One().bounds;
+    const huxerui::Point blank{linkBounds.x + linkBounds.width / 2.0F, linkBounds.y + linkBounds.height / 2.0F};
+    check(nodeBounds.Contains(blank) && blank.x > nodeBounds.x + 40.0F,
+          "the back link overlaps the blank area between the node hint and the arrow");
+    ui.TapAt(outside, {.device_kind = huxerui::PointerDeviceKind::Mouse});
+    flipCard();
+    check(backLink.Exists() && !backLink.One().enabled, "the fading back link is disabled as soon as the front returns");
+    ui.TapAt(blank, {.device_kind = huxerui::PointerDeviceKind::Mouse});
+    ui.PumpUntil([&] { return !backLink.Exists(); });
+    check(panel.Exists() && focusedCombo.One().placeholder == "alpha",
+          "the overlapping blank area opens the front field while the back is fading");
     ui.PressKey(huxerui::Key::Escape); ui.Pump(kSettle);
-    check(nodeInput.One().value == "Bravo" && fixture->selections.empty(),
-          "cancelled search restores the authoritative node without submitting free-form text");
+    ui.TapAt(outside, {.device_kind = huxerui::PointerDeviceKind::Mouse});
+    hoverAt({nodeBounds.x + 12.0F, groupBounds.y - 8.0F});
+    const auto cardOnlyHover = ui.CaptureSnapshot();
+    hoverAt(blank);
+    check(ui.CaptureSnapshot() != cardOnlyHover,
+          "hovering the blank area displays the node field's own hover feedback");
+    ui.TapAt(blank, {.device_kind = huxerui::PointerDeviceKind::Mouse});
+    ui.Pump(kSettle);
+    check(panel.Exists() && focusedCombo.One().placeholder == "alpha",
+          "clicking the blank area opens the node field after the back link unmounts");
+    ui.PressKey(huxerui::Key::Escape); ui.Pump(kSettle);
+    group.Tap(); ui.Pump(kSettle);
+    check(panelInput.One().value == "" && focusedCombo.One().placeholder == "Primary" &&
+              ui.Find(UiSelector::Text("Backup")).Exists() && ui.Find(UiSelector::Text("Automatic")).Exists(),
+          "the group opens with an empty query, the current group as a hint, and all choices");
+    const auto inlineList = suggestions.One();
+    check(panelInput.One().bounds == groupBounds &&
+              inlineList.bounds.y == groupBounds.y + groupBounds.height &&
+              inlineList.bounds.width == groupBounds.width,
+          "the input and list occupy one popup surface positioned at the original input");
+    checkLayout();
+    ui.SetWindowMetrics({.viewport = {320.0F, 112.0F}});
+    ui.PumpUntil([&] { return suggestions.One().bounds.y < groupBounds.y; });
+    const auto aboveGroup = suggestions.One().bounds;
+    check(panelInput.One().bounds == groupBounds &&
+              aboveGroup.y >= 0.0F && aboveGroup.y + aboveGroup.height == groupBounds.y &&
+              aboveGroup.height < 3.0F * clashflux::ui::kHomeProxyOptionHeight,
+          "when neither side fits all groups, the list scrolls above the stationary input in the larger space");
+    panelInput.EnterText("BACK"); ui.Pump(kSettle);
+    check(panelInput.One().bounds == groupBounds && focusedCombo.One().expanded == true &&
+              suggestions.One().bounds.height == clashflux::ui::kHomeProxyOptionHeight,
+          "filtering the upward list keeps the input pinned and focused");
+    ui.SetWindowMetrics({.viewport = {320.0F, 480.0F}});
+    ui.PumpUntil([&] { return suggestions.One().bounds.y == groupBounds.y + groupBounds.height; });
+    check(panelInput.One().bounds == groupBounds && panelInput.One().value == "BACK" &&
+              focusedCombo.One().expanded == true,
+          "growing the viewport flips the list below without moving the input or resetting its session");
+    panelInput.Tap({.device_kind = huxerui::PointerDeviceKind::Mouse}); ui.Pump(kSettle);
+    check(!panel.Exists() && focusedCombo.One().expanded == false,
+          "clicking the expanded editor closes the popup and returns focus to the input");
+    checkLayout();
+    groupInput.Tap(); ui.Pump(kSettle);
+    snapshot.groups[2].displayName = "Automatic backup";
+    fixture->snapshot = snapshot;
+    ui.PumpUntil([&] { return ui.Find(UiSelector::Text("Automatic backup")).Exists(); });
+    check(focusedCombo.One().expanded == true,
+          "refreshing choices while open updates the popup and retains the editor focus");
+    snapshot.groups[2].displayName = "Automatic";
+    fixture->snapshot = snapshot;
+    ui.PumpUntil([&] { return ui.Find(UiSelector::Text("Automatic")).Exists(); });
+    const auto option = ui.Find(UiSelector::Text("Backup")).One().bounds;
+    hoverAt({option.x + option.width / 2.0F, option.y + option.height / 2.0F});
+    check(paintedHomeProxyCardOutline(ui) == 1.0F,
+          "the card keeps its outline when the pointer moves into the group popup");
+    panelInput.EnterText("BACK"); ui.Pump(kSettle);
+    check(panelInput.One().value == "BACK" && ui.Find(UiSelector::Text("Backup")).Exists() &&
+              !ui.Find(UiSelector::Text("Automatic")).Exists(),
+          "typing into the group field filters by the new query");
+    checkLayout();
+    ui.Find(UiSelector::Text("Backup")).Tap(); ui.Pump(kSettle);
+    check(groupInput.One().value == "" && focusedCombo.One().placeholder == "Backup" && fixture->selections.empty(),
+          "selecting a group clears the query and shows the new group without switching the outbound");
 
+    ui.SetWindowMetrics({.viewport = {320.0F, 156.0F}, .safe_area = {.top = 8.0F, .bottom = 12.0F}});
+    ui.Pump(kSettle);
+    const auto insetNodeBounds = nodeInput.One().bounds;
     node.Tap(); ui.Pump(kSettle);
-    nodeInput.ReplaceText("charl"); ui.Pump(kSettle);
+    check(panelInput.One().value == "" && focusedCombo.One().placeholder == "Bravo" &&
+              ui.Find(UiSelector::Text("Charlie")).Exists(),
+          "the node field opens with its current member as a hint and all group members available");
+    const auto aboveNode = suggestions.One().bounds;
+    check(panelInput.One().bounds == insetNodeBounds && aboveNode.y >= 8.0F &&
+              aboveNode.y + aboveNode.height == insetNodeBounds.y &&
+              aboveNode.height == 2.0F * clashflux::ui::kHomeProxyOptionHeight,
+          "the full node list fits above the stationary editor inside the safe area");
+    ui.SetWindowMetrics({.viewport = {320.0F, 480.0F}});
+    ui.PumpUntil([&] { return panelInput.One().bounds == nodeBounds &&
+        suggestions.One().bounds.y == nodeBounds.y + nodeBounds.height; });
+    checkLayout();
+    panelInput.EnterText("not a node"); ui.Pump(kSettle);
+    hoverAt(outside);
+    check(paintedHomeProxyCardOutline(ui) == 1.0F, "the node popup keeps its card outlined while open");
+    ui.PressKey(huxerui::Key::Escape); ui.Pump(kSettle);
+    check(nodeInput.One().value == "" && focusedCombo.One().placeholder == "Bravo" && fixture->selections.empty(),
+          "cancelling search clears the query and preserves the current node");
+    check(paintedHomeProxyCardOutline(ui) == 0.0F, "the outline clears when the popup closes away from the card");
+    checkLayout();
+    nodeInput.Tap(); ui.Pump(kSettle);
+    check(focusedCombo.One().expanded == true, "clicking the same field after Escape reopens its list");
+
+    panelInput.EnterText("charl"); ui.Pump(kSettle);
     ui.PressKey(huxerui::Key::ArrowDown); ui.PressKey(huxerui::Key::Enter); ui.Pump(kSettle);
     check(fixture->selections == std::vector<std::pair<std::string, std::string>>{{"secondary", "b1"}} &&
-              nodeInput.One().value == "Bravo",
+              nodeInput.One().value == "" && focusedCombo.One().placeholder == "Bravo",
           "keyboard selection sends stable group and node tags and waits for the model");
     snapshot.groups[1].current = "b1";
     fixture->snapshot = snapshot;
     ui.Pump(kSettle);
-    check(nodeInput.One().value == "Charlie", "the node field follows the confirmed selection");
+    check(nodeInput.One().value == "" && focusedCombo.One().placeholder == "Charlie",
+          "the node hint follows the confirmed selection");
+    nodeInput.EnterText("bra"); ui.Pump(kSettle);
+    check(panelInput.One().value == "bra" && ui.Find(UiSelector::Text("Bravo")).Exists() &&
+              !ui.Find(UiSelector::Text("Charlie")).Exists(),
+          "typing again after a selection starts a fresh search");
+    hoverAt(outside);
+    fixture->revision = 2;
+    ui.PumpUntil([&] { return paintedHomeProxyCardOutline(ui) == 0.0F; });
+    check(!options.Exists(), "replacing a picker closes its stale popup");
+    fixture->revision = 1;
+    ui.Pump(kSettle);
 
     group.Tap(); ui.Pump(kSettle);
     ui.Find(UiSelector::Text("Automatic")).Tap(); ui.Pump(kSettle);
     check(nodeInput.One().value == "delta" && !nodeInput.One().enabled,
           "automatic groups expose the current member as read-only");
     fixture->revision = 2;
-    ui.PumpAndSettle();
-    check(!group.Exists() && !node.Exists() && fixture->selections.size() == 1,
-          "an obsolete profile snapshot cannot offer or submit selectable nodes");
+    ui.Pump(kSettle);
+    check(groupInput.One().bounds == groupBounds && nodeInput.One().bounds == nodeBounds &&
+              fixture->selections.size() == 1,
+          "an obsolete snapshot keeps both fields mounted without selecting a node");
+    node.Tap(); ui.Pump(kSettle);
+    check(focusedCombo.One().expanded == true && !options.Exists(),
+          "an obsolete snapshot cannot offer stale nodes");
 }
 
 struct LoadingSkeletonFixture {
@@ -7131,6 +7298,11 @@ std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
     return result;
 }
 
+float paintedHomeProxyCardOutline(huxerui::testing::UiTest& ui) {
+    const auto card = paintedCard(ui, kHomeProxyCardFixtureWidth, 188.0F);
+    return card ? card->outlineWidth : -1.0F;
+}
+
 void testBoxCatMorphAfterSuccess() {
     using clashflux::ui::BoxCatPhase;
     const clashflux::ui::HomeControlMoveExpand path;
@@ -7737,7 +7909,8 @@ huxerui::View HomeCardPressRoot(bool dark, bool reduced) {
             huxerui::Text("Card body").With(huxerui::Grow(1.0F)),
             huxerui::TextField(huxerui::TextEditingValue{}).Key("nested-card-input"),
             huxerui::Button("Nested card action").OnClick([] { ++homeCardActionCount; }).Key("nested-card-action"),
-        }.With(huxerui::Grow(1.0F)), "press").With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("press-card"),
+        }.With(huxerui::Grow(1.0F)), "press", [] { return huxerui::Text("Card back"); })
+            .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("press-card"),
         huxerui::Spacer().With(huxerui::Frame{.height = 100.0F}),
     });
 }
@@ -7851,20 +8024,23 @@ huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
             }.With(huxerui::Grow(1.0F));
         });
         return huxerui::Column {
-          clashflux::ui::HomeCardSurface(theme, content, "first", true,
-              huxerui::Column {
+          clashflux::ui::HomeCardSurface(theme, content, "first", [backCount] {
+              ++homeCardReveals;
+              return huxerui::Scope([backCount] { return huxerui::Column {
                 huxerui::Text("Flip back menu"),
                 huxerui::Button("Back action-" + std::to_string(backCount.Get()))
                     .OnClick([backCount] { backCount = backCount.Get() + 1; })
                     .Key("flip-back-action"),
-              }, [] { ++homeCardReveals; })
+              }; });
+          })
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-one"),
-          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"), "second", true,
-              clashflux::ui::HomeEasterEggContent(
+          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Second front"), "second", [] {
+              return clashflux::ui::HomeEasterEggContent(
                   clashflux::ui::kHomeEasterEggPool[homeEasterEggFixtureIndex],
-                  [](std::string_view url) { homeEasterEggOpenedUrl = url; }))
+                  [](std::string_view url) { homeEasterEggOpenedUrl = url; });
+          })
               .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-two"),
-          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), "control", false)
+          clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), "control")
               .With(huxerui::Frame{.width = 280.0F, .height = 88.0F}).Key("flip-card-excluded"),
         }.With(huxerui::Spacing(12.0F));
     }));
@@ -7993,7 +8169,7 @@ void testHomeSettingsGear() {
                 huxerui::Switch(false).OnChanged([](bool) { ++switchChanges; }).Key("card-switch"),
               }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
             }.With(huxerui::Spacing(2.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), "gear", false)
+                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), "gear")
                 .With(huxerui::Frame{.width = cardWidth, .height = 88.0F});
             return huxerui::ProvideEnvironment(style, card);
         }));
@@ -8412,6 +8588,8 @@ void testHomeCardFlip() {
             const auto excluded = ui.Find(UiSelector::Key("flip-card-excluded"));
             const auto firstBounds = first.One().bounds;
             const auto secondBounds = second.One().bounds;
+            const auto backAction = first.Find(UiSelector::Key("flip-back-action"));
+            check(!backAction.Exists(), "the back controls are created only on the first reveal");
             const auto tap = [&](const huxerui::testing::UiNodeQuery& card) {
                 const auto b = card.One().bounds;
                 ui.TapAt({b.x + 8.0F, b.y + 8.0F}, {.device_kind = device});
@@ -8471,15 +8649,21 @@ void testHomeCardFlip() {
             ui.TapAt(counterPoint, {.device_kind = device}); ui.Pump(std::chrono::milliseconds(70));
             ui.TapAt(counterPoint, {.device_kind = device}); ui.PumpAndSettle();
             check(!first.Find(UiSelector::Key("home-card-back")).Exists() &&
-                  ui.Find(UiSelector::Text("Counter-1")).Exists(),
-                  "double tapping the back restores the front without remounting its state");
+                  ui.Find(UiSelector::Text("Counter-1")).Exists() && !backAction.Exists(),
+                  "double tapping the back retires its controls and preserves the front state");
             check(homeCardReveals == 1, "returning to the front does not draw another Easter egg");
             ui.Pump(std::chrono::seconds(1));
             doubleTap(first); ui.Pump(std::chrono::milliseconds(30));
             doubleTap(first); ui.PumpAndSettle();
             check(!first.Find(UiSelector::Key("home-card-back")).Exists() &&
-                  ui.Find(UiSelector::Text("Counter-1")).Exists() && homeCardReveals == 2,
+                  ui.Find(UiSelector::Text("Counter-1")).Exists() && !backAction.Exists() && homeCardReveals == 2,
                   "rapid reversal settles at the latest face and retains the front state");
+            ui.Pump(std::chrono::seconds(1));
+            doubleTap(first); ui.Pump(kSettle);
+            doubleTap(first); ui.Pump(std::chrono::milliseconds(30));
+            doubleTap(first); ui.PumpAndSettle();
+            check(backAction.Exists() && backAction.One().enabled && homeCardReveals == 4,
+                  "reopening during the exit keeps the new back content after the old exit deadline");
             doubleTap(excluded); ui.PumpAndSettle();
             check(!excluded.Find(UiSelector::Key("home-card-back")).Exists(),
                   "cat controls explicitly opt out of the dashboard Easter egg");

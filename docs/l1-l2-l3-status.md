@@ -1,5 +1,12 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-20 v0.3.122 补丁发布
+
+- 基于 `v0.3.121`（`6eb85ee`），应用与 CI 固定 HuxerUI `21b811e`。首页组合选择器按可用空间展开，输入区锚定原位。翻回正面后彩蛋立即停止交互，淡出结束后卸载。Android versionName 为 0.3.122，versionCode 为 200。
+- Windows/MSVC 和 Fedora WSL/Clang 使用 CMake 4.4.2 构建主目标，`run.ps1 --version` 和 `run.sh --version` 均输出 v0.3.122。Windows 定向 `--home-proxy-pickers`、`--home-card-surface` 与 WSL 的 `page_transition`、`ui_resources`、`cps_dependencies`、`persistence`、`native_control_runtime` 通过，`git diff --check` 通过。
+- HuxerUI `[system-tray]` 的 4 个 D-Bus 用例（157 项断言）通过。应用在私有 Xvfb 和 D-Bus 会话中通过 `tests/test_tray_runtime.py`。规则下载回归通过 `--require-tls` 的默认拒绝检查。
+- 多平台安装包和正式 APK 签名由标签 CI 验证。真实桌面面板、真机安装和跨版本升级另需设备验收。
+
 ## 2026-11-19 v0.3.121 补丁发布
 
 - 基于 `v0.3.120`（`98a0291`），应用和各平台 CI 固定 HuxerUI `cbd3ce2`。Linux 托盘使用同一个 StatusNotifier 项更新图标、简版与完整菜单；本次也包含节点测速状态隔离及卡片悬停修复。Android versionName 0.3.121、versionCode 199。

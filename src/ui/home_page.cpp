@@ -545,7 +545,8 @@ huxerui::XYChartData BuildTrafficChartData(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-[[huxerui::composable]] huxerui::View HomeProfileProxyPickers() {
+[[huxerui::composable]] huxerui::View HomeProfileProxyPickers(
+    bool hasProfile, huxerui::State<std::string> expandedPicker) {
     const auto proxies = huxerui::UseService<ProxiesModel>();
     const auto profiles = huxerui::UseService<ProfilesModel>();
     const auto core = huxerui::UseService<CoreModel>();
@@ -553,7 +554,8 @@ huxerui::XYChartData BuildTrafficChartData(
     const auto toast = UseFluxToast();
     const bool enabled = !profiles->selectionPending.Get() && !proxies->homeSelectionPending.Get();
     const auto revision = clashflux::data::session().profilesRevision();
-    return HomeProxyPickers(proxies->snapshot, revision, core->view.Get().Mode() == "global", enabled,
+    return HomeProxyPickers(proxies->snapshot, revision, hasProfile, core->view.Get().Mode() == "global",
+        enabled, expandedPicker,
         [proxies, profiles, tasks, toast](std::string group, std::string node, std::uint64_t revision) {
             if (profiles->selectionPending.Get() || proxies->homeSelectionPending.Get()) return;
             const auto& snapshot = proxies->snapshot.Get();
@@ -588,7 +590,8 @@ huxerui::XYChartData BuildTrafficChartData(
 
 // 当前订阅卡：用订阅名作标题，策略组和节点复用代理页的快照与切换接口。
 // 流量行只在解析到 subscription-userinfo 数据时显示；total 未知时进度条摆满。
-[[huxerui::composable]] huxerui::View HomeProfileCard(const HomeState& s) {
+[[huxerui::composable]] huxerui::View HomeProfileCard(
+    const HomeState& s, huxerui::State<std::string> expandedPicker) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool hasProfile = s.profileId != 0;
     const huxerui::Color muted = theme.colors.on_surface_variant;
@@ -633,9 +636,7 @@ huxerui::XYChartData BuildTrafficChartData(
     } else {
         children.push_back(HomeCardHeading(app::images::request, profileName));
     }
-    if (hasProfile) {
-        children.push_back(HomeProfileProxyPickers().Key(std::to_string(s.profileId)));
-    }
+    children.push_back(HomeProfileProxyPickers(hasProfile, expandedPicker).Key(std::to_string(s.profileId)));
     children.push_back(huxerui::Spacer());
     if (hasTraffic) {
         children.push_back(
@@ -970,7 +971,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
            huxerui::Grow(1.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
            huxerui::MainAlign(huxerui::MainAxisAlignment::Center));
-    return huxerui::View{HomeCardSurface(theme, std::move(content), "control", /*allowFlip=*/false)}
+    return huxerui::View{HomeCardSurface(theme, std::move(content), "control")}
         .OnClick([control, cardShown, motion, transition, reducedMotion = theme.motion.reduced_motion] {
             RunDesktopHomeCoreAction(control, cardShown, motion, transition,
                                      CoreAction::Disconnect, reducedMotion);
@@ -1067,28 +1068,27 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
 // ---- 卡片内容分发 ----------------------------------------------------------
 
 [[huxerui::composable]] huxerui::View HomeCardContent(
-    HomeCardKind kind, huxerui::State<HomeState> state) {
+    HomeCardKind kind, huxerui::State<HomeState> state, huxerui::State<std::string> expandedPicker) {
     const HomeState& s = state.Get();
     if (kind == HomeCardKind::Traffic) return HomeTrafficCard(s);
     if (kind == HomeCardKind::Total) return HomeTotalCard(s);
     if (kind == HomeCardKind::Mode) {
         return HomeModeCard();
     }
-    if (kind == HomeCardKind::Profile) return HomeProfileCard(s);
+    if (kind == HomeCardKind::Profile) return HomeProfileCard(s, expandedPicker);
     if (kind == HomeCardKind::LanIp) return HomeLanIpCard();
     if (kind == HomeCardKind::NetCheck) return HomeNetCheckCard(s.profileId);
     return CLASHFLUX_HOME_PLATFORM_CARD(s, state, kind);
 }
 
-// Each reveal samples the shared pool; each card retains its own selection.
 [[huxerui::composable]] huxerui::View HomeCardWithEasterEgg(
-    const huxerui::ThemeSpec& theme, huxerui::View content, std::string cardId) {
-    auto selected = huxerui::UseState<std::size_t>(0);
-    return HomeCardSurface(theme, content, std::move(cardId), true,
-        HomeEasterEggContent(kHomeEasterEggPool[selected.Get()], [](std::string_view url) {
+    const huxerui::ThemeSpec& theme, HomeCardKind kind, huxerui::State<HomeState> state, std::string cardId) {
+    auto expandedPicker = huxerui::UseState(std::string{});
+    return HomeCardSurface(theme, HomeCardContent(kind, state, expandedPicker), std::move(cardId), [] {
+        return HomeEasterEggContent(kHomeEasterEggPool[PickHomeEasterEgg()], [](std::string_view url) {
             core::openInBrowser(std::string{url});
-        }),
-        [selected] { selected = PickHomeEasterEgg(); });
+        });
+    }, expandedPicker);
 }
 
 } // namespace
@@ -1217,8 +1217,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
 
         // 首页所有卡片一视同仁：都是 raised 二级岛外壳。「当前订阅」不显示选中态
         // （哪个订阅在使用中由订阅页的选中卡承担）。
-        huxerui::View body = HomeCardContent(kind, state);
-        huxerui::View cardView = HomeCardWithEasterEgg(theme, body, id);
+        huxerui::View cardView = HomeCardWithEasterEgg(theme, kind, state, id);
         cards.push_back(std::move(cardView)
                             .LayoutValue<HomeCardSpan>(size)
                             .Key("home-card-" + id));
