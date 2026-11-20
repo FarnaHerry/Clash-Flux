@@ -388,7 +388,7 @@ WebsiteTestModel::Probe MakeWebsiteProbe(std::shared_ptr<AppHttpClient> http,
       huxerui::IconButton(app::images::add, Localized("添加网站"))
           .With(huxerui::Tooltip(Localized("添加网站")), huxerui::Enabled(rows.size() < 24))
           .OnClick([openEditor] { openEditor(std::nullopt); }),
-      WebsiteTestAction(anyActive, testLabel, [model, tasks, probe] {
+      WebsiteTestAction(anyActive ? WebsiteTestPhase::Running : WebsiteTestPhase::Idle, testLabel, [model, tasks, probe] {
               if (model->AnyActive()) return;
               std::vector<std::size_t> ids;
               for (const auto& row : model->sites.Get()) ids.push_back(row.id);

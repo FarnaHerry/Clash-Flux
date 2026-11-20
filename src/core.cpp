@@ -3,6 +3,7 @@
 // Windows/Linux 常驻数据面归系统服务，应用进程入口拒绝自行 spawn。
 // macOS 保留 POSIX 进程后端；移动端数据面归各自 VPN/Libbox runtime。
 module;
+#include "log_recording.h"
 #include "runtime_compile.h"
 
 #ifdef _WIN32
@@ -668,7 +669,9 @@ struct CoreProcessImpl {
         // 但诊断尾部必须始终记录最新的行（崩溃原因常在缓冲饱和后出现）。
         tail.push_back(line);
         if (tail.size() > kTailLines) tail.erase(tail.begin());
-        if (output.size() >= kMaxOutputLines) return;
+        // Raw output is displayed as Info in the unified log; keep the diagnostic tail independently.
+        if (!clashflux::logging::ShouldRecord(clashflux::logging::Level::Info) ||
+            output.size() >= kMaxOutputLines) return;
         output.push_back(std::move(line));
     }
 

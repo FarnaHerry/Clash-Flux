@@ -21,6 +21,7 @@
 #include "page_layout.h"
 #include "empty_state.h"
 #include "file_drop_zone.h"
+#include "profile_create_type_selector.h"
 #include "settings_group_layout.h"
 #include "profile_file_picker.h"
 #include "task_bridge.h"
@@ -36,7 +37,6 @@ import clashflux.pptp;
 import clashflux.store.profiles;
 import clashflux.store.vpn;
 import clashflux.utils;
-import clashflux.vpn;
 
 #include "profiles_page_shared.h"
 #include "profiles_model.h"
@@ -202,14 +202,7 @@ huxerui::View ProfileDescriptionField(huxerui::State<huxerui::TextEditingValue> 
     huxerui::State<huxerui::TextEditingValue> timeout,
     huxerui::State<huxerui::TextEditingValue> routes,
     huxerui::State<bool> requireMppe) {
-    const auto& theme = huxerui::UseTheme();
     return huxerui::Column {
-        vpn::PptpSingleSession()
-            ? huxerui::View{huxerui::Text(Localized(
-                "Windows 系统拨号同一时间仅支持一条 PPTP 连接"))
-                .Style(huxerui::TextStyle{
-                    huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant})}
-            : huxerui::View{},
         huxerui::TextField(server.Get())
             .Label(Localized("PPTP 服务器"))
             .Placeholder("vpn.example.com")
@@ -294,11 +287,6 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     std::vector<huxerui::StringVariant> types{
         Localized("远程订阅"), Localized("本地文件")};
     if (pptp_supported) types.push_back(Localized("PPTP 内网"));
-    const auto& theme = huxerui::UseTheme();
-    auto typeStyle = huxerui::UseEnvironment<huxerui::SegmentedButtonStyle>();
-    typeStyle.selected_background = huxerui::Color::Transparent();
-    typeStyle.selected_label = theme.colors.primary;
-    typeStyle.selected_indication = ResolveFluxIndication(theme);
 
     huxerui::View typeFields;
     if (remote) {
@@ -383,10 +371,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         });
     };
 
-    const huxerui::View typeSelector = huxerui::ProvideEnvironment(typeStyle,
-        huxerui::SegmentedButton(types, typeIndex)
-            .OnChanged([type = fields.type_index](std::size_t index) { type = index; })
-            .Key("profile-create-type"));
+    const auto typeSelector = ProfileCreateTypeSelector(std::move(types), fields.type_index);
     huxerui::View formFields = huxerui::Column {
       huxerui::TextField(fields.name.Get())
           .Label(Localized("名称（可选）"))

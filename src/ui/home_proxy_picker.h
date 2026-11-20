@@ -5,10 +5,12 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "app_resources.h"
+#include "country_flag.h"
 #include "proxies_model.h"
 #include "search_text.h"
 
@@ -123,23 +125,40 @@ public:
 
 inline constexpr float kHomeProxyOptionHeight = 36.0F;
 inline constexpr float kHomeProxyListHeight = 144.0F;
+inline constexpr std::string_view kHomeProxyNodePickerId = "home-proxy-node";
 
 inline huxerui::TextField HomeProxyField(const huxerui::TextEditingValue& value,
-                                       const std::string& current, const std::string& label) {
+                                       std::string_view current, const std::string& label,
+                                       bool searchEnabled) {
     return huxerui::TextField(value)
-        .Placeholder(current.empty() ? label : current)
+        .Placeholder(current.empty() ? label : std::string{current})
         .Variant(huxerui::TextFieldVariant::Outlined)
+        .InputConfiguration({.read_only = !searchEnabled})
         .TrailingIcon(app::images::chevron_down);
+}
+
+inline huxerui::View HomeProxyFieldSurface(huxerui::View field, huxerui::TextFieldStyle style,
+                                         const std::optional<ProxyNameFlag>& flag) {
+    huxerui::View leading;
+    if (flag) {
+        leading = huxerui::Row {UseCountryFlagTile(flag->index)}
+            .With(huxerui::Padding(huxerui::EdgeInsets{.left = style.padding.left}));
+        style.padding.left += kCountryFlagWidth + kCountryFlagTextGap;
+    }
+    return huxerui::Stack {
+      huxerui::ProvideEnvironment(style, field),
+      leading,
+    }.With(huxerui::Align(huxerui::HorizontalAlignment::Stretch, huxerui::VerticalAlignment::Center));
 }
 
 inline huxerui::View HomeProxyPanel(
     std::vector<HomeProxyChoice> choices, std::string current, std::string label,
-    huxerui::StringVariant noMatches, std::string id, huxerui::State<huxerui::Rect> anchorBounds,
+    huxerui::StringVariant noMatches, std::string id, bool searchEnabled, huxerui::State<huxerui::Rect> anchorBounds,
     huxerui::State<huxerui::Rect> viewportBounds,
     huxerui::State<huxerui::TextEditingValue> edit, std::function<void()> close,
     std::function<void(std::string)> onSelect) {
     return huxerui::Scope([choices = std::move(choices), current = std::move(current), label = std::move(label),
-                          noMatches, id = std::move(id), anchorBounds, viewportBounds, edit,
+                          noMatches, id = std::move(id), searchEnabled, anchorBounds, viewportBounds, edit,
                           close = std::move(close), onSelect = std::move(onSelect)] {
         auto active = huxerui::UseState(std::optional<std::size_t>{});
         const auto editor = huxerui::UseViewHandle();
@@ -150,6 +169,10 @@ inline huxerui::View HomeProxyPanel(
             if (viewportReady) editor.RequestFocus();
             return [] {};
         }, viewportReady);
+        huxerui::Lifecycle([active] {
+            active = std::nullopt;
+            return [] {};
+        }, searchEnabled);
         auto backdrop = huxerui::Row{}.On<huxerui::ViewEvents::Pointer>([close](const huxerui::PointerEvent& event) {
             if (event.type == huxerui::PointerEventType::Down) close();
         });
@@ -157,7 +180,8 @@ inline huxerui::View HomeProxyPanel(
             return huxerui::View{HomeProxyPopupLayout{std::move(backdrop)}.With(HomeProxyBounds{viewportBounds})};
         }
 
-        const auto& query = edit.Get().text;
+        const huxerui::TextEditingValue value = searchEnabled ? edit.Get() : huxerui::TextEditingValue{};
+        const std::string_view query = value.text;
         std::vector<HomeProxyChoice> matches;
         for (const auto& choice : choices) {
             if (SearchTextMatches(choice.label, query) || SearchTextMatches(choice.tag, query))
@@ -186,8 +210,11 @@ inline huxerui::View HomeProxyPanel(
         fieldStyle.border_width = 0.0F;
         fieldStyle.focused_border_width = 0.0F;
 
-        const auto field = HomeProxyField(edit.Get(), current, label)
-            .OnChanged([edit, active](const huxerui::TextEditingValue& next) {
+        const bool nodePicker = id == kHomeProxyNodePickerId;
+        const auto flag = nodePicker ? UseProxyNameFlag(current) : std::nullopt;
+        const auto field = HomeProxyField(value, flag ? flag->name : std::string_view{current}, label, searchEnabled)
+            .OnChanged([edit, active, searchEnabled](const huxerui::TextEditingValue& next) {
+                if (!searchEnabled) return;
                 if (next.text != edit.Get().text) active = std::nullopt;
                 edit = next;
             })
@@ -200,11 +227,15 @@ inline huxerui::View HomeProxyPanel(
 
         const auto listStyle = huxerui::UseEnvironment<huxerui::ComboBoxStyle>();
         std::vector<huxerui::View> rows;
+        const auto renderTitle = [](std::string_view name) {
+            return huxerui::Text(std::string{name}).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis);
+        };
         for (std::size_t index = 0; index < matches.size(); ++index) {
             const auto& choice = matches[index];
             const bool highlighted = active.Get() == index;
-            rows.push_back(huxerui::Text(choice.label)
-                .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+            auto title = nodePicker ? UseProxyNameTitle(choice.label, renderTitle)
+                                    : huxerui::View{renderTitle(choice.label)};
+            rows.push_back(std::move(title)
                 .With(huxerui::Frame{.height = kHomeProxyOptionHeight},
                       huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 6.0F)),
                       huxerui::Background(highlighted ? listStyle.active_item_background : huxerui::Color::Transparent()),
@@ -241,7 +272,7 @@ inline huxerui::View HomeProxyPanel(
                       .Offset({0.0F, opensUp ? 8.0F : -8.0F}, {}).Opacity(0.0F, 1.0F)),
             }.With(huxerui::ClipChildren(), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         }).Key("home-proxy-suggestions");
-        auto panel = HomeProxyPanelLayout {huxerui::ProvideEnvironment(fieldStyle, field), suggestions}
+        auto panel = HomeProxyPanelLayout {HomeProxyFieldSurface(field, fieldStyle, flag), suggestions}
             .LayoutValue<HomeProxyOpensUp>(opensUp)
             .With(huxerui::Frame{.width = anchor.width},
                huxerui::Background(listStyle.popup_background),
@@ -290,11 +321,11 @@ inline huxerui::View HomeProxyPanel(
 
 inline huxerui::View HomeProxyCombo(
     std::vector<HomeProxyChoice> choices, std::string current,
-    huxerui::StringVariant searchLabel, huxerui::StringVariant noMatches,
-    std::string id, bool enabled, huxerui::State<std::string> expandedPicker,
+    huxerui::StringVariant fieldLabel, huxerui::StringVariant noMatches,
+    std::string id, bool enabled, bool searchEnabled, huxerui::State<std::string> expandedPicker,
     std::uint64_t revision, std::function<void(std::string)> onSelect) {
     return huxerui::Scope([choices = std::move(choices), current = std::move(current),
-                          searchLabel, noMatches, id, enabled, expandedPicker, revision,
+                          fieldLabel, noMatches, id, enabled, searchEnabled, expandedPicker, revision,
                           onSelect = std::move(onSelect)] {
         const auto anchor = huxerui::UseViewHandle();
         const auto popup = huxerui::UsePopup();
@@ -311,10 +342,10 @@ inline huxerui::View HomeProxyCombo(
             edit = huxerui::TextEditingValue{};
             viewportBounds = huxerui::Rect{};
         };
-        const std::string label = huxerui::UseString(searchLabel);
-        const huxerui::ViewFactory panel = [choices, current, label, noMatches, id, anchorBounds, viewportBounds,
-                                           edit, close, onSelect] {
-            return HomeProxyPanel(choices, current, label, noMatches, id, anchorBounds, viewportBounds,
+        const std::string label = huxerui::UseString(fieldLabel);
+        const huxerui::ViewFactory panel = [choices, current, label, noMatches, id, searchEnabled, anchorBounds,
+                                           viewportBounds, edit, close, onSelect] {
+            return HomeProxyPanel(choices, current, label, noMatches, id, searchEnabled, anchorBounds, viewportBounds,
                                   edit, close, onSelect);
         };
         const auto open = [anchor, popup, panel, layer, anchorBounds, enabled, expandedPicker, id, close] {
@@ -327,27 +358,33 @@ inline huxerui::View HomeProxyCombo(
             expandedPicker = id;
         };
         huxerui::Lifecycle([close] { return close; });
-        huxerui::Lifecycle([enabled, popup, layer, panel, close] {
+        huxerui::Lifecycle([enabled, searchEnabled, edit, popup, layer, panel, close] {
+            if (!searchEnabled) edit = huxerui::TextEditingValue{};
             if (layer.Get() != 0 && (!enabled || !popup.Update(layer.Get(), panel))) close();
             return [] {};
-        }, enabled, choices, current, label, revision);
+        }, enabled, searchEnabled, choices, current, label, revision);
 
         const bool expanded = layer.Get() != 0 && viewportBounds.Get().height > 0.0F;
-        const auto field = HomeProxyField(enabled ? huxerui::TextEditingValue{} : huxerui::TextEditingValue::FromText(current),
-                                          current, label)
-            .OnChanged([edit, open](const huxerui::TextEditingValue& next) {
-                if (!next.text.empty() || next.composition) {
+        const auto flag = id == kHomeProxyNodePickerId ? UseProxyNameFlag(current) : std::nullopt;
+        const auto displayed = flag ? flag->name : std::string_view{current};
+        const auto field = HomeProxyField(enabled ? huxerui::TextEditingValue{}
+                                              : huxerui::TextEditingValue::FromText(std::string{displayed}),
+                                          displayed, label, searchEnabled)
+            .OnChanged([edit, open, searchEnabled](const huxerui::TextEditingValue& next) {
+                if (searchEnabled && (!next.text.empty() || next.composition)) {
                     edit = next;
                     open();
                 }
             })
             .With(anchor, HomeProxyExpansion{false}, HomeProxyBounds{anchorBounds},
-                  huxerui::Opacity(expanded ? 0.0F : 1.0F),
                   huxerui::Semantics{.role = huxerui::SemanticRole::ComboBox, .label = label,
                       .identifier = id, .expanded = false, .hidden = expanded})
             .On<HomeProxyExpansion::Requested>([open](bool show) { if (show) open(); })
             .OnClick(open);
-        return huxerui::Column{field}
+        const auto fieldStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
+        return huxerui::Column {
+          HomeProxyFieldSurface(field, fieldStyle, flag).With(huxerui::Opacity(expanded ? 0.0F : 1.0F)),
+        }
             .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::Enabled(enabled))
             .On<huxerui::ViewEvents::KeyIntercept>([open](const huxerui::KeyEvent& key) {
                 using huxerui::Key;
@@ -369,6 +406,7 @@ inline huxerui::View HomeProxyPickers(
                           expandedPicker, onSelect = std::move(onSelect)] {
         constexpr float fieldHeight = 40.0F;
         auto groupTag = huxerui::UseState(std::string{});
+        const bool searchEnabled = huxerui::UseViewportClass() != huxerui::ViewportClass::Compact;
         const auto& snapshot = snapshotState.Get();
         static const std::vector<ProxyGroupSnapshot> emptyGroups;
         const bool ready = hasProfile && snapshot.loaded && snapshot.profilesRevision == revision;
@@ -394,11 +432,13 @@ inline huxerui::View HomeProxyPickers(
         return huxerui::ProvideEnvironment(fields, huxerui::Column {
           HomeProxyCombo(std::move(groupChoices),
                          group ? (group->displayName.empty() ? group->name : group->displayName) : "",
-                         Localized("搜索代理组"), Localized("没有匹配的代理组"), "home-proxy-group",
-                         enabled, expandedPicker, revision, [groupTag](std::string tag) { groupTag = std::move(tag); }),
+                         searchEnabled ? Localized("搜索代理组") : Localized("策略组"),
+                         Localized("没有匹配的代理组"), "home-proxy-group", enabled, searchEnabled,
+                         expandedPicker, revision, [groupTag](std::string tag) { groupTag = std::move(tag); }),
           HomeProxyCombo(std::move(nodeChoices), group ? nodeLabel(group->current) : "",
-                         Localized("搜索节点"), Localized("没有匹配的节点"), "home-proxy-node",
-                         enabled && (!group || group->selectable), expandedPicker, revision,
+                         searchEnabled ? Localized("搜索节点") : Localized("节点"),
+                         Localized("没有匹配的节点"), std::string{kHomeProxyNodePickerId},
+                         enabled && (!group || group->selectable), searchEnabled, expandedPicker, revision,
                          [onSelect, name = group ? group->name : "", revision](std::string tag) {
                              onSelect(name, std::move(tag), revision);
                          }).Key(group ? group->name : ""),

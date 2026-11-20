@@ -1,9 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <algorithm>
 #include <chrono>
-#include <optional>
 #include <string>
 #include <utility>
 #include <huxerui/huxerui.h>
@@ -68,7 +66,6 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
                                     huxerui::State<std::string> expandedPicker = {}) {
     return huxerui::Scope([theme, content = std::move(content), cardId, makeBack = std::move(makeBack),
                            expandedPicker]() -> huxerui::View {
-        auto pointer = huxerui::UseState<std::optional<std::int64_t>>(std::nullopt);
         auto back = huxerui::UseState(false);
         auto backContent = huxerui::UseState(huxerui::View{});
         auto hovered = huxerui::UseState(false);
@@ -99,12 +96,6 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
         const huxerui::AnimationSpec faceMotion = reducedMotion
             ? huxerui::AnimationSpec{huxerui::SnapSpec{}}
             : huxerui::AnimationSpec{huxerui::TweenSpec{kHomeCardRevealDuration, huxerui::Easing::EaseOut}};
-        const bool pressed = pointer.Get().has_value();
-        const bool compress = pressed && !reducedMotion;
-        const huxerui::AnimationSpec animation = reducedMotion
-            ? huxerui::AnimationSpec{huxerui::SnapSpec{}}
-            : pressed ? huxerui::AnimationSpec{huxerui::TweenSpec{.duration = 0.07}}
-                      : huxerui::AnimationSpec{huxerui::SpringSpec{.stiffness = 480.0F, .damping_ratio = 0.72F}};
         const auto islands = ResolveIslandTheme(theme);
         const auto hoverStyle = ResolveCardIndication(theme).hover.value();
         const bool pickerOpen = expandedPicker.IsValid() && !expandedPicker.Get().empty();
@@ -142,25 +133,12 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
             huxerui::CornerRadius(islands.nested_radius),
             huxerui::ClipChildren(),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-            huxerui::Scale(huxerui::AnimateTo(compress ? 0.985F : 1.0F, animation)),
-            huxerui::Offset(huxerui::AnimateTo(huxerui::Point{0.0F, compress ? 1.0F : 0.0F}, animation)),
             HomeCardHoverOutline{hoverStyle.border.value(), huxerui::CornerRadii{islands.nested_radius},
                 showOutline ? hoverStyle.enter : hoverStyle.exit, showOutline}
         ).On<huxerui::ViewEvents::Hover>([hovered](const huxerui::HoverEvent& event) {
             // A nested control owns its indication. The card observes containment independently.
             if (event.type != huxerui::HoverEventType::Move) hovered = event.type == huxerui::HoverEventType::Enter;
-        }).On<huxerui::ViewEvents::PointerIntercept>([pointer](const huxerui::PointerEvent& event) {
-                if (event.type == huxerui::PointerEventType::Down && !pointer.Get() &&
-                    (event.device_kind == huxerui::PointerDeviceKind::Touch ||
-                     event.changed_button == huxerui::PointerButton::Primary))
-                    pointer = event.pointer_id;
-                else if ((event.type == huxerui::PointerEventType::Up || event.type == huxerui::PointerEventType::Cancel) &&
-                         pointer.Get() == event.pointer_id)
-                    pointer = std::nullopt;
-                // Observe the whole card, including its controls, without taking
-                // ownership from a child button, switch, or scrolling gesture.
-                return false;
-            });
+        });
         if (!makeBack) return surface;
         return huxerui::View{surface}.With(huxerui::Grow(1.0F), huxerui::MultiTapGesture{})
             .On<huxerui::MultiTapEvents::Recognized>(turn).Key("home-card-face-" + cardId);

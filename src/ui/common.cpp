@@ -519,6 +519,8 @@ ProxiesSnapshot FetchProxiesSnapshot() {
 }
 
 void InstallClashFluxUiModels(huxerui::ApplicationContext& context) {
+    // The saved level takes effect after hydration, including a saved Off preference.
+    logging::SetRecordingLevel(logging::Level::Off);
     auto runtimeServices = std::make_shared<AppRuntimeServices>();
     context.Provide(runtimeServices);
     context.Provide(std::make_shared<ProxiesModel>());
@@ -1175,6 +1177,36 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     return PageSearchFieldLayout(std::move(pill).Key("pill-search-field"), compact);
 }
 
+namespace {
+
+struct FileDropIdleOutline {
+    class Extension;
+    huxerui::Color color;
+    bool visible;
+    bool operator==(const FileDropIdleOutline&) const = default;
+};
+
+class FileDropIdleOutline::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const FileDropIdleOutline& outline) : outline_(outline) {}
+
+    void Update(huxerui::ViewNode&, const FileDropIdleOutline& outline) {
+        outline_ = outline;
+        InvalidatePaint(PaintInvalidation::Content);
+    }
+
+    void PaintBehindContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        if (!outline_.visible) return;
+        paint.DrawBorder(node.Bounds(), outline_.color, {.width = kCardOutlineWidth, .dash_pattern = {4.0F, 4.0F}},
+                         node.ResolvedCornerRadii());
+    }
+
+private:
+    FileDropIdleOutline outline_;
+};
+
+} // namespace
+
 // 通用「拖入或点击」文件选区（声明见 file_drop_zone.h）。FileDropTarget 只做
 // 外部文件的整批元数据校验（扩展名/MIME，整批要么全收要么拒绝），读取与导入
 // 仍由调用方决定；点击走 FilePicker——键盘、触摸与不支持拖入的宿主都依赖这个
@@ -1198,6 +1230,11 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     huxerui::FileDropOptions dropOptions;
     dropOptions.extensions = filter.extensions;
     dropOptions.allows_multiple = false;
+    std::string supportedExtensions;
+    for (const auto& extension : filter.extensions) {
+        if (!supportedExtensions.empty()) supportedExtensions += " / ";
+        supportedExtensions += "." + extension;
+    }
 
     const auto open_picker = [tasks, picker, toast, filter, picked_file] {
         tasks.Launch([picker, toast, filter, picked_file]() -> huxerui::Task<void> {
@@ -1238,6 +1275,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
               huxerui::Background(hover ? theme.colors.primary_container
                                         : theme.colors.surface_container_high),
               huxerui::CornerRadius(theme.shapes.small),
+              FileDropIdleOutline{theme.colors.outline, !hover},
               huxerui::Border(theme.colors.primary, hover ? kCardOutlineWidth : 0.0F),
               huxerui::ClipChildren(),
               huxerui::FileDropTarget::Accepts(std::move(dropOptions)),
@@ -1256,8 +1294,15 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                 if (!files.empty() && files.front().AsFile()) picked_file = files.front();
             })
         .On<huxerui::FileDropEvents::Failed>(
-            [toast](const huxerui::IoError& error, const huxerui::FileDropEvent&) {
-                toast.Show(LocalizedFormat("接收文件失败：{}", error.message));
+            [toast, supportedExtensions = std::move(supportedExtensions)](
+                const huxerui::IoError& error, const huxerui::FileDropEvent&) {
+                if (error.code == huxerui::IoErrorCode::Unsupported && !supportedExtensions.empty()) {
+                    toast.Show(LocalizedFormat("请选择一个支持的文件（{}）。", supportedExtensions));
+                } else if (error.code == huxerui::IoErrorCode::IsDirectory) {
+                    toast.Show(Localized("无法导入文件夹，请选择一个文件。"));
+                } else {
+                    toast.Show(Localized("接收文件失败，请重新拖入或点击选择。"));
+                }
             })
         .OnClick(open_picker)
         .With(huxerui::Focusable(true),
@@ -1417,6 +1462,13 @@ void SettingsModel::SetSubscriptionUserAgentOrder(std::size_t index) {
     Update([&](SettingsView& next) { next.subscriptionUserAgentOrder = order; });
 }
 
+void SettingsModel::SetLogLevel(logging::Level level) {
+    if (!view.Get().ready || view.Get().logLevel == level) return;
+    store::coreStore().setSetting(logging::kLevelSetting, std::string{logging::LevelName(level)});
+    logging::SetRecordingLevel(level);
+    Update([level](SettingsView& next) { next.logLevel = level; });
+}
+
 void SettingsModel::PublishCached() {
     // Never publish fallback settings before the database has hydrated.
     if (!clashflux::data::session().ready()) return;
@@ -1444,6 +1496,8 @@ void SettingsModel::PublishCached() {
     catch (const std::exception& error) { next.networkError = error.what(); }
     next.envShell = core.setting("ui.env_shell", "");
     next.language = core.setting("ui.language", "system");
+    next.logLevel = logging::SavedLevel(core.setting(logging::kLevelSetting));
+    logging::SetRecordingLevel(next.logLevel);
     next.subscriptionUserAgentOrder = subscription_http::kOrders[subscription_http::OrderIndex(
         core.setting(std::string{subscription_http::kOrderSetting}))];
     // 都是内存读；State 按 operator== 去重，只有真的变了才通知订阅者。

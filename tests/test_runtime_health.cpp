@@ -1,4 +1,5 @@
 #include "../src/runtime_health.h"
+#include "../src/log_recording.h"
 #include "../src/wire_codec.h"
 #include "runtime_health_cases.h"
 // Match the production modules' standard-library import. Mixing textual
@@ -7,6 +8,7 @@ import std;
 import clashflux.stream;
 import clashflux.api;
 import clashflux.core;
+import clashflux.config;
 import clashflux.singbox;
 import clashflux.service;
 using namespace std::chrono_literals;
@@ -23,7 +25,46 @@ template<class Predicate> void until(Predicate predicate, std::chrono::seconds b
         std::this_thread::sleep_for(50ms);
     }
 }
+
+void testLogRecording() {
+    using namespace clashflux::logging;
+    const auto path = cfg::coreWorkDir() / "logs.log";
+    constexpr std::array severities{"trace", "info", "warn", "fatal"};
+    constexpr std::array expected{Level::Debug, Level::Info, Level::Warning, Level::Error};
+    require(SavedLevel("") == Level::Debug && SavedLevel("unknown") == Level::Debug &&
+            SavedLevel("off") == Level::Off, "saved log levels and legacy defaults must decode");
+    for (std::size_t index = 0; index < expected.size(); ++index) {
+        const auto before = stream::logHistory().size();
+        SetRecordingLevel(expected[index]);
+        for (std::size_t i = 0; i < severities.size(); ++i) {
+            if (i % 2 == 0) stream::logApplication(severities[i], "app threshold fixture");
+            else stream::logCore(severities[i], "core threshold fixture");
+        }
+        const auto added = stream::drainLogs();
+        require(added.size() == expected.size() - index, "log threshold admitted the wrong number of entries");
+        for (std::size_t i = 0; i < added.size(); ++i)
+            require(added[i].level == LevelName(expected[index + i]), "accepted logs must use canonical severity");
+        require(stream::logHistory().size() == before + added.size(), "accepted logs must enter history");
+    }
+    const auto beforeOff = stream::logHistory().size();
+    const auto bytesBeforeOff = std::filesystem::file_size(path);
+    SetRecordingLevel(Level::Off);
+    stream::logApplication("error", "app disabled fixture");
+    stream::logCore("error", "core disabled fixture");
+    require(stream::drainLogs().empty() && stream::logHistory().size() == beforeOff &&
+            std::filesystem::file_size(path) == bytesBeforeOff, "Off must retain history without writing new entries");
+    SetRecordingLevel(Level::Debug);
+    stream::logCore("debug", "core re-enabled fixture");
+    const auto resumed = stream::drainLogs();
+    require(resumed.size() == 1 && resumed.front().payload == "core re-enabled fixture",
+            "re-enabling recording must accept new entries only");
+}
+
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--log-recording") {
+        testLogRecording();
+        return 0;
+    }
 #if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
     {
         require(service::required(), "desktop core must require the shared service facade");
@@ -78,6 +119,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+    testLogRecording();
     testRuntimeHealth();
     using namespace clashflux::health;
     require(!clashflux::wire::DecodeTraffic("{}"), "missing traffic counters accepted");

@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.122 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.123 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -451,11 +451,23 @@ if (CLASHFLUX_HUXERUI_SOURCE_DIR)
 else ()
     set(HUXERUI_HOME "${HUXERUI_SDK_DIR}")
 endif ()
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    list(APPEND CMAKE_PROJECT_sweeteditor_INCLUDE
+        "${CMAKE_CURRENT_SOURCE_DIR}/platform/ios/cmake/ImportSweetEditorSimdutf.cmake")
+endif ()
 huxerui_use_library(clash-flux
     TARGET HuxerUI::CodeEditor
     URL "${CLASHFLUX_HUXERUI_CODEEDITOR_URL}"
     COMMIT "${CLASHFLUX_HUXERUI_CODEEDITOR_COMMIT}"
 )
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    list(POP_BACK CMAKE_PROJECT_sweeteditor_INCLUDE)
+    # The vendor alias keeps its original directory scope after promotion.
+    # Expose the same archive to HuxerUI's root-level Xcode link manifest.
+    if (NOT TARGET SweetEditor3p::Simdutf)
+        add_library(SweetEditor3p::Simdutf ALIAS sweeteditor_3p_simdutf)
+    endif ()
+endif ()
 set(HUXERUI_HOME "${_clashflux_previous_huxerui_home}")
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)

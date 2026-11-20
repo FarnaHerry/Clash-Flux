@@ -9,6 +9,7 @@ module;
 #endif
 #include <ixwebsocket/IXWebSocket.h>
 #include <ixwebsocket/IXNetSystem.h>
+#include "log_recording.h"
 #include "wire_codec.h"
 #include "runtime_health.h"
 #include <condition_variable>
@@ -44,8 +45,6 @@ PersistentLogStore& logStore() {
     static PersistentLogStore store{cfg::coreWorkDir() / "logs.log"};
     return store;
 }
-
-std::string normalizeLevel(std::string level);
 
 // ---- 变化通知注册表（推送线程 → 观察者）------------------------------------
 struct StreamUpdateRegistry {
@@ -114,7 +113,7 @@ void loadLogsLocked(PersistentLogStore& store) {
             auto decoded = clashflux::wire::DecodeStoredLog(line);
             if (!decoded) continue;
             store.history.push_back(LogLine{
-                .level = normalizeLevel(std::move(decoded.value.level)),
+                .level = std::string{clashflux::logging::LevelName(clashflux::logging::MessageLevel(decoded.value.level))},
                 .payload = core::stripAnsi(decoded.value.payload),
                 .at = decoded.value.at,
             });
@@ -198,14 +197,6 @@ void clearLogHistory(PersistentLogStore& store) {
     std::filesystem::remove(store.path, error);
 }
 
-// mihomo 与 sing-box 的日志级别词表差异归一：WS /logs 帧的 type（sing-box
-// 发 "warn"）统一映射成 UI 词表（warning）；测速/过滤沿用。
-std::string normalizeLevel(std::string level) {
-    if (level == "warn") return "warning";
-    if (level == "trace") return "debug";
-    return level;
-}
-
 // UI 级别词表（silent/error/warning/info/debug）→ sing-box /logs?level= 值。
 std::string queryLevel(std::string level) {
     if (level == "warning") return "warn";
@@ -246,10 +237,11 @@ struct Channel {
 } // namespace
 
 void logApplication(std::string level, std::string payload) noexcept {
+    const auto severity = clashflux::logging::MessageLevel(level);
+    if (payload.empty() || !clashflux::logging::ShouldRecord(severity)) return;
     try {
-        if (payload.empty()) return;
         appendLog(logStore(), LogLine{
-            .level = normalizeLevel(std::move(level)),
+            .level = std::string{clashflux::logging::LevelName(severity)},
             .payload = core::stripAnsi(std::move(payload)),
             .at = nowUnix(),
         });
@@ -453,7 +445,7 @@ struct CoreStreams::Impl {
         line.at = nowUnix();
         auto decoded = clashflux::wire::DecodeLog(text);
         if (decoded) {
-            line.level = normalizeLevel(std::move(decoded.value.type));
+            line.level = std::move(decoded.value.type);
             line.payload = std::move(decoded.value.payload);
         } else {
             line.level = "info";

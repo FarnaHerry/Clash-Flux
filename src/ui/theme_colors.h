@@ -387,6 +387,11 @@ inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "blue") {
     return colors;
 }
 
+inline huxerui::ThemeBrightness ResolveThemeBrightness(int mode, huxerui::ThemeBrightness system) noexcept {
+    if (mode == 0) return system;
+    return mode == 1 ? huxerui::ThemeBrightness::Dark : huxerui::ThemeBrightness::Light;
+}
+
 inline bool IsDarkTheme(const huxerui::ThemeSpec& theme) noexcept {
     return theme.brightness == huxerui::ThemeBrightness::Dark;
 }

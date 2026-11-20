@@ -12,6 +12,14 @@ iOS 当前不是 Clash-Flux 的受支持或发布平台。仓库中的 App、Pac
 - 运行 `platform/ios/build-singbox-libbox.sh`，从与 Android 相同的固定 sing-box revision
   构建 iOS device 和 Simulator 的 `Libbox.xcframework`。
 
+Xcode 的核心构建通过 SweetEditor 自带的 CMake 导入规则选择 simdutf 静态库。
+iOS 在导入时将 SDK 路径按小写匹配，确保 `iPhoneSimulator*.sdk` 使用 Simulator 切片。
+同一导入目标也暴露给 HuxerUI 的应用级链接清单，以便 `link.rsp` 写入实际归档路径。
+
+2026-11-20，以 v0.3.122（`f80f2f2`）为基线，CMake 4.4.2 的本地夹具复现了
+原清单无法解析 `SweetEditor3p::Simdutf`，并核对了修复后设备及模拟器两种归档的
+Mach-O 平台标记。更新后的 App 和 Packet Tunnel 最终链接由 macOS 上的 Xcode 诊断验证。
+
 该 job 生成未签名的 Simulator `.app` 和 `.appex`，但不生成 IPA、不上传 Release 资产，也不属于
 Release 门禁；签名设备包和真机 VPN 生命周期仍需验证。Clash-Flux iOS `CoreProcess` 显式拒绝
 桌面 sing-box 子进程启动；Packet Tunnel extension 持有 Libbox，并通过 App Group 原子文件读取

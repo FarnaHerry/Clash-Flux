@@ -4,22 +4,109 @@
 #include "app_resources.h"
 #include "action_menu.h"
 #include "country_flag.h"
-#include "refresh_motion.h"
+#include <algorithm>
+#include <cmath>
 #include <ctime>
+#include <numbers>
+#include <optional>
 
 namespace clashflux::ui {
 
-inline huxerui::View WebsiteTestAction(bool active, huxerui::StringVariant label, std::function<void()> start) {
-    return huxerui::Scope([active, label, start] {
+struct WebsiteTestPulse {
+    class Extension;
+    huxerui::Color color;
+    float iconSize;
+    bool busy;
+    bool animate;
+    bool operator==(const WebsiteTestPulse&) const = default;
+};
+
+class WebsiteTestPulse::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const WebsiteTestPulse& pulse) : pulse_(pulse) {}
+
+    void Update(huxerui::ViewNode&, const WebsiteTestPulse& pulse) {
+        pulse_ = pulse;
+        if (!pulse_.animate) startedAt_.reset();
+        InvalidatePaint(PaintInvalidation::Foreground);
+    }
+
+    FrameResult OnFrame(huxerui::ViewNode&, const huxerui::FrameInfo& frame) override {
+        if (!pulse_.animate || frame.reduced_motion) {
+            if (startedAt_) {
+                startedAt_.reset();
+                InvalidatePaint(PaintInvalidation::Foreground);
+            }
+            return {};
+        }
+        if (!startedAt_) startedAt_ = frame.timestamp;
+        elapsed_ = frame.timestamp - *startedAt_;
+        InvalidatePaint(PaintInvalidation::Foreground);
+        return {.wake_after = 1.0 / 30.0};
+    }
+
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        if (!pulse_.busy) return;
+        const auto bounds = node.ContentBounds();
+        const float width = std::min(pulse_.iconSize * 1.6F, bounds.width * 0.8F);
+        const float left = bounds.x + (bounds.width - width) * 0.5F;
+        const float mid = bounds.y + bounds.height * 0.5F;
+        const float scale = width / 60.0F;
+        const float center = startedAt_ ? -0.25F + static_cast<float>(std::fmod(elapsed_, 1.5)) : 0.5F;
+        const auto gaussian = [](float distance, float spread) {
+            const float ratio = distance / spread;
+            return std::exp(-ratio * ratio);
+        };
+        // Sample the reference's P-QRS-T waveform between the two fixed contacts.
+        constexpr int samples = 44;
+        huxerui::Path wave;
+        wave.MoveTo({left, mid});
+        for (int i = 1; i < samples; ++i) {
+            const float x = static_cast<float>(i) / samples;
+            const float d = x - center;
+            const float y = -3.0F * gaussian(d + 0.10F, 0.05F) - 15.0F * gaussian(d, 0.028F)
+                          + 7.0F * gaussian(d - 0.045F, 0.035F) - 4.0F * gaussian(d - 0.13F, 0.055F);
+            wave.LineTo({left + width * x, mid + scale * y});
+        }
+        wave.LineTo({left + width, mid});
+        auto glow = pulse_.color;
+        glow.alpha *= 0.18F;
+        const huxerui::StrokeStyle stroke{.width = 2.2F * scale, .cap = huxerui::StrokeCap::Round,
+                                         .join = huxerui::StrokeJoin::Round};
+        auto glowStroke = stroke;
+        glowStroke.width *= 2.4F;
+        paint.StrokePath(wave, glow, glowStroke);
+        paint.StrokePath(std::move(wave), pulse_.color, stroke);
+        const float blink = startedAt_ ? static_cast<float>(std::cos(2.0 * std::numbers::pi * elapsed_ / 1.2)) : 0.0F;
+        auto contact = pulse_.color;
+        contact.alpha *= startedAt_ ? 0.675F - 0.325F * blink : 0.9F;
+        paint.DrawCircle({left, mid}, 2.5F * scale, contact);
+        contact.alpha = pulse_.color.alpha * (startedAt_ ? 0.675F + 0.325F * blink : 0.9F);
+        paint.DrawCircle({left + width, mid}, 2.5F * scale, contact);
+    }
+
+private:
+    WebsiteTestPulse pulse_;
+    std::optional<double> startedAt_;
+    double elapsed_ = 0.0;
+};
+
+inline huxerui::View WebsiteTestAction(WebsiteTestPhase phase, huxerui::StringVariant label, std::function<void()> start) {
+    return huxerui::Scope([phase, label, start = std::move(start)] {
         const auto& theme = huxerui::UseTheme();
-        const auto animationReady = huxerui::UseState(false);
-        huxerui::Lifecycle([animationReady] { animationReady = true; });
-        return huxerui::IconButton(app::images::refresh, label)
+        const bool busy = phase == WebsiteTestPhase::Queued || phase == WebsiteTestPhase::Running;
+        const bool foreground = huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background;
+        auto style = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+        if (busy) style.disabled_foreground = huxerui::Color::Transparent();
+        const auto button = huxerui::IconButton(app::images::website_heartbeat, label)
             .With(huxerui::Tooltip(label),
-                huxerui::Rotation(RefreshIconRotation(theme, active && animationReady.Get())),
-                huxerui::Enabled(!active),
-                huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = label, .busy = active})
-            .OnClick([active, start] { if (!active) start(); });
+                  huxerui::Enabled(!busy),
+                  huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = label, .busy = busy},
+                  WebsiteTestPulse{phase == WebsiteTestPhase::Queued ? theme.colors.on_surface_variant : theme.colors.primary,
+                                    style.icon_size, busy,
+                                    phase == WebsiteTestPhase::Running && foreground && !theme.motion.reduced_motion})
+            .OnClick([busy, start] { if (!busy) start(); });
+        return huxerui::ProvideEnvironment(style, button);
     });
 }
 
@@ -67,9 +154,8 @@ inline huxerui::View WebsiteTestCard(
             });
         };
         const auto& result = site.result;
-        const bool ownActive = result.phase == WebsiteTestPhase::Queued || result.phase == WebsiteTestPhase::Running;
         const auto testLabel = result.phase == WebsiteTestPhase::Queued ? Localized("等待测试") :
-            ownActive ? Localized("测试中…") : Localized("测试");
+            result.phase == WebsiteTestPhase::Running ? Localized("测试中…") : Localized("测试");
         auto status = Localized("未测试");
         auto color = theme.colors.on_surface_variant;
         if (result.phase == WebsiteTestPhase::Queued) status = Localized("等待测试");
@@ -96,11 +182,13 @@ inline huxerui::View WebsiteTestCard(
             };
         };
         const std::string completedTime = WebsiteTestTime(result.completedAt);
+        constexpr float resultHeight = 22.0F;
+        constexpr huxerui::Frame timeSlot{.width = 56.0F, .height = resultHeight};
         auto content = huxerui::Column {
           huxerui::Row {
             huxerui::Image(app::images::globe).Tint(theme.colors.primary).With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             huxerui::Text(site.name, huxerui::TextRole::Title).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis).With(huxerui::Grow(1.0F)),
-            WebsiteTestAction(ownActive, testLabel, start)
+            WebsiteTestAction(result.phase, testLabel, start)
                 .Key("website-test-" + std::to_string(site.id)),
             compact ? huxerui::View{huxerui::IconButton(app::images::more_vertical, Localized("更多操作"))
                 .With(menu.Target(), huxerui::Tooltip(Localized("更多操作")))
@@ -108,16 +196,20 @@ inline huxerui::View WebsiteTestCard(
                 .Key("website-menu-" + std::to_string(site.id))} : huxerui::View{},
           }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
           huxerui::Row {
-            (located ? WebsiteCountry(result.country) : huxerui::View{huxerui::Text(status)})
-                .With(huxerui::Foreground(color), huxerui::Grow(1.0F), huxerui::Tooltip(hint))
+            (located ? WebsiteCountry(result.country) : huxerui::View{huxerui::Text(status)
+                .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis).VerticalAlign(huxerui::TextVerticalAlign::Center)})
+                .With(huxerui::Frame{.height = resultHeight}, huxerui::Foreground(color),
+                      huxerui::Grow(1.0F), huxerui::Tooltip(hint))
                 .Key("website-result-" + std::to_string(site.id)),
             (completedTime.empty()
-                 ? PlaceholderText(huxerui::Font::System(font_size::kCaption), 44.0F)
+                 ? PlaceholderSlot()
                  : huxerui::View{huxerui::Text(completedTime)
+                       .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+                       .Align(huxerui::TextAlign::Trailing).VerticalAlign(huxerui::TextVerticalAlign::Center)
                        .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
                                                  theme.colors.on_surface_variant})
                        .With(huxerui::Tooltip(WebsiteTestTime(result.completedAt, true)))})
-                .Key("website-time-" + std::to_string(site.id)),
+                .With(timeSlot).Key("website-time-" + std::to_string(site.id)),
           }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         auto card = Card(std::move(content));

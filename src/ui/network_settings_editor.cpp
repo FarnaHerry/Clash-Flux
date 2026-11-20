@@ -186,14 +186,37 @@ struct NetworkForm {
 
 huxerui::View NetworkField(huxerui::State<NetworkForm> form, const std::string& key,
                           huxerui::StringVariant label, bool multiline = false, bool secure = false) {
-    const auto error = form.Get().FieldError(key);
-    return SettingsContentRow(huxerui::TextField(form.Get().fields.at(key)).Label(label)
-        .Variant(huxerui::TextFieldVariant::Outlined).Secure(secure)
-        .Validation(error.empty() ? huxerui::ValidationResult::Valid() : huxerui::ValidationResult::Invalid(error))
-        .LineLimits(multiline ? huxerui::TextFieldLineLimits::MultiLine(2, 5) : huxerui::TextFieldLineLimits::SingleLine())
-        .OnChanged([form, key](const huxerui::TextEditingValue& value) {
-            form.Update([&](NetworkForm& next) { next.fields.at(key) = value; });
-        })).Key("network-field-" + key);
+    const auto field = [form, key, label, multiline, secure](bool showPlaceholder) {
+        const auto error = form.Get().FieldError(key);
+        return huxerui::TextField(form.Get().fields.at(key))
+            .Label(showPlaceholder ? huxerui::StringVariant{} : label)
+            .Placeholder(showPlaceholder ? label : huxerui::StringVariant{})
+            .Variant(huxerui::TextFieldVariant::Outlined).Secure(secure)
+            .Validation(error.empty() ? huxerui::ValidationResult::Valid() : huxerui::ValidationResult::Invalid(error))
+            .LineLimits(multiline ? huxerui::TextFieldLineLimits::MultiLine(2, 5)
+                                  : huxerui::TextFieldLineLimits::SingleLine())
+            .VerticalAlign(huxerui::TextVerticalAlign::Center)
+            .With(huxerui::Semantics{.label = label})
+            .OnChanged([form, key](const huxerui::TextEditingValue& value) {
+                form.Update([&](NetworkForm& next) { next.fields.at(key) = value; });
+            });
+    };
+    const auto control = multiline ? huxerui::View{huxerui::Scope([form, key, label, field] {
+        const auto focused = huxerui::UseState(false);
+        const bool showPlaceholder = !focused.Get() && form.Get().fields.at(key).text.empty();
+        const auto& style = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
+        const auto labelText = huxerui::UseString(label);
+        // Match the outlined field's label inset while the empty prompt is inside the frame.
+        const float topInset = showPlaceholder && style.show_label
+            ? huxerui::UseTextMeasurer().MeasureText(labelText, style.floating_label_style).size.height * 0.5F
+            : 0.0F;
+        return huxerui::Column {
+          field(showPlaceholder).On<huxerui::ViewEvents::FocusChanged>(
+              [focused](bool value) { focused = value; }),
+        }.With(huxerui::Padding(huxerui::EdgeInsets{.top = topInset}),
+               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })} : huxerui::View{field(false)};
+    return SettingsContentRow(control).Key("network-field-" + key);
 }
 
 huxerui::View NetworkSection(std::vector<huxerui::View> rows) {

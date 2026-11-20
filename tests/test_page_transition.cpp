@@ -24,6 +24,7 @@
 
 #include "ui.h"
 #include "profile_update_interval.h"
+#include "profile_create_type_selector.h"
 #include "subscription_ua_setting.h"
 #include "network_dns_layout.h"
 #include "app_resources.h"
@@ -510,14 +511,40 @@ void testWebsiteTests() {
             return ui.Find(UiSelector::Key("website-test-" + std::to_string(id)))
                 .Find(UiSelector::Type<huxerui::IconButton>());
         };
-        const float idleActionWidth = testAction(0).One().bounds.width;
+        const auto pulsePath = [&ui] {
+            const auto frame = ui.CaptureSnapshot().ToString();
+            constexpr std::string_view foreground = "foreground {\n";
+            for (auto start = frame.find(foreground); start != std::string::npos;
+                 start = frame.find(foreground, start + foreground.size())) {
+                const auto path = frame.find_first_not_of(' ', start + foreground.size());
+                if (std::string_view{frame}.substr(path).starts_with("stroke-path {"))
+                    return frame.substr(path, frame.find("brush {", path) - path);
+            }
+            return std::string{};
+        };
+        const auto idleBounds = testAction(0).One().bounds;
+        const auto websiteLayout = [&ui] {
+            return std::array{
+                ui.Find(UiSelector::Key("website-card-0")).One().bounds,
+                ui.Find(UiSelector::Key("website-card-1")).One().bounds,
+                ui.Find(UiSelector::Key("website-card-3")).One().bounds,
+                ui.Find(UiSelector::Key("website-result-0")).One().bounds,
+                ui.Find(UiSelector::Key("website-time-0")).One().bounds,
+            };
+        };
+        const auto idleLayout = websiteLayout();
+        check(pulsePath().empty(), "idle website actions use the packaged heartbeat icon");
         ui.Find(UiSelector::Key("website-test-0")).Tap();
         ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running && metrics->active == 1,
               "tapping one card starts only that card");
+        const auto firstPulse = pulsePath();
         ui.Pump(std::chrono::milliseconds{112});
-        check(testAction(0).One().bounds.width > idleActionWidth * 1.2F,
-              "a website request rotates its refresh action using the shared motion");
+        const auto movingPulse = pulsePath();
+        check(!firstPulse.empty() && !movingPulse.empty() && movingPulse != firstPulse &&
+              testAction(0).One().bounds == idleBounds,
+              "the painted heartbeat moves through a fixed-size website action");
+        check(websiteLayout() == idleLayout, "starting a website test preserves cards and result slots");
         check(!testAction(0).One().enabled && testAction(1).One().enabled,
               "a loading website action is disabled while idle websites remain clickable");
         ui.Find(UiSelector::Key("website-test-1")).Tap();
@@ -529,20 +556,19 @@ void testWebsiteTests() {
         ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running &&
               shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running && metrics->started == 2,
-              "clicking a loading refresh action neither cancels nor starts another request");
+              "clicking a busy test action neither cancels nor starts another request");
         shared->Cancel(0); ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Cancelled &&
               shared->sites.Get()[1].result.phase == WebsiteTestPhase::Running,
               "cancelling one card leaves the other card's test running");
-        check(std::abs(testAction(0).One().bounds.width - idleActionWidth) < 0.1F,
-              "cancelling a website request immediately resets its refresh action");
+        check(testAction(0).One().enabled && testAction(0).One().bounds == idleBounds,
+              "cancelling a website request immediately restores the idle action at the same position");
         ui.PumpAndSettle();
         check(!shared->AnyActive() && shared->sites.Get()[1].result.status == 403,
               "each card settles with its own result");
         check(testAction(0).One().enabled && testAction(1).One().enabled,
               "website actions become clickable again after cancellation or completion");
-        check(std::abs(testAction(1).One().bounds.width - idleActionWidth) < 0.1F,
-              "a completed website request stops its refresh action");
+        check(pulsePath().empty(), "completed website requests restore the idle icon and stop painting the waveform");
         shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
         ui.Pump(std::chrono::milliseconds{1});
         check(metrics->active == 3 && metrics->maximum == 3, "website batch launches exactly three asynchronous requests");
@@ -585,6 +611,7 @@ void testWebsiteTests() {
               "HTTP rejection shows a failure without status/latency clutter");
         check(shared->sites.Get()[0].result.completedAt > 0 && ui.Find(UiSelector::Key("website-time-0")).Exists(),
               "completed results retain their wall-clock completion timestamp");
+        check(websiteLayout() == idleLayout, "showing a completion time preserves the card geometry");
         ui.SetWindowMetrics({.viewport = {width == 320.0F ? 960.0F : 320.0F, 640}});
         ui.PumpAndSettle();
         check(websiteFixture == shared && shared->sites.Get()[0].result.status == 403,
@@ -594,6 +621,8 @@ void testWebsiteTests() {
         const auto card = ui.Find(UiSelector::Key("website-panel")).One().bounds;
         check(card.width <= width && card.x >= 0, "production website card content fits narrow and expanded widths");
         shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
+        ui.Pump(std::chrono::milliseconds{1});
+        check(websiteLayout() == idleLayout, "retesting with queued sites preserves the grid as completion times clear");
         ui.PumpAndSettle();
         const auto completed = shared->sites.Get();
         check(!shared->AnyActive() && metrics->maximum == 3 && std::all_of(completed.begin(),
@@ -604,6 +633,7 @@ void testWebsiteTests() {
         shared->sites = std::move(located); ui.Pump(kSettle);
         check(ui.Find(UiSelector::Text("GB")).Exists() && !ui.Find(UiSelector::Text("HTTP 200")).Exists(),
               "successful website results render their measured country code and packaged flag");
+        check(websiteLayout() == idleLayout, "the country flag and completion time fit the same stable result row");
         located = shared->sites.Get(); located[0].result.country.clear(); located[0].result.locationSource = WebsiteLocationSource::None; shared->sites = std::move(located); ui.Pump(kSettle);
         check(ui.Find(UiSelector::Text("可访问")).Exists(), "successful HTTP without location evidence shows reachable instead of failure or unknown location");
         shared->Start(*websiteTasks, [](std::string) -> huxerui::Task<WebsiteTestResult> {
@@ -2242,6 +2272,7 @@ struct HomeProxyPickerFixture {
 };
 std::shared_ptr<HomeProxyPickerFixture> homeProxyPickerFixture;
 constexpr float kHomeProxyCardFixtureWidth = 154.0F;
+constexpr float kHomeProxySearchViewportWidth = 720.0F;
 
 void InstallHomeProxyPickerFixture(huxerui::ApplicationContext& context) {
     homeProxyPickerFixture = std::make_shared<HomeProxyPickerFixture>();
@@ -2257,7 +2288,7 @@ huxerui::View HomeProxyPickerRoot() {
             [fixture](std::string group, std::string node, std::uint64_t) {
                 fixture->selections.emplace_back(std::move(group), std::move(node));
             });
-        return clashflux::ui::HomeGrid {
+        const auto grid = clashflux::ui::HomeGrid {
           clashflux::ui::HomeCardSurface(huxerui::UseTheme(), huxerui::Column {
               huxerui::Text("Profile").With(huxerui::Frame{.height = 20.0F}),
               pickers,
@@ -2270,7 +2301,9 @@ huxerui::View HomeProxyPickerRoot() {
               .LayoutValue<clashflux::ui::HomeCardSpan>({1, 2})
               .Key("home-proxy-card-fixture"),
           huxerui::Spacer().LayoutValue<clashflux::ui::HomeCardSpan>({2, 1}).Key("home-next-card-fixture"),
-        }.LayoutValue<clashflux::ui::HomeGridCompact>(true);
+        }.LayoutValue<clashflux::ui::HomeGridCompact>(true).With(huxerui::Frame{.width = 320.0F});
+        return huxerui::Stack{grid}.With(huxerui::Align(
+            huxerui::HorizontalAlignment::Start, huxerui::VerticalAlignment::Start));
     })};
 }
 const huxerui::Application kHomeProxyPickerApplication{
@@ -2281,7 +2314,7 @@ float paintedHomeProxyCardOutline(huxerui::testing::UiTest& ui);
 void testHomeProxyPickers() {
     using huxerui::testing::UiSemanticSelector;
     huxerui::testing::UiTest ui(kHomeProxyPickerApplication, {
-        .viewport = {320.0F, 480.0F}, .resource_provider = AppResources()});
+        .viewport = {kHomeProxySearchViewportWidth, 480.0F}, .resource_provider = AppResources()});
     const auto fixture = homeProxyPickerFixture;
     const auto group = ui.Find(UiSelector::Key("home-proxy-group"));
     const auto node = ui.Find(UiSelector::Key("home-proxy-node"));
@@ -2328,10 +2361,10 @@ void testHomeProxyPickers() {
         .loaded = true,
         .profilesRevision = 1,
         .groups = {
-            {.name = "primary", .displayName = "Primary", .current = "alpha",
+            {.name = "primary", .displayName = "Primary", .nodeLabels = {{"alpha", "🇺🇸 alpha"}}, .current = "alpha",
              .nodes = {"alpha"}, .selectable = true},
             {.name = "secondary", .displayName = "Backup",
-             .nodeLabels = {{"b0", "Bravo"}, {"b1", "Charlie"}},
+             .nodeLabels = {{"b0", "Bravo"}, {"b1", "🇯🇵 Charlie"}},
              .current = "b0", .nodes = {"b0", "b1"}, .selectable = true},
             {.name = "auto", .displayName = "Automatic", .current = "delta", .nodes = {"delta"}},
         },
@@ -2341,6 +2374,16 @@ void testHomeProxyPickers() {
     ui.Pump(kSettle);
     check(groupInput.One().bounds == groupBounds && nodeInput.One().bounds == nodeBounds,
           "loading a subscription preserves the locations and sizes of both fields");
+    const auto nodeFlag = node.Find(UiSelector::Type<huxerui::Canvas>());
+    check(nodeFlag.Exists(), "the current node draws its atlas flag");
+    const auto flagBounds = nodeFlag.One().bounds;
+    check(nodeBounds.Contains({flagBounds.x + flagBounds.width / 2.0F, flagBounds.y + flagBounds.height / 2.0F}),
+          "the atlas flag appears inside the outlined field");
+    nodeFlag.Tap(); ui.Pump(kSettle);
+    check(panel.Exists() && focusedCombo.One().placeholder == "alpha" &&
+              panel.Find(UiSelector::Type<huxerui::Canvas>()).Count() == 2,
+          "the flag area opens the picker and both the editor and its option draw atlas flags");
+    ui.PressKey(huxerui::Key::Escape); ui.Pump(kSettle);
     const auto backLink = card.Find(UiSelector::Key("home-easter-egg-link"));
     check(!backLink.Exists(), "the initial subscription card does not mount its back link");
     const auto flipCard = [&] {
@@ -2384,7 +2427,7 @@ void testHomeProxyPickers() {
               inlineList.bounds.width == groupBounds.width,
           "the input and list occupy one popup surface positioned at the original input");
     checkLayout();
-    ui.SetWindowMetrics({.viewport = {320.0F, 112.0F}});
+    ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 112.0F}});
     ui.PumpUntil([&] { return suggestions.One().bounds.y < groupBounds.y; });
     const auto aboveGroup = suggestions.One().bounds;
     check(panelInput.One().bounds == groupBounds &&
@@ -2395,7 +2438,7 @@ void testHomeProxyPickers() {
     check(panelInput.One().bounds == groupBounds && focusedCombo.One().expanded == true &&
               suggestions.One().bounds.height == clashflux::ui::kHomeProxyOptionHeight,
           "filtering the upward list keeps the input pinned and focused");
-    ui.SetWindowMetrics({.viewport = {320.0F, 480.0F}});
+    ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 480.0F}});
     ui.PumpUntil([&] { return suggestions.One().bounds.y == groupBounds.y + groupBounds.height; });
     check(panelInput.One().bounds == groupBounds && panelInput.One().value == "BACK" &&
               focusedCombo.One().expanded == true,
@@ -2426,7 +2469,8 @@ void testHomeProxyPickers() {
     check(groupInput.One().value == "" && focusedCombo.One().placeholder == "Backup" && fixture->selections.empty(),
           "selecting a group clears the query and shows the new group without switching the outbound");
 
-    ui.SetWindowMetrics({.viewport = {320.0F, 156.0F}, .safe_area = {.top = 8.0F, .bottom = 12.0F}});
+    ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 156.0F},
+        .safe_area = {.top = 8.0F, .bottom = 12.0F}});
     ui.Pump(kSettle);
     const auto insetNodeBounds = nodeInput.One().bounds;
     node.Tap(); ui.Pump(kSettle);
@@ -2438,7 +2482,7 @@ void testHomeProxyPickers() {
               aboveNode.y + aboveNode.height == insetNodeBounds.y &&
               aboveNode.height == 2.0F * clashflux::ui::kHomeProxyOptionHeight,
           "the full node list fits above the stationary editor inside the safe area");
-    ui.SetWindowMetrics({.viewport = {320.0F, 480.0F}});
+    ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 480.0F}});
     ui.PumpUntil([&] { return panelInput.One().bounds == nodeBounds &&
         suggestions.One().bounds.y == nodeBounds.y + nodeBounds.height; });
     checkLayout();
@@ -2453,7 +2497,9 @@ void testHomeProxyPickers() {
     nodeInput.Tap(); ui.Pump(kSettle);
     check(focusedCombo.One().expanded == true, "clicking the same field after Escape reopens its list");
 
-    panelInput.EnterText("charl"); ui.Pump(kSettle);
+    panelInput.EnterText("🇯🇵"); ui.Pump(kSettle);
+    check(ui.Find(UiSelector::Text("Charlie")).Exists() && !ui.Find(UiSelector::Text("Bravo")).Exists(),
+          "filtering matches the original emoji even though the option displays an atlas flag");
     ui.PressKey(huxerui::Key::ArrowDown); ui.PressKey(huxerui::Key::Enter); ui.Pump(kSettle);
     check(fixture->selections == std::vector<std::pair<std::string, std::string>>{{"secondary", "b1"}} &&
               nodeInput.One().value == "" && focusedCombo.One().placeholder == "Bravo",
@@ -2486,6 +2532,55 @@ void testHomeProxyPickers() {
     node.Tap(); ui.Pump(kSettle);
     check(focusedCombo.One().expanded == true && !options.Exists(),
           "an obsolete snapshot cannot offer stale nodes");
+}
+
+void testCompactHomeProxyPickers() {
+    using huxerui::testing::UiSemanticSelector;
+    huxerui::testing::UiTest ui(kHomeProxyPickerApplication, {
+        .viewport = {320.0F, 480.0F}, .resource_provider = AppResources()});
+    const auto fixture = homeProxyPickerFixture;
+    fixture->hasProfile = true;
+    fixture->snapshot = clashflux::ui::ProxiesSnapshot{
+        .loaded = true, .profilesRevision = 1,
+        .groups = {
+            {.name = "Primary", .current = "Alpha", .nodes = {"Alpha"}, .selectable = true},
+            {.name = "Backup", .current = "Bravo", .nodes = {"Bravo", "Charlie"}, .selectable = true},
+        },
+    };
+    ui.Pump(kSettle);
+    const auto group = ui.Find(UiSelector::Key("home-proxy-group"));
+    const auto node = ui.Find(UiSelector::Key("home-proxy-node"));
+    const auto panel = ui.Find(UiSelector::Key("home-proxy-panel"));
+    const auto panelInput = panel.Find(UiSelector::Type<huxerui::TextField>());
+    const auto groupCombo = ui.FindSemantics(UiSemanticSelector::Identifier("home-proxy-group"));
+    const auto nodeCombo = ui.FindSemantics(UiSemanticSelector::Identifier("home-proxy-node"));
+    const auto backup = panel.Find(UiSelector::Text("Backup"));
+    const auto primary = panel.Find(UiSelector::Text("Primary"));
+    check(groupCombo.One().read_only == true && nodeCombo.One().read_only == true,
+          "both compact pickers expose read-only controls before opening");
+    group.Tap(); ui.Pump(kSettle);
+    check(groupCombo.One().expanded == true && primary.Exists() && backup.Exists() && !ui.ActiveTextInput(),
+          "one compact tap opens all groups without starting a text input session");
+    backup.Tap(); ui.Pump(kSettle);
+    check(!panel.Exists() && groupCombo.One().placeholder == "Backup" && !ui.ActiveTextInput(),
+          "selecting a compact group returns to its read-only trigger");
+    node.Tap(); ui.Pump(kSettle);
+    check(nodeCombo.One().expanded == true && !ui.ActiveTextInput(),
+          "opening the compact node picker also leaves the keyboard inactive");
+    panel.Find(UiSelector::Text("Charlie")).Tap(); ui.Pump(kSettle);
+    check(!panel.Exists() && !ui.ActiveTextInput() &&
+              fixture->selections == std::vector<std::pair<std::string, std::string>>{{"Backup", "Charlie"}},
+          "the compact list still switches nodes directly");
+
+    group.Tap(); ui.Pump(kSettle);
+    ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 480.0F}});
+    ui.PumpUntil([&] { return ui.ActiveTextInput().has_value(); });
+    panelInput.EnterText("BACK"); ui.Pump(kSettle);
+    check(backup.Exists() && !primary.Exists(), "widening an open compact picker enables search");
+    ui.SetWindowMetrics({.viewport = {320.0F, 480.0F}});
+    ui.PumpUntil([&] { return primary.Exists() && !ui.ActiveTextInput(); });
+    check(groupCombo.One().expanded == true && panelInput.One().value == "" && backup.Exists(),
+          "narrowing an open picker clears its query and restores all choices without a keyboard");
 }
 
 struct LoadingSkeletonFixture {
@@ -4790,6 +4885,36 @@ void testProfileUpdateInterval() {
               "zero disables updates and positive integer intervals enable them");
     }
     profileIntervalFixture.reset();
+}
+
+void testProfileCreateTypeOutline() {
+    const huxerui::Application app{[] {
+        return huxerui::View{huxerui::MaterialTheme {huxerui::Scope([] {
+            const auto selected = huxerui::UseState(std::size_t{0});
+            return clashflux::ui::ProfileCreateTypeSelector({"Remote", "Local", "PPTP"}, selected);
+        })}};
+    }};
+    huxerui::testing::UiTest ui(app, {.viewport = {620.0F, 48.0F}, .resource_provider = AppResources()});
+    ui.PumpAndSettle();
+    for (const char* title : {"Remote", "Local", "PPTP"}) {
+        ui.Find(UiSelector::Text(title)).Tap();
+        ui.PumpAndSettle();
+        const auto option = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Label(title));
+        check(option.One().selected == true, "profile creation type selection stays interactive");
+        std::istringstream scene(ui.CaptureSnapshot().ToString());
+        std::string line;
+        bool outline = false;
+        while (std::getline(scene, line)) {
+            if (!std::string_view(line).ends_with("foreground {")) continue;
+            std::getline(scene, line);
+            if (std::string_view(line).ends_with("border {") ||
+                std::string_view(line).ends_with("stroke-path {")) {
+                outline = true;
+                break;
+            }
+        }
+        check(outline, "selected profile type paints its complete outline above the shared borders");
+    }
 }
 
 void testMenuIconMotion() {
@@ -7942,7 +8067,6 @@ float paintedHomeCardScale(huxerui::testing::UiTest& ui) {
 
 void testHomeCardPress() {
     for (const auto* app : {&kHomeCardPressLight, &kHomeCardPressDark, &kHomeCardPressReduced}) {
-        const bool reduced = app == &kHomeCardPressReduced;
         huxerui::testing::UiTest ui(*app, {.viewport = {400.0F, 400.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
         const auto card = ui.Find(UiSelector::Key("press-card")).One();
@@ -7974,19 +8098,20 @@ void testHomeCardPress() {
         check(outside && outside->outlineWidth == 0.0F, "leaving a nested control and its card clears the outline");
         const auto onInput = hoverAt(centerOf("nested-card-input"));
         check(onInput && onInput->outlineWidth == 1.0F, "entering directly over a nested input shows the card outline");
+        const auto checkCardBounds = [&](const char* message) {
+            const auto painted = paintedCard(ui, 280.0F, std::nullopt);
+            check(idleCard && painted && painted->bounds == idleCard->bounds, message);
+        };
         hoverAt(padding);
         event.type = huxerui::PointerEventType::Down;
         event.changed_button = huxerui::PointerButton::Primary;
         event.pressed_buttons = huxerui::PointerButton::Primary;
         ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
-        check(reduced ? paintedHomeCardScale(ui) == 1.0F : paintedHomeCardScale(ui) < 0.999F,
-              "home card paints a press transform in both themes and honors reduced motion");
-        check(ui.Find(UiSelector::Key("press-card")).One().size == card.size,
-              "home card press animation does not change grid layout size");
+        checkCardBounds("holding the mouse button keeps the painted home card bounds fixed");
         event.type = huxerui::PointerEventType::Cancel;
         event.pressed_buttons = huxerui::PointerButton::None;
-        ui.SendPointer(event); ui.PumpAndSettle();
-        check(std::abs(paintedHomeCardScale(ui) - 1.0F) < 0.0001F, "cancel restores the card's painted scale");
+        ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
+        checkCardBounds("canceling the mouse press keeps the painted home card bounds fixed");
 
         const auto button = ui.Find(UiSelector::Key("nested-card-action")).One().bounds;
         event.type = huxerui::PointerEventType::Down;
@@ -7995,12 +8120,12 @@ void testHomeCardPress() {
         event.pressed_buttons = huxerui::PointerButton::Primary;
         const int previous = homeCardActionCount;
         ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
-        check(reduced || paintedHomeCardScale(ui) < 0.999F, "pressing a nested control also animates its card");
+        checkCardBounds("holding a touch on a nested button keeps the painted home card bounds fixed");
         event.type = huxerui::PointerEventType::Up;
         event.pressed_buttons = huxerui::PointerButton::None;
-        ui.SendPointer(event); ui.PumpAndSettle();
-        check(homeCardActionCount == previous + 1, "card feedback preserves the nested button's single click");
-        check(std::abs(paintedHomeCardScale(ui) - 1.0F) < 0.0001F, "release restores the card's painted scale");
+        ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
+        check(homeCardActionCount == previous + 1, "the nested button handles the tap once");
+        checkCardBounds("releasing a touch on a nested button keeps the painted home card bounds fixed");
     }
 }
 
@@ -9293,7 +9418,11 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); testWebsiteFormScroll(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--home-network") { testHomeNetworkModel(); return failures == 0 ? 0 : 1; }
-    if (argc == 2 && std::string_view(argv[1]) == "--home-proxy-pickers") { testHomeProxyPickers(); return failures == 0 ? 0 : 1; }
+    if (argc == 2 && std::string_view(argv[1]) == "--home-proxy-pickers") {
+        testHomeProxyPickers();
+        testCompactHomeProxyPickers();
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--scroll-profile") {
         profileScrollWork();
         return failures == 0 ? 0 : 1;
@@ -9304,6 +9433,7 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::string_view(argv[1]) == "--profile-interval") {
         testProfileUpdateInterval();
+        testProfileCreateTypeOutline();
         std::printf("test_page_transition profile interval: %s\n", failures == 0 ? "ok" : "failed");
         return failures == 0 ? 0 : 1;
     }
@@ -9490,7 +9620,7 @@ int main(int argc, char** argv) {
     testBoxCatMorphAfterSuccess();
     testHomeHeaderControl();
     testHomeHeaderColdStart();
-    try { testFixedHomeGeometry(); testHomeProxyPickers(); testSkeletonShimmer(); }
+    try { testFixedHomeGeometry(); testHomeProxyPickers(); testCompactHomeProxyPickers(); testSkeletonShimmer(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: home geometry / skeleton shimmer: %s\n", error.what());
         ++failures;
@@ -9581,6 +9711,7 @@ int main(int argc, char** argv) {
     testLargeRuleList();
     testDesktopTouchpadSectionPager();
     testProfileUpdateInterval();
+    testProfileCreateTypeOutline();
     testMenuIconMotion();
     testMenuNaturalHeight();
     testMenuOverflow();

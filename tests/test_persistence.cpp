@@ -789,6 +789,7 @@ Task<void> RunTest(TaskScope tasks) {
             store.setSetting("tray.start_minimized", "true");
             store.setSetting("ui.custom_theme_colors", "#336699\n#AA44CC");
             store.setSetting("core.tun_enabled", "true");
+            store.setSetting("app.log_level", "off");
             // 同步可见：读路径不依赖落库。
             Check(store.setting("ui.theme_mode", "") == "2",
                   "setSetting must be visible immediately");
@@ -902,6 +903,7 @@ Task<void> RunTest(TaskScope tasks) {
                   "all custom color cards must survive reopen");
             Check(store.setting("core.tun_enabled", "") == "true",
                   "second setting did not persist");
+            Check(store.setting("app.log_level") == "off", "disabled log recording must survive reopening");
             const auto reopened = store.listProfiles();
             Check(reopened.size() == 1 && reopened.front().name == "主订阅-改名",
                   "profile did not persist through the ORM database");

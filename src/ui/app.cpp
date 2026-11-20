@@ -286,8 +286,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     progressBar.animation_duration = spec.motion.reduced_motion ? 0.0 : 1.75;
     definition.Set(progressBar);
 
-    // 响应式导航跟随品牌主题：Compact 使用底部 NavigationBar，Medium/Expanded
-    // 使用官方 NavigationPane；不再由应用手工拼接侧栏几何。
+    // 响应式导航跟随品牌主题，桌面图标栏共用 NavigationPane 的样式。
     huxerui::NavigationBarStyle navigationBar =
         huxerui::NavigationBarStyle::Default();
     navigationBar.background = spec.colors.surface_container_low;
@@ -387,15 +386,6 @@ const std::array<NavigationEntry, 8> kNavigationEntries{
     NavigationEntry{app::images::website_test, Localized("网站测试")},
     NavigationEntry{app::images::gear, Localized("设置")},
 };
-
-std::vector<huxerui::NavigationItem> DesktopNavigationItems() {
-    std::vector<huxerui::NavigationItem> destinations;
-    destinations.reserve(kNavigationEntries.size());
-    for (const NavigationEntry& entry : kNavigationEntries) {
-        destinations.push_back(huxerui::NavigationItem(entry.icon, entry.label));
-    }
-    return destinations;
-}
 
 // Android 仅暴露四个一级页；规则、连接、日志和网站测试由设置页的“更多”入口承载。
 constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
@@ -500,12 +490,63 @@ private:
     bool geometry_pending_ = false;
 };
 
-// 桌面一级导航始终使用无底板的紧凑图标栏；文字保留为语义名称。
+// 每个图标独立承载 Tooltip，提示浮在侧栏右侧。
 [[huxerui::composable]] huxerui::View DesktopNavigationSurface(
     huxerui::State<std::size_t> navPage) {
-    const std::vector<huxerui::NavigationItem> items = DesktopNavigationItems();
-    const auto onChanged = [navPage](std::size_t index) { navPage = index; };
-    return huxerui::NavigationPane(items, navPage, false).OnChanged(onChanged)
+    const auto& style = huxerui::UseEnvironment<huxerui::NavigationPaneStyle>();
+    const auto scroll = huxerui::UseScrollController();
+    auto tooltip = huxerui::UseEnvironment<huxerui::TooltipStyle>();
+    tooltip.placement = {huxerui::AnchorSide::Right, huxerui::AnchorAlignment::Center};
+    const auto indicator = style.compact_indicator_size;
+    const auto radius = huxerui::CornerRadius(style.indicator_corner_radius);
+    std::vector<huxerui::View> items;
+    items.reserve(kNavigationEntries.size());
+    for (std::size_t index = 0; index < kNavigationEntries.size(); ++index) {
+        const auto& entry = kNavigationEntries[index];
+        const bool selected = navPage.Get() == index;
+        items.push_back(huxerui::Stack {
+          huxerui::Stack {}.With(huxerui::Frame{.width = indicator.width, .height = indicator.height},
+              huxerui::Background(style.indicator), radius,
+              huxerui::Opacity(huxerui::AnimateTo(selected ? 1.0F : 0.0F, style.selection_animation))),
+          huxerui::Image(entry.icon).Tint(selected ? style.selected_content : style.label_style.foreground)
+              .With(huxerui::Frame{.width = style.icon_size, .height = style.icon_size}),
+        }.With(huxerui::Frame{.height = style.item_height}, huxerui::Padding(style.item_margin), radius,
+            huxerui::Align(huxerui::HorizontalAlignment::Center, huxerui::VerticalAlignment::Center),
+            style.indication.value_or(huxerui::Indication{}), huxerui::Tooltip(entry.label),
+            huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = entry.label, .selected = selected,
+                .collection_item = huxerui::SemanticCollectionItem{.index = index},
+                .descendants = huxerui::SemanticDescendantPolicy::Exclude})
+            .OnClick([navPage, index] { navPage = index; }).Key(index));
+    }
+    const auto content = huxerui::Column(std::move(items))
+        .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::Focusable(true),
+            huxerui::Semantics{.role = huxerui::SemanticRole::Navigation,
+                .collection = huxerui::SemanticCollection{.item_count = kNavigationEntries.size()}})
+        .On<huxerui::ViewEvents::KeyIntercept>([navPage, scroll, itemExtent = style.item_height](
+                                                 const huxerui::KeyEvent& key) {
+            if (key.type != huxerui::KeyEventType::Down || key.modifiers.alt ||
+                key.modifiers.control || key.modifiers.meta) return false;
+            const auto count = kNavigationEntries.size();
+            std::size_t next = navPage.Get();
+            switch (key.key) {
+                case huxerui::Key::Home: next = 0; break;
+                case huxerui::Key::End: next = count - 1; break;
+                case huxerui::Key::ArrowUp: next = (next + count - 1) % count; break;
+                case huxerui::Key::ArrowDown: next = (next + 1) % count; break;
+                default: return false;
+            }
+            navPage = next;
+            if (scroll.IsConnected()) {
+                const auto metrics = scroll.Metrics();
+                const float top = itemExtent * static_cast<float>(next);
+                const float bottom = top + itemExtent;
+                if (top < metrics.offset) static_cast<void>(scroll.ScrollTo(top));
+                else if (bottom > metrics.offset + metrics.viewport_extent)
+                    static_cast<void>(scroll.ScrollTo(bottom - metrics.viewport_extent));
+            }
+            return true;
+        });
+    return huxerui::ScrollView(huxerui::ProvideEnvironment(tooltip, content)).Controller(scroll)
         .With(huxerui::Padding(huxerui::EdgeInsets{.top = kDesktopTopContentGap}));
 }
 
@@ -1526,10 +1567,8 @@ void StartDesktopRuntime() {
         0);
 
     // 主题派生（托盘 TUN 引导弹窗也要取 rootSpec 配色，故先于托盘块计算）。
-    const bool dark =
-        themeMode.Get() == 1 ||
-        (themeMode.Get() == 0 &&
-         huxerui::UseSystemThemeBrightness() == huxerui::ThemeBrightness::Dark);
+    const bool dark = ResolveThemeBrightness(themeMode.Get(), huxerui::UseSystemThemeBrightness()) ==
+                      huxerui::ThemeBrightness::Dark;
     const SettingsView settings = settingsModel->view.Get();
     const std::string& accent = settings.ready ? settings.themeColor : startupSettings.themeColor;
     const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec(accent) : FluxLightThemeSpec(accent);

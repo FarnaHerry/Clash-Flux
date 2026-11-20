@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "app_resources.h"
 
@@ -46,30 +47,61 @@ inline std::optional<std::pair<std::string, std::string_view>> ExtractLeadingReg
     return std::pair{std::move(code), rest};
 }
 
-// Uses the packaged flag atlas. HUI text fallback does not consistently render
-// regional-indicator pairs on Windows, so the card must not rely on emoji text.
+// Resolve the leading emoji against the same packaged atlas on every platform.
+// The remaining text is for display only. Keep the original name for search and selection.
+struct ProxyNameFlag {
+    std::size_t index;
+    std::string_view name;
+};
+
+inline std::optional<ProxyNameFlag> UseProxyNameFlag(std::string_view name) {
+    const auto prefix = ExtractLeadingRegionalFlag(name);
+    if (!prefix) return std::nullopt;
+    const auto codes = huxerui::UseRawResource(app::raw::country_codes_txt).ReadString(true);
+    const auto index = CountryFlagAtlasIndex(prefix->first, codes);
+    if (!index) return std::nullopt;
+    return ProxyNameFlag{*index, prefix->second};
+}
+
+inline constexpr float kCountryFlagWidth = 20.0F;
+inline constexpr float kCountryFlagHeight = 15.0F;
+inline constexpr float kCountryFlagTextGap = 4.0F;
+
+inline huxerui::View UseCountryFlagTile(std::size_t index, float width = kCountryFlagWidth,
+                                       float height = kCountryFlagHeight) {
+    const auto image = huxerui::UseImage(app::images::country_flags);
+    return huxerui::Canvas([image, index](huxerui::PaintContext& paint, huxerui::Size size) {
+        paint.DrawImageRect(image,
+            {static_cast<float>(index % 16) * 48.0F,
+             static_cast<float>(index / 16) * 36.0F, 48.0F, 36.0F},
+            {0.0F, 0.0F, size.width, size.height});
+    }).With(huxerui::Frame{.width = width, .height = height});
+}
+
+template<class Title>
+huxerui::View UseProxyNameTitle(std::string_view name, Title renderTitle) {
+    const auto flag = UseProxyNameFlag(name);
+    auto title = renderTitle(flag ? flag->name : name);
+    if (!flag) return title;
+    return huxerui::Row {
+      UseCountryFlagTile(flag->index),
+      std::move(title).With(huxerui::Grow(1.0F)),
+    }.With(huxerui::Spacing(kCountryFlagTextGap), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+}
+
 [[huxerui::composable]] inline huxerui::View CountryFlag(
-    std::string code, float width = 20.0F, float height = 15.0F,
+    std::string code, float width = kCountryFlagWidth, float height = kCountryFlagHeight,
     bool fallback_globe = false) {
     return huxerui::Scope([code = std::move(code), width, height, fallback_globe] {
-        const auto image = huxerui::UseImage(app::images::country_flags);
         const auto codes = huxerui::UseRawResource(app::raw::country_codes_txt).ReadString(true);
         const auto index = CountryFlagAtlasIndex(code, codes);
-        if (!index) {
-            if (!fallback_globe) return huxerui::View{huxerui::Row{}};
-            const auto& theme = huxerui::UseTheme();
-            return huxerui::View{huxerui::Image(app::images::globe)
-                                     .Fit(huxerui::ImageFit::Contain)
-                                     .Tint(theme.colors.primary)
-                                     .With(huxerui::Frame{.width = width, .height = width})};
-        }
-        return huxerui::View{huxerui::Canvas([image, index = *index](huxerui::PaintContext& paint,
-                                                                    huxerui::Size size) {
-            paint.DrawImageRect(image,
-                {static_cast<float>(index % 16) * 48.0F,
-                 static_cast<float>(index / 16) * 36.0F, 48.0F, 36.0F},
-                {0.0F, 0.0F, size.width, size.height});
-        }).With(huxerui::Frame{.width = width, .height = height})};
+        if (index) return UseCountryFlagTile(*index, width, height);
+        if (!fallback_globe) return huxerui::View{huxerui::Row{}};
+        const auto& theme = huxerui::UseTheme();
+        return huxerui::View{huxerui::Image(app::images::globe)
+                                 .Fit(huxerui::ImageFit::Contain)
+                                 .Tint(theme.colors.primary)
+                                 .With(huxerui::Frame{.width = width, .height = width})};
     });
 }
 

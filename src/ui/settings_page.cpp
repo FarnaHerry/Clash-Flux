@@ -40,6 +40,7 @@ import clashflux.store.core;
 #include "core_control.h"
 #include "profiles_cache.h"
 #include "settings_model.h"
+#include "settings_value.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
 #include "settings_group_layout.h"
@@ -333,16 +334,12 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     auto animating =
         huxerui::UseState(std::make_shared<ThemeAnimationFlag>());
     const auto settingsModel = huxerui::UseService<SettingsModel>();
-    // 主题模式：0=自动，1=深色，2=浅色。
-    const bool systemDark = huxerui::UseSystemThemeBrightness() == huxerui::ThemeBrightness::Dark;
+    const auto systemBrightness = huxerui::UseSystemThemeBrightness();
     const auto applyTheme = [themeMode, transition, tasks, animating,
-                             settingsModel, systemDark, motion = theme.motion](int mode) {
-        if (animating.Get()->animating) return;
-        const bool currentDark =
-            themeMode.Get() == 1 ||
-            (themeMode.Get() == 0 && systemDark);
-        const bool targetDark =
-            mode == 1 || (mode == 0 && systemDark);
+                             settingsModel, systemBrightness, brightness = theme.brightness,
+                             motion = theme.motion](int mode) {
+        if (animating.Get()->animating || themeMode.Get() == mode) return;
+        const auto targetBrightness = ResolveThemeBrightness(mode, systemBrightness);
         const auto mutation = [themeMode, mode, settingsModel] {
             store::coreStore().setSetting("ui.theme_mode", std::to_string(mode));
             settingsModel->Update([mode](SettingsView& settings) {
@@ -350,7 +347,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             });
             themeMode = mode;
         };
-        if (currentDark == targetDark || motion.reduced_motion) {
+        if (brightness == targetBrightness || motion.reduced_motion) {
             mutation();
             return;
         }
@@ -362,8 +359,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         });
         const huxerui::TransitionSpec reveal{
             huxerui::CircularRevealTransition{}, huxerui::TweenSpec{motion.slow}};
-        transition.RunFromCurrentInteraction(
-            currentDark ? reveal.Reversed() : reveal, std::move(mutation));
+        transition.RunFromCurrentInteraction(reveal, std::move(mutation));
     };
 
     const auto dialog = huxerui::UseDialog();
@@ -909,6 +905,30 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         }).With(huxerui::Enabled(model->view.Get().ready)).Key("settings-subscription-ua");
 }
 
+[[huxerui::composable]] huxerui::View LogLevelSetting() {
+    const auto model = huxerui::UseService<SettingsModel>();
+    const auto toast = UseFluxToast();
+    const auto& settings = model->view.Get();
+    const auto label = Localized("日志级别");
+    const std::vector<std::string> levels{
+        huxerui::UseString(Localized("调试")),
+        huxerui::UseString(Localized("信息")),
+        huxerui::UseString(Localized("警告")),
+        huxerui::UseString(Localized("错误")),
+        huxerui::UseString(Localized("关闭日志")),
+    };
+    const auto select = ContentSizedSelect(levels, static_cast<std::size_t>(settings.logLevel), label,
+        [model, toast](std::size_t index) {
+            if (index >= logging::kLevelNames.size()) return;
+            try {
+                model->SetLogLevel(static_cast<logging::Level>(index));
+            } catch (const std::exception& error) {
+                toast.Show(LocalizedFormat("错误：{}", error.what()));
+            }
+        }).Key("settings-log-level");
+    return SettingRow(label, {}, SettingsValue(settings.ready, select), app::images::logs);
+}
+
 [[huxerui::composable]] huxerui::View SettingsPage(
     huxerui::State<int> themeMode, huxerui::State<std::size_t> navPage,
     ProfilesCache profilesCache, bool active) {
@@ -950,6 +970,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         .Key("settings-background"));
     sections.push_back(SettingsSectionCard(Localized("工具与维护"), huxerui::Column {
       RuntimeDiagnosticsEntry(),
+      LogLevelSetting(),
       CLASHFLUX_MAINTENANCE_PLATFORM_SECTION(),
     }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))
         .Key("settings-maintenance"));
