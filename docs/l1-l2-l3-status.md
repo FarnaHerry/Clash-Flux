@@ -5,6 +5,7 @@
 - 发布内容继承 `v0.3.124`（`6680de8`），应用与 CI 仍固定 HuxerUI `b88c4d1f`。候选标签未发布安装包，故 Android versionCode 202 仍为前一个正式发布的 201 加一，versionName 更新为 0.3.125。
 - 修正 Windows 迁移验证：从正式 v0.3.68 安装包提取原版 MSI，并用支持静默安装的引导程序和旧 Burn 标识建立测试环境。[隔离预检](https://github.com/FarnaHerry/Clash-Flux/actions/runs/44772260185) 使用相同代码的 v0.3.124 产物，验证失败回滚恢复旧版、成功升级清理旧注册及缓存、静默卸载保留用户数据。正式标签重复执行该检查。真实跨会话文件占用和 Android 真机安装未在 CI 验收。
 - Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）及 `git diff --check` 通过。五项定向 UI 回归及 `ui_resources`、`legacy_bundle_cleanup`、`app_update`、`app_update_async`、`app_update_handoff`、`persistence`、`cps_dependencies` 七项 CTest 通过。
+- 发布提交 `3f041bd`。标签 [CI](https://github.com/FarnaHerry/Clash-Flux/actions/runs/44772921439) 在 Android 外部依赖解析失败后重跑该任务。Linux x86_64/aarch64、macOS arm64、Windows x86_64、Windows 安装器和 Android arm64 全部通过。Windows runner 确认失败回滚保留 v0.3.68、升级到 v0.3.125 清除旧注册与专属缓存、静默卸载保留用户数据。Android APK 的 v1、v2 签名及正式证书指纹通过。iOS Simulator 诊断通过且未进入发布资产。[正式 Release](https://github.com/FarnaHerry/Clash-Flux/releases/tag/v0.3.125) 含 10 个资产。
 
 ## 2026-11-20 v0.3.124 补丁候选
 
