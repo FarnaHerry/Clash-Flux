@@ -1,5 +1,37 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-20 v0.3.124 补丁发布
+
+- 基于 `v0.3.123`（`843e4a2`），应用与 CI 固定 HuxerUI `b88c4d1f`。发布包含首页上下行卡片、窄屏设置下拉、订阅选区描边、代理组四角星测速图标，以及 Windows 安装器标题栏和文件占用处理。Android versionName 为 0.3.124，versionCode 为 202。
+- Windows/MSVC Debug 下主目标与定向测试目标完成编译，`./run.ps1 --version` 输出 v0.3.124，`git diff --check` 通过。`test_page_transition` 的 `--home-grid`、`--settings-selects`、`--profile-file-filter`、`--proxy-speed-shutter` 与 `--home-proxy-pickers` 通过；`ui_resources`、`legacy_bundle_cleanup`、`app_update`、`app_update_async`、`app_update_handoff`、`persistence`、`cps_dependencies` 共 7 项 CTest 通过。
+- 本机以 WiX 编译了仅供回归的回滚注入 MSI。实际旧版升级、回滚、静默卸载、多平台资产和 Android 正式签名由标签 CI 核验。交互式跨会话文件占用和 Android 真机验收未在此执行。
+
+## 2026-11-20 设置页窄屏下拉布局
+
+- 基于 Clash-Flux `843e4a2` 工作区与 HuxerUI `b88c4d1f`。「日志级别」与「复制环境变量」按实际行宽排列，下拉框放不下时整体移到下一行，标题及选项保持单行。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition` 完成 HuxerUI codegen 和编译。`test_page_transition --settings-selects` 在 320pt 和 960pt 检查中英文、长选项、字体大小及复制图标位置，CTest `ui_resources` 和 `git diff --check` 通过，`run.ps1 --version` 输出 v0.3.123。未运行原生 GUI 与完整页面套件。
+
+## 2026-11-20 首页实时下载与上传卡片
+
+- 基于 Clash-Flux `843e4a2` 工作区与 HuxerUI `b88c4d1f`。首页并排显示下载和上传卡片，分别使用向下和向上箭头，各自显示实时速率和历史曲线。
+- Windows/MSVC Debug 下用 `cmake --build build --target clash-flux test_page_transition` 完成 HuxerUI codegen 和编译。`run.ps1 --version` 输出 v0.3.123，`test_page_transition --home-grid` 覆盖桌面和移动布局的三种视口宽度，CTest `ui_resources` 和 `git diff --check` 通过。未执行原生窗口视觉验收与完整页面套件。
+
+## 2026-11-20 代理页组测速图标
+
+- 基于 Clash-Flux `843e4a2` 工作区与 HuxerUI `b88c4d1f`。组测速按钮的静态和快门绘制共用四角星资源，轮廓与中心圆点均和参考 HTML 一致。
+- Windows/MSVC Debug 使用 `cmake --build build --target clash-flux test_page_transition` 重编译并链接引用该资源的生产代码和测试，核对两个产物内的图标资源名。`run.ps1 --version` 输出 v0.3.123，`git diff --check`、`test_page_transition --proxy-speed-shutter` 和 CTest `ui_resources` 通过。未运行原生窗口视觉检查与完整页面套件。
+
+## 2026-11-20 添加订阅文件选区
+
+- 基于 Clash-Flux `843e4a2` 工作区与 HuxerUI `b88c4d1f`。本地文件选区的 1pt 空闲虚线提高深浅主题对比度，并在内容上方绘制。
+- Windows/MSVC Debug 使用 `cmake --build build --target clash-flux test_page_transition` 编译并运行 `run.ps1 --version`（v0.3.123）与 `git diff --check`。定向 `test_page_transition --profile-file-filter` 验证虚线绘制与清除，CTest `ui_resources` 通过。未执行完整页面套件和原生窗口文件拖放。
+
+## 2026-11-20 Windows 安装器文件占用与标题栏
+
+- 基于 Clash-Flux `843e4a2` 工作区与 HuxerUI `b88c4d1f`。Windows/MSVC、CMake 4.4.2 Debug 主目标与安装器目标经 HuxerUI codegen 编译，`run.ps1 --version` 输出 v0.3.123，`git diff --check` 通过。占用名称解析、HUI Runtime/Windows/CliWindows、应用更新与交接、持久化、旧 Bundle 清理、UI 资源、CPS 和下载 TLS 默认拒绝回归通过。
+- 生产 `test_page_transition --home-proxy-pickers` 通过。Windows Debug 的完整 `page_transition` 在 20 分钟时手动结束，`--scrollbars` 在 6 分钟时手动结束，均未取得断言结论。应用本轮 CTest 其余 7 项通过。
+- WiX 5.0.2 在临时目录生成验证用 MSI 和 Burn 包。启动维护界面，确认右上角自定义窗口控件与左侧品牌区拖动正常，然后关闭向导。Burn 日志确认读取了 `HuxerUIAutoCloseApplications=1`。未执行覆盖安装、修复、卸载或回滚，待在隔离 Windows 环境验证真实占用下的 Restart Manager 自动关闭和提示回退。
+
 ## 2026-11-20 v0.3.123 补丁发布
 
 - 基于 `v0.3.122`（`f80f2f2`），应用与 CI 固定 HuxerUI `b65ce62`。发布包含持久化日志级别、Compact 首页点按选择、跨平台节点国旗、网站测试心跳动画、订阅导入与表单细节、主题切换修正及 iOS simdutf 诊断构建修复。Android versionName 为 0.3.123，versionCode 为 201。

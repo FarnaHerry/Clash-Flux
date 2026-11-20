@@ -926,7 +926,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                 toast.Show(LocalizedFormat("错误：{}", error.what()));
             }
         }).Key("settings-log-level");
-    return SettingRow(label, {}, SettingsValue(settings.ready, select), app::images::logs);
+    return SettingSelectRow(label, app::images::logs, SettingsValue(settings.ready, select));
 }
 
 [[huxerui::composable]] huxerui::View SettingsPage(

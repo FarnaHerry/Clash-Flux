@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "settings_group_layout.h"
+#include "settings_value.h"
 #include "ui.h"
 
 namespace clashflux::ui {
@@ -14,6 +15,24 @@ namespace clashflux::ui {
         .Fit(huxerui::ImageFit::Contain)
         .Tint(danger ? theme.colors.error : theme.colors.on_surface_variant)
         .With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
+}
+
+[[huxerui::composable]] huxerui::View SettingSelectRow(
+    huxerui::StringVariant label, huxerui::ImageResource icon, huxerui::View select, huxerui::View action) {
+    const auto& theme = huxerui::UseTheme();
+    // Keep the title and its adjacent action together when the selector no longer fits beside them.
+    return SettingsContentRow(huxerui::Flow {
+      huxerui::Row {
+        SettingItemIcon(icon).With(huxerui::LayoutPriority(1.0F)),
+        huxerui::Text(label).Style(huxerui::TextStyle{
+            huxerui::Font::System(font_size::kBody), theme.colors.on_surface})
+            .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
+            .With(huxerui::Padding(huxerui::EdgeInsets{.left = 8.0F})),
+        action ? huxerui::View{action}.With(huxerui::LayoutPriority(1.0F)) : huxerui::View{},
+      }.With(huxerui::Spacing(4.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+      select,
+    }.With(huxerui::Spacing(12.0F), huxerui::MainAlign(huxerui::MainAxisAlignment::SpaceBetween),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
 }
 
 [[huxerui::composable]] huxerui::View SettingSwitchRow(

@@ -6,6 +6,7 @@
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="ClashFluxApplicationIcon" SourceFile="@HUXERUI_WINDOWS_ICON_FILE@" />
     <Property Id="ARPPRODUCTICON" Value="ClashFluxApplicationIcon" />
+    <Property Id="MSIRMSHUTDOWN" Value="0" />
 
     <Binary Id="LegacyBundleCleanup" SourceFile="@HUXERUI_WINDOWS_LEGACY_CLEANUP_DLL@" />
     <CustomAction Id="CleanupLegacyBundles" BinaryRef="LegacyBundleCleanup" DllEntry="CleanupLegacyBundles"

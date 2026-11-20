@@ -1177,36 +1177,6 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     return PageSearchFieldLayout(std::move(pill).Key("pill-search-field"), compact);
 }
 
-namespace {
-
-struct FileDropIdleOutline {
-    class Extension;
-    huxerui::Color color;
-    bool visible;
-    bool operator==(const FileDropIdleOutline&) const = default;
-};
-
-class FileDropIdleOutline::Extension final : public huxerui::NodeExtension {
-public:
-    Extension(huxerui::ViewNode&, const FileDropIdleOutline& outline) : outline_(outline) {}
-
-    void Update(huxerui::ViewNode&, const FileDropIdleOutline& outline) {
-        outline_ = outline;
-        InvalidatePaint(PaintInvalidation::Content);
-    }
-
-    void PaintBehindContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
-        if (!outline_.visible) return;
-        paint.DrawBorder(node.Bounds(), outline_.color, {.width = kCardOutlineWidth, .dash_pattern = {4.0F, 4.0F}},
-                         node.ResolvedCornerRadii());
-    }
-
-private:
-    FileDropIdleOutline outline_;
-};
-
-} // namespace
-
 // 通用「拖入或点击」文件选区（声明见 file_drop_zone.h）。FileDropTarget 只做
 // 外部文件的整批元数据校验（扩展名/MIME，整批要么全收要么拒绝），读取与导入
 // 仍由调用方决定；点击走 FilePicker——键盘、触摸与不支持拖入的宿主都依赖这个
@@ -1246,6 +1216,7 @@ private:
 
     const huxerui::Color captionColor = hover ? theme.colors.on_primary_container
                                               : theme.colors.on_surface_variant;
+    const auto idleOutline = MixThemeColor(theme.colors.outline, theme.colors.on_surface_variant, 0.65F);
     return huxerui::Column {
         huxerui::Image(icon)
             .Tint(hover ? theme.colors.primary : theme.colors.on_surface_variant)
@@ -1275,7 +1246,7 @@ private:
               huxerui::Background(hover ? theme.colors.primary_container
                                         : theme.colors.surface_container_high),
               huxerui::CornerRadius(theme.shapes.small),
-              FileDropIdleOutline{theme.colors.outline, !hover},
+              detail::FileDropIdleOutline{idleOutline, !hover},
               huxerui::Border(theme.colors.primary, hover ? kCardOutlineWidth : 0.0F),
               huxerui::ClipChildren(),
               huxerui::FileDropTarget::Accepts(std::move(dropOptions)),

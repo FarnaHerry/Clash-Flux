@@ -16,6 +16,9 @@ inline huxerui::View SettingsValue(bool ready, huxerui::View control) {
     return PlaceholderSlot(52.0F, 32.0F);
 }
 
+huxerui::View SettingSelectRow(huxerui::StringVariant label, huxerui::ImageResource icon,
+                               huxerui::View select, huxerui::View action = {});
+
 // Select's growing display needs a content-derived width to avoid filling the
 // remaining row. Measure the same styled label that the trigger actually draws.
 inline huxerui::View ContentSizedSelect(std::vector<std::string> labels, std::size_t selected,
@@ -30,7 +33,8 @@ inline huxerui::View ContentSizedSelect(std::vector<std::string> labels, std::si
             style.trigger_padding.left + style.trigger_padding.right + style.content_spacing + style.indicator_size);
         return huxerui::ProvideEnvironment(style,
             huxerui::Select(labels, selected, [textStyle](const std::string& text) {
-                return huxerui::Text(text).Style(textStyle);
+                return huxerui::Text(text).Style(textStyle)
+                    .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis);
             }).Label(label).OnChanged(onChanged).With(huxerui::Frame{.width = width}));
     });
 }

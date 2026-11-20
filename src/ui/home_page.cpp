@@ -103,7 +103,7 @@ constexpr bool kDesktopHomeControl = false;
 // 桌面可选卡片：系统代理/TUN 开关是桌面专有能力。
 //
 // 初始宽高按 FlClash 仪表盘实测跨度（其 3 列网格：单元 264x79.5、间距 14 逻辑 px）：
-//   网络速度 2x2 → 流量曲线 2x2   流量统计 1x2 → 流量统计 1x2
+//   下载和上传各 1x2               流量统计 1x2
 //   系统代理 1x1 → 系统代理 1x1   TUN 1x1      → 虚拟网卡 1x1
 //   出站模式(竖排) 1x2 → 出站模式取 1x2（纵向单选列表）
 //   其余信息类卡片（当前订阅）与 FlClash 的信息卡同级，取 1x2。
@@ -121,7 +121,7 @@ constexpr bool kDesktopHomeControl = true;
 
 // 卡片声明的宽高（单位格，各 1..4）。宽会被页面当前列数收窄，高不随页面变化。
 struct HomeCardEntry {
-    HomeCardKind kind = HomeCardKind::Traffic;
+    HomeCardKind kind = HomeCardKind::Download;
     HomeCardSize size;
 
     bool operator==(const HomeCardEntry&) const = default;
@@ -362,27 +362,16 @@ huxerui::Font HomeCardHeadingFont() {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
 }
 
-// 流量曲线：下载面积图（蓝色半透明填充）+ 上传折线（橙色）。
-// 首页流量曲线数据：把滚动窗口拍成 Lib-Charts 的坐标快照（datum key 必须非空且唯一、
-// x 必须严格递增；这里用窗口内索引当 x，天然递增）。窗口约 1 Hz 变一次，重建 60×2 个
-// 点可忽略；没有历史样本时直接展示零线。
+// 用窗口内索引作为唯一的样本键和递增的横轴坐标。
 huxerui::XYChartData BuildTrafficChartData(
     const std::vector<stream::TrafficPoint>& history,
-    const std::string& downloadLabel, const std::string& uploadLabel) {
-    std::vector<huxerui::XYDatum> down;
-    std::vector<huxerui::XYDatum> up;
-    down.reserve(history.size());
-    up.reserve(history.size());
+    const std::string& label, std::int64_t stream::TrafficPoint::* rate) {
+    std::vector<huxerui::XYDatum> samples;
+    samples.reserve(history.size());
     for (std::size_t i = 0; i < history.size(); ++i) {
-        std::string key = std::to_string(i);
-        const double x = static_cast<double>(i);
-        down.push_back({key, x, static_cast<double>(history[i].down)});
-        up.push_back({key, x, static_cast<double>(history[i].up)});
+        samples.push_back({std::to_string(i), static_cast<double>(i), static_cast<double>(history[i].*rate)});
     }
-    return huxerui::XYChartData({
-        huxerui::XYSeries("down", downloadLabel, std::move(down)),
-        huxerui::XYSeries("up", uploadLabel, std::move(up)),
-    });
+    return huxerui::XYChartData({huxerui::XYSeries("rate", label, std::move(samples))});
 }
 
 // ---- 卡片内容 --------------------------------------------------------------
@@ -455,25 +444,17 @@ huxerui::XYChartData BuildTrafficChartData(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-// 流量卡片：标题行 + 曲线；曲线吃掉卡片剩余高度，任意高度都成立。曲线用
-// HuxerUI Lib-Charts（面积图），替掉原先手绘的 Canvas：只保留曲线本身与
-// hover tooltip（速率数字在标题行），外观保持「下载实心面积 + 上传细线」。
-[[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s) {
+[[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s, bool upload) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool fresh = huxerui::UseService<CoreModel>()->view.Get().health.traffic.state == health::State::Fresh;
     const auto trafficColors = ResolveTrafficColors(theme);
-    const huxerui::Color downColor = trafficColors.download;
-    const huxerui::Color upColor = trafficColors.upload;
-    huxerui::Color fillDown = downColor;
-    fillDown.alpha = 0.18F;  // 与旧手绘面积填充同一透明度
-    const auto rateFont = huxerui::Font::System(font_size::kCaption);
-    const auto rateLabel = [fresh, rateFont](std::string arrow, std::int64_t rate,
-                                             huxerui::Color color) {
-        return huxerui::Text(arrow + " " + (fresh && rate > 0 ? formatRate(rate) : "0B/s"))
-            .Style(huxerui::TextStyle{rateFont, color});
-    };
-
-    const auto chartLabel = huxerui::UseString(Localized("上/下行实时速率曲线"));
+    const auto color = upload ? trafficColors.upload : trafficColors.download;
+    auto fill = color;
+    fill.alpha = upload ? 0.0F : 0.18F;
+    const auto rateField = upload ? &stream::TrafficPoint::up : &stream::TrafficPoint::down;
+    const auto rate = s.latest.*rateField;
+    const auto title = upload ? Localized("上传") : Localized("下载");
+    const auto chartLabel = huxerui::UseString(title);
     huxerui::View chart;
     if (s.history.empty()) {
         chart = huxerui::Column {
@@ -484,9 +465,7 @@ huxerui::XYChartData BuildTrafficChartData(
                huxerui::Semantics{.role = huxerui::SemanticRole::Image,
                                   .label = chartLabel, .value = "0B/s"});
     } else {
-        chart = huxerui::AreaChart(BuildTrafficChartData(
-            s.history, huxerui::UseString(Localized("↓ 下载")),
-            huxerui::UseString(Localized("↑ 上传"))))
+        chart = huxerui::AreaChart(BuildTrafficChartData(s.history, chartLabel, rateField))
             .Baseline(0.0)
             .Interpolation(huxerui::ChartInterpolation::Linear)
             // 只显示折线：两轴的轴线/刻度数字/网格全部隐藏（Visible(false)
@@ -500,31 +479,19 @@ huxerui::XYChartData BuildTrafficChartData(
                        }))
             .Legend(huxerui::ChartLegendOptions{.visible = false})
             .Accessibility(huxerui::ChartAccessibilityOptions{.summary = chartLabel})
-            .SeriesStyle("down",
+            .SeriesStyle("rate",
                          huxerui::AreaChartStyle{
-                             .fill = huxerui::Brush(fillDown),
-                             .stroke = huxerui::Brush(downColor),
-                             .stroke_style =
-                                 huxerui::StrokeStyle{.width = 2.0F}})
-            .SeriesStyle("up",
-                         huxerui::AreaChartStyle{
-                             .fill =
-                                 huxerui::Brush(huxerui::Color::Transparent()),
-                             .stroke = huxerui::Brush(upColor),
-                             .stroke_style =
-                                 huxerui::StrokeStyle{.width = 1.5F}})
+                             .fill = huxerui::Brush(fill),
+                             .stroke = huxerui::Brush(color),
+                             .stroke_style = huxerui::StrokeStyle{.width = upload ? 1.5F : 2.0F}})
             .With(huxerui::Grow(1.0F));
     }
     return huxerui::Column {
-        huxerui::Row {
-            HomeCardHeading(app::images::speed, Localized("流量")),
-            huxerui::Spacer(),
-            rateLabel("↑", s.latest.up, upColor),
-            rateLabel("↓", s.latest.down, downColor),
-        }.With(huxerui::Spacing(12.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+        HomeCardHeading(upload ? app::images::arrow_up : app::images::arrow_down, title),
+        huxerui::Text(fresh && rate > 0 ? formatRate(rate) : "0B/s")
+            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color}),
         chart,
-    }.With(huxerui::Spacing(10.0F),
+    }.With(huxerui::Spacing(6.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
@@ -1070,7 +1037,9 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
 [[huxerui::composable]] huxerui::View HomeCardContent(
     HomeCardKind kind, huxerui::State<HomeState> state, huxerui::State<std::string> expandedPicker) {
     const HomeState& s = state.Get();
-    if (kind == HomeCardKind::Traffic) return HomeTrafficCard(s);
+    if (kind == HomeCardKind::Download || kind == HomeCardKind::Upload) {
+        return HomeTrafficCard(s, kind == HomeCardKind::Upload);
+    }
     if (kind == HomeCardKind::Total) return HomeTotalCard(s);
     if (kind == HomeCardKind::Mode) {
         return HomeModeCard();

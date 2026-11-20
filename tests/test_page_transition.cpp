@@ -49,6 +49,7 @@
 #include "active_proxy_selection.h"
 #include "filtered_indices.h"
 #include "profile_file_picker.h"
+#include "file_drop_zone.h"
 #include "profile_import_task.h"
 #include "profile_list_model.h"
 #include "profile_rules_model.h"
@@ -2220,7 +2221,7 @@ void testFixedHomeGeometry() {
             populated = false;
             ui.SetWindowMetrics({.viewport = {width, 900.0F}}); ui.PumpAndSettle();
             const auto catalog = HomeCardCatalog(desktop);
-            check(catalog.size() == (desktop ? 8U : 6U), "home uses the actual platform's fixed card count");
+            check(catalog.size() == (desktop ? 9U : 7U), "home uses the actual platform's fixed card count");
             std::vector<huxerui::Rect> before;
             for (const auto& spec : catalog) {
                 const auto rect = ui.Find(UiSelector::Key("home-card-" + std::string(spec.id))).One().bounds;
@@ -2228,26 +2229,30 @@ void testFixedHomeGeometry() {
                 check(std::abs(rect.height - (spec.height == 1 ? 88.0F : 188.0F)) < 0.01F,
                       "home retains the fixed 88pt/188pt card heights");
             }
-            const auto traffic = before[0];
-            const auto total = before[1];
-            const auto mode = before[2];
-            check(std::abs(total.width - mode.width) < 0.01F &&
-                  std::abs(traffic.width - (total.width * 2.0F + 12.0F)) < 0.01F,
-                  "traffic spans two real columns and keeps the 12pt gap");
+            const auto download = ui.Find(UiSelector::Key("home-card-download")).One().bounds;
+            const auto upload = ui.Find(UiSelector::Key("home-card-upload")).One().bounds;
+            const auto total = ui.Find(UiSelector::Key("home-card-total")).One().bounds;
+            const auto mode = ui.Find(UiSelector::Key("home-card-mode")).One().bounds;
+            check(std::abs(download.y - upload.y) < 0.01F &&
+                  std::abs(download.width - total.width) < 0.01F &&
+                  std::abs(upload.width - total.width) < 0.01F &&
+                  std::abs(upload.x - download.x - download.width - kHomeGridGap) < 0.01F,
+                  "home places download and upload side by side in separate columns");
             if (width < 600.0F) {
-                check(std::abs(total.y - traffic.y - 200.0F) < 0.01F &&
+                check(std::abs(total.y - download.y - 200.0F) < 0.01F &&
                       std::abs(mode.x - total.x - total.width - 12.0F) < 0.01F,
                       "compact home places total/mode side by side below traffic");
             } else {
-                check(std::abs(total.y - traffic.y) < 0.01F &&
-                      std::abs(total.x - traffic.x - traffic.width - 12.0F) < 0.01F,
-                      "wide home retains the fixed traffic/total first row");
+                check(std::abs(total.y - upload.y) < 0.01F &&
+                      std::abs(total.x - upload.x - upload.width - kHomeGridGap) < 0.01F,
+                      "wide home places the traffic summary next to the two rate cards");
             }
             std::optional<huxerui::Rect> control;
             if (desktop && width >= 600.0F) {
                 control = ui.Find(UiSelector::Key("home-card-control")).One().bounds;
                 check(std::abs(control->height - 88.0F) < 0.01F &&
-                      std::abs(control->width - (width >= 1200.0F ? traffic.width : total.width)) < 0.01F,
+                      std::abs(control->width - (width >= 1200.0F ? 2.0F * total.width + kHomeGridGap
+                                                                  : total.width)) < 0.01F,
                       "running control placeholder preserves its responsive one/two-column span");
             }
             const auto viewport = ui.Find(UiSelector::Key("home-grid-viewport")).One().bounds;
@@ -5361,7 +5366,14 @@ void testVpnHydrationStartup() {
     auto tasks = huxerui::UseTaskScope();
     auto toast = clashflux::ui::UseFluxToast();
     auto result = huxerui::UseState(std::string{"idle"});
+    auto showIdleOutline = huxerui::UseState(true);
+    const auto& theme = huxerui::UseTheme();
     return huxerui::Column{
+        huxerui::Text("Drop profile file").With(
+            huxerui::Background(theme.colors.surface_container_high),
+            huxerui::CornerRadius(theme.shapes.small),
+            clashflux::ui::detail::FileDropIdleOutline{theme.colors.outline, showIdleOutline.Get()}),
+        huxerui::Button("Hide idle outline").OnClick([showIdleOutline] { showIdleOutline = false; }),
         huxerui::Button("Choose profile file").OnClick([tasks, toast, filter, result] {
             tasks.Launch([toast, filter, result]() -> huxerui::Task<void> {
                 // 消费生产筛选 DTO 的真实事件协程；不需要宿主文件窗口即可验证资源边界。
@@ -5380,6 +5392,16 @@ void testProfileFileFilter() {
         huxerui::testing::UiTest ui(kProfileFileFilterApplication, {.viewport = {600.0F, 500.0F},
             .resources = {.locale = huxerui::Locale::FromLanguageTag(language)}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
+        const auto idle = ui.CaptureSnapshot().ToString();
+        const auto dash = idle.find("dash_pattern {");
+        const auto fill = idle.rfind("content {", dash);
+        const auto outline = idle.rfind("foreground {", dash);
+        check(dash != std::string::npos && outline != std::string::npos && fill < outline,
+              "the file drop outline modifier paints its dashes above the content");
+        ui.Find(UiSelector::Text("Hide idle outline")).Tap();
+        ui.PumpAndSettle();
+        check(!ui.CaptureSnapshot().ToString().contains("dash_pattern {"),
+              "the file drop outline modifier clears its dashes after leaving the idle state");
         ui.Find(UiSelector::Text("Choose profile file")).Tap(); ui.Pump(kSettle);
         const std::string expected = std::string(language) == "zh" ? "sing-box / Clash / OpenVPN 配置:json,yaml,yml,ovpn" : "sing-box / Clash / OpenVPN configuration:json,yaml,yml,ovpn";
         check(ui.Find(UiSelector::Text(expected)).Exists(), "文件选择事件协程使用预解析的本地化筛选 DTO，不读取组合环境");
@@ -9041,22 +9063,20 @@ huxerui::View SettingsSelectRoot() {
         return huxerui::MaterialTheme(theme,
             huxerui::ProvideEnvironment(huxerui::Locale::FromLanguageTag(model->chinese.Get() ? "zh" : "en"),
                 huxerui::Scope([model]() -> huxerui::View {
+                    using namespace clashflux::ui;
                     const std::vector<std::string> labels{
-                        "Zsh", "POSIX sh", huxerui::UseString(clashflux::ui::Localized("命令提示符（cmd）"))};
-                    const auto select = clashflux::ui::SettingsValue(model->ready.Get(),
-                        clashflux::ui::ContentSizedSelect(labels, model->selected.Get(), "Shell type",
+                        "Zsh", "POSIX sh", huxerui::UseString(Localized("命令提示符（cmd）"))};
+                    const auto shell = SettingsValue(model->ready.Get(),
+                        ContentSizedSelect(labels, model->selected.Get(), Localized("复制环境变量"),
                             [model](std::size_t index) { model->selected = index; }).Key("content-sized-shell"));
-                    if (huxerui::UseViewportClass() == huxerui::ViewportClass::Compact) return huxerui::Column {
-                      huxerui::Text("Shell"),
-                      huxerui::Row {huxerui::Spacer(), select}
-                          .With(huxerui::Padding(huxerui::EdgeInsets{.left = 32.0F})),
-                    }.With(huxerui::Padding(8.0F),
-                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-                    return huxerui::Row {
-                      huxerui::Text("Shell").With(huxerui::Grow(1.0F)),
-                      select,
-                    }.With(huxerui::Spacing(12.0F), huxerui::Padding(8.0F),
-                           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+                    const auto log = ContentSizedSelect({huxerui::UseString(Localized("关闭日志"))}, 0,
+                        Localized("日志级别"), {}).Key("content-sized-log-level");
+                    return huxerui::ProvideEnvironment(SettingsRowInsets{16.0F, 10.0F, 48.0F}, huxerui::Column {
+                      SettingSelectRow(Localized("复制环境变量"), app::images::terminal, shell,
+                          huxerui::IconButton(app::images::copy, Localized("复制"))
+                              .With(huxerui::Frame{.width = 32.0F, .height = 32.0F}).Key("settings-copy-env")),
+                      SettingSelectRow(Localized("日志级别"), app::images::logs, log),
+                    }.With(huxerui::Padding(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
                 })));
     });
 }
@@ -9067,6 +9087,14 @@ void testSettingsSelectSizing() {
             {.viewport = {width, 500.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
         const auto selector = ui.Find(UiSelector::Key("content-sized-shell"));
+        const auto shellTitle = ui.Find(UiSelector::Text("复制环境变量")).One().bounds;
+        const auto logTitle = ui.Find(UiSelector::Text("日志级别")).One().bounds;
+        const auto logSelect = ui.Find(UiSelector::Key("content-sized-log-level")).One().bounds;
+        const auto shortShell = selector.One().bounds;
+        check(shellTitle.x + shellTitle.width <= shortShell.x && shellTitle.y < shortShell.y + shortShell.height &&
+              shellTitle.y + shellTitle.height > shortShell.y && logTitle.x + logTitle.width <= logSelect.x &&
+              logTitle.y < logSelect.y + logSelect.height && logTitle.y + logTitle.height > logSelect.y,
+            "short labels and selectors stay on the same line in both compact and wide settings");
         const float shortWidth = selector.One().bounds.width;
         check(shortWidth > 40.0F && shortWidth < 120.0F,
             "short settings choices use their content width instead of the default minimum or the row width");
@@ -9078,11 +9106,22 @@ void testSettingsSelectSizing() {
         const float chineseWidth = selector.One().bounds.width;
         settingsSelect->chinese = false; ui.PumpAndSettle();
         const float englishWidth = selector.One().bounds.width;
+        const auto envTitle = ui.Find(UiSelector::Text("Copy environment variables")).One().bounds;
+        const auto copy = ui.Find(UiSelector::Key("settings-copy-env")).One().bounds;
+        const auto englishShell = selector.One().bounds;
+        const auto englishLogTitle = ui.Find(UiSelector::Text("Log level")).One().bounds;
+        check(std::abs(envTitle.height - englishLogTitle.height) < 0.5F &&
+              std::abs(copy.x - envTitle.x - envTitle.width - 4.0F) < 0.5F,
+            "the copy title stays on one line with the copy icon adjacent");
+        check(width == 320.0F ? englishShell.y >= copy.y + copy.height : englishShell.x > copy.x + copy.width,
+            "a long shell choice moves as a unit only when it will not fit beside the title");
+        check(std::abs(englishShell.height - shortShell.height) < 0.5F,
+            "the selected text keeps the same single-line height");
         check(std::abs(chineseWidth - englishWidth) > 1.0F,
             "translated settings choices remeasure on locale changes");
         settingsSelect->largeText = true; ui.PumpAndSettle();
         const auto large = selector.One().bounds;
-        check(large.width > englishWidth && large.x >= 8.0F && large.x + large.width <= width - 7.9F,
+        check(large.width > englishWidth && large.x >= 31.9F && large.x + large.width <= width - 31.9F,
             "theme text sizing updates the trigger while respecting narrow row constraints");
         settingsSelect->selected = 0; ui.PumpAndSettle();
         check(selector.One().bounds.width < englishWidth,
@@ -9392,8 +9431,19 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--home-grid") {
+        testFixedHomeGeometry(); return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--profile-file-filter") {
+        testProfileFileFilter(); return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--subscription-ua") {
         testSubscriptionUserAgentOrder(); return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--settings-selects") {
+        testSettingsSelectSizing();
+        std::printf("settings-selects %s\n", failures == 0 ? "passed" : "failed");
+        return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--home-gear") {
         testHomeSettingsGear(); return failures == 0 ? 0 : 1;

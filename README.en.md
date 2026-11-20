@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.123 release notes](docs/releases/v0.3.123.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.124 release notes](docs/releases/v0.3.124.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -588,8 +588,8 @@ destination selection, desktop shortcuts, repair and uninstall. The installer
 supports Simplified Chinese, Traditional Chinese and English. GitHub Release assets use
 `clash-flux-<version>-<platform>-<arch>.<format>`: the Windows installer is
 `clash-flux-<version>-windows-x86_64.exe`, and the portable archive uses the same prefix with `.zip`.
-In-app updates also recognize previously published Windows installer names; see [application updates](docs/app-updates.md).
-New installers use a separate Burn upgrade identity and clean legacy bundle registrations and private caches for versions 0.3.0–0.3.68 after MSI commit. The MSI upgrade identity, user data and shared MSI caches are preserved; see [migration details](docs/huxerui-fork.md#windows-legacy-bundle-migration).
+In-app updates also recognize previously published Windows installer names. When Windows reports files in use during standalone setup, the installer displays any available application names. If Clash-Flux is still running, quit from its system tray menu and retry. See [application updates](docs/app-updates.md).
+New installers use a separate Burn upgrade identity and clean legacy bundle registrations and private caches for versions 0.3.0–0.3.68 after MSI commit. The MSI upgrade identity, user data and shared MSI caches are preserved. Tag CI checks upgrade, rollback, and silent uninstall on a disposable Windows runner. See [migration details](docs/huxerui-fork.md#windows-legacy-bundle-migration).
 
 The saved theme is read synchronously through a temporary read-only connection before the first frame is built. System mode observes light/dark changes through HuxerUI's official window appearance API; explicit light/dark choices remain independent. Other settings and subscriptions still load asynchronously. The Lib-SQLite startup query is included in the pinned fork commit; see [UI development](docs/ui-development.md).
 

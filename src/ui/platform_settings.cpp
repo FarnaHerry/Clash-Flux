@@ -18,7 +18,6 @@
 #include "settings_value.h"
 #include "app_resources.h"
 #include "task_bridge.h"
-#include "settings_group_layout.h"
 
 import clashflux.config;
 import clashflux.core;
@@ -393,8 +392,6 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
 }
 
 [[huxerui::composable]] huxerui::View DesktopNetworkSettings() {
-    const auto theme = huxerui::UseTheme();
-    const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto application = huxerui::UseApplication();
     const auto clipboard = application.Clipboard();
     const auto toast = UseFluxToast();
@@ -407,10 +404,9 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
     std::vector<std::string> envShellLabels = EnvironmentShellLabels();
     for (auto& label : envShellLabels)
         if (label == "命令提示符（cmd）") label = huxerui::UseString(Localized("命令提示符（cmd）"));
-    // Keep the copy action next to its label; the shell selector is the only
-    // trailing control. Narrow desktop layouts retain a separate control line.
+    const auto label = Localized("复制环境变量");
     huxerui::View shellSelect = ContentSizedSelect(
-                    envShellLabels, envShell, Localized("复制环境变量"),
+                    envShellLabels, envShell, label,
                     [settingsModel](std::size_t index) {
                         if (index < std::size(kEnvironmentShells))
                             settingsModel->SetEnvShell(
@@ -438,29 +434,7 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync() {
                                 toast.Show(Localized("复制失败"));
                             }
                         });
-    huxerui::View description = huxerui::Row {
-        SettingItemIcon(app::images::terminal),
-        huxerui::Row {
-          huxerui::Text(Localized("复制环境变量")).Style(huxerui::TextStyle{
-              huxerui::Font::System(font_size::kBody), theme.colors.on_surface}),
-          copyAction,
-        }.With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-    }.With(huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
-    if (compact) {
-        return SettingsContentRow(huxerui::Column {
-            std::move(description),
-            huxerui::Row { huxerui::Spacer(), std::move(shellSelect) }
-                .With(huxerui::Padding(huxerui::EdgeInsets{.left = 32.0F})),
-        }.With(huxerui::Spacing(8.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
-    }
-    return SettingsContentRow(huxerui::Row {
-        std::move(description).With(huxerui::Grow(1.0F)),
-        std::move(shellSelect),
-    }.With(huxerui::Spacing(12.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
+    return SettingSelectRow(label, app::images::terminal, shellSelect, copyAction);
 }
 
 [[huxerui::composable]] huxerui::View DesktopKernelSettingsContent() {

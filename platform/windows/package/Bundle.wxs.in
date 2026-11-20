@@ -7,6 +7,7 @@
     </BootstrapperApplication>
     <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]Clash-Flux" />
     <Variable Name="CreateDesktopShortcut" Type="numeric" Value="0" />
+    <Variable Name="HuxerUIAutoCloseApplications" Type="numeric" Value="1" />
     <Chain>
       <MsiPackage SourceFile="!(bindpath.Package)\clash-flux.msi">
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />

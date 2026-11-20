@@ -4,12 +4,17 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `b65ce62e65eaa594cff587ac0e598b7daa4f7c7d`，各平台 CI 共用
+Clash-Flux 当前固定 `b88c4d1fa4bd790cb4ef81dedd9d8b3503b5da9f`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
+
+2026-11-20 跟进 `farna/main` 的 [`b88c4d1f`](https://github.com/FarnaHerry/HuxerUI/commit/b88c4d1fa4bd790cb4ef81dedd9d8b3503b5da9f)。
+Windows 安装器显示 Burn 提供的文件占用应用名称，并可按 Bundle 配置在每次 Apply 首次收到 Restart Manager 占用通知时请求正常退出。
+Clash-Flux 的安装器沿用产品配色，并将窗口控件移至右侧内容区顶部，左侧品牌区支持拖动。
+该固定版本也包含 [`780514a7`](https://github.com/FarnaHerry/HuxerUI/commit/780514a7a5f5443e3be9a626355c62f6470d6968) 的 ComboBox 点按重新打开候选修复。
 
 2026-11-20 跟进 `farna/main` 的 [`b65ce62`](https://github.com/FarnaHerry/HuxerUI/commit/b65ce62e65eaa594cff587ac0e598b7daa4f7c7d)。
 合入 SDK 文档重组，并让 Windows 默认安装器模板使用自定义标题栏、可拖动品牌区和框架窗口控件；应用运行时 API 未变。
@@ -378,7 +383,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout b65ce62e65eaa594cff587ac0e598b7daa4f7c7d
+git -C third_party/huxerui checkout b88c4d1fa4bd790cb4ef81dedd9d8b3503b5da9f
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
@@ -401,7 +406,7 @@ MSI 内嵌静态 CRT 的原生清理 DLL，在安装/修复成功提交时以系
 
 清理仅删除 `%ProgramData%\Package Cache\{BundleId}` 内与注册版本一致的 Setup.exe、`state.rsm` 和空目录，拒绝路径不符、重解析点和额外文件；不递归删除共享 MSI 载荷。随后移除对应依赖项的旧 Bundle 引用、无其它依赖者的旧 Provider 和卸载注册。存在其它依赖者时保留该 Bundle；权限或缓存占用错误写入 MSI 日志，并保留尚未完成的注册以供下一次安装/修复重试，不使已成功安装的产品失败。
 
-`legacy_bundle_cleanup` 回归使用独立 HKCU 注册表树和临时目录，无需管理员权限，不改变真实安装记录。发布前另需 Windows 实机验证旧版到高于 0.3.68 的升级、失败回滚、新版静默卸载和维护页；不能用相同版本重新打包替代跨版本验收。
+`legacy_bundle_cleanup` 回归使用独立 HKCU 注册表树和临时目录，无需管理员权限，不改变真实安装记录。标签 CI 在一次性 Windows runner 上使用正式 v0.3.68 安装器与候选安装包，先通过单独生成的 MSI 触发事务回滚，再验证真实升级、旧 Bundle 注册与缓存清理、新版静默卸载及用户数据保留。交互式维护页和跨会话文件占用仍需独立 Windows 环境验收。
 
 2026-10-26 本机只读盘点发现旧升级标识下的 Bundle 0.3.60、0.3.61、0.3.62、0.3.66、0.3.68 各一条及各自缓存，另有当前 0.3.68 MSI 注册。当前 Bundle 与 MSI 两条记录不等于两份应用。盘点没有执行真实注册或缓存删除。
 

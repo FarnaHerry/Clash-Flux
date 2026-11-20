@@ -8,7 +8,8 @@
 namespace clashflux::ui {
 
 enum class HomeCardKind {
-    Traffic,    // 流量曲线（标题行带实时上/下行速率）
+    Download,   // 下载实时速率与曲线
+    Upload,     // 上传实时速率与曲线
     Total,      // 流量统计（总上传 / 总下载）
     Mode,       // 出站模式
     Profile,    // 当前订阅
@@ -27,8 +28,8 @@ struct HomeCardSpec {
 };
 
 inline constexpr HomeCardSpec kMobileHomeCards[] = {
-    // Lib-Charts 的紧凑绘图面最小 240×96，适配 2 行（188pt）的卡片。
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
+    {HomeCardKind::Download, "download", "下载", 1, 2},
+    {HomeCardKind::Upload, "upload", "上传", 1, 2},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     // 出站模式是纵向单选列表（标题 + 3 个选项），占 1x2。
     {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
@@ -39,8 +40,8 @@ inline constexpr HomeCardSpec kMobileHomeCards[] = {
 };
 
 inline constexpr HomeCardSpec kDesktopHomeCards[] = {
-    // 与移动端共用紧凑绘图面，流量卡片高度降为 2 行。
-    {HomeCardKind::Traffic, "traffic", "流量曲线", 2, 2},
+    {HomeCardKind::Download, "download", "下载", 1, 2},
+    {HomeCardKind::Upload, "upload", "上传", 1, 2},
     {HomeCardKind::Total, "total", "流量统计", 1, 2},
     {HomeCardKind::Mode, "mode", "出站模式", 1, 2},
     {HomeCardKind::Profile, "profile", "当前订阅", 1, 2},

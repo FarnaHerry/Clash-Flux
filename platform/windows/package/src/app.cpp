@@ -88,7 +88,8 @@ View BrandPanel(const ThemeSpec& theme) {
           .end = {1.0F, 1.0F},
           .stops = {{0.0F, theme.colors.primary}, {1.0F, deep_primary}},
       }),
-      CrossAlign(CrossAxisAlignment::Start)
+      CrossAlign(CrossAxisAlignment::Start),
+      WindowDragRegion{}
   );
 }
 
@@ -131,7 +132,7 @@ std::vector<View> PromptActions(const InstallerHandle& installer, const Installe
     StringVariant label = installer_strings::continue_action;
     switch (choice) {
     case InstallerPromptChoice::Ok:
-      label = installer_strings::ok;
+      label = prompt.kind == InstallerPromptKind::FilesInUse ? installer_strings::close_apps : installer_strings::ok;
       break;
     case InstallerPromptChoice::Cancel:
       label = installer_strings::cancel;
@@ -187,18 +188,25 @@ View InstallerContent() {
   if (status.prompt) {
     eyebrow = installer_strings::action_required;
     heading = installer_strings::setup_needs_attention;
-    StringVariant prompt_message = status.prompt->message;
-    if (status.prompt->kind == InstallerPromptKind::Restart) {
-      eyebrow = installer_strings::complete;
-      heading = status.action == InstallerAction::Uninstall ? installer_strings::application_removed
-                                                           : installer_strings::installation_complete;
-      prompt_message = status.action == InstallerAction::Uninstall
-                           ? installer_strings::application_removed_restart_message
-                           : installer_strings::installation_complete_restart_message;
-    } else if (status.prompt->kind == InstallerPromptKind::FilesInUse && status.prompt->message.empty()) {
-      prompt_message = installer_strings::files_in_use;
+    if (status.prompt->kind == InstallerPromptKind::FilesInUse) {
+      details.push_back(Text(installer_strings::files_in_use).With(Foreground(theme.colors.on_surface_variant)));
+      if (!status.prompt->message.empty()) {
+        details.push_back(ScrollView {
+          Text(status.prompt->message).With(Foreground(theme.colors.on_surface_variant)),
+        }.With(Frame{.max_height = 144.0F}));
+      }
+    } else {
+      StringVariant prompt_message = status.prompt->message;
+      if (status.prompt->kind == InstallerPromptKind::Restart) {
+        eyebrow = installer_strings::complete;
+        heading = status.action == InstallerAction::Uninstall ? installer_strings::application_removed
+                                                             : installer_strings::installation_complete;
+        prompt_message = status.action == InstallerAction::Uninstall
+                             ? installer_strings::application_removed_restart_message
+                             : installer_strings::installation_complete_restart_message;
+      }
+      details.push_back(Text(std::move(prompt_message)).With(Foreground(theme.colors.on_surface_variant)));
     }
-    details.push_back(Text(std::move(prompt_message)).With(Foreground(theme.colors.on_surface_variant)));
     actions = PromptActions(installer, *status.prompt, theme);
   } else if (status.phase == InstallerPhase::Detecting) {
     eyebrow = installer_strings::welcome;
@@ -418,32 +426,22 @@ View InstallerContent() {
 
   return Row {
     BrandPanel(theme),
-    Column(std::move(content)).With(
-        Padding(EdgeInsets::Symmetric(36.0F, 32.0F)),
-        Spacing(24.0F),
-        CrossAlign(CrossAxisAlignment::Stretch),
-        Grow()
-    ),
+    Column {
+      WindowTitleBar{}.With(Background(theme.colors.surface)),
+      Column(std::move(content)).With(
+          Padding(EdgeInsets{.top = 8.0F, .right = 36.0F, .bottom = 32.0F, .left = 36.0F}),
+          Spacing(24.0F),
+          CrossAlign(CrossAxisAlignment::Stretch),
+          Grow()
+      ),
+    }.With(CrossAlign(CrossAxisAlignment::Stretch), Grow()),
   }.With(CrossAlign(CrossAxisAlignment::Stretch), Background(theme.colors.surface), Grow());
 }
 
 [[huxerui::composable]]
 View InstallerPage() {
-  // 自定义标题栏与主应用同款（WindowChromeMode::Custom）：拖拽区 +
-  // 平台标准控件由 WindowTitleBar/框架处理，品牌侧栏从标题栏下方铺满。
-  // 在组合期观察宿主外观，子树经 UseTheme 消费品牌主题。
   const ThemeSpec theme = InstallerThemeSpec(UseSystemThemeBrightness() == ThemeBrightness::Dark);
-  return MaterialTheme(theme, Column {
-      WindowTitleBar {
-        Text(installer_strings::application_setup)
-            .Style(TextStyle{Font::System(12.0F).WithWeight(FontWeight::SemiBold),
-                             theme.colors.on_surface_variant})
-            .With(Padding(EdgeInsets::Symmetric(12.0F, 0.0F))),
-        Spacer().With(Grow()),
-      }.With(Frame{.height = kInstallerTitleBarHeight},
-             Background(theme.colors.surface)),
-      InstallerContent(),
-    }.With(Grow(), CrossAlign(CrossAxisAlignment::Stretch)));
+  return MaterialTheme(theme, InstallerContent());
 }
 
 const Application application{

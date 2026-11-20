@@ -111,7 +111,7 @@ inline huxerui::View ProxySpeedButton(bool testing, bool enabled, std::function<
             : huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F};
         constexpr huxerui::Frame size{.width = kProxySpeedButtonSize, .height = kProxySpeedButtonSize};
         huxerui::View iris = huxerui::Row {}.With(size, ProxySpeedIris{
-            huxerui::UseVectorImage(app::images::speed), theme.colors.primary, theme.colors.on_primary, shadow,
+            huxerui::UseVectorImage(app::images::proxy_speed), theme.colors.primary, theme.colors.on_primary, shadow,
             huxerui::UseEnvironment<huxerui::IconButtonStyle>().icon_size, testing, background, !showButton,
         }).On<ProxySpeedIrisChanged>([open](bool value) { open = value; }).Key("proxy-speed-iris");
         if (testing) {
@@ -123,7 +123,7 @@ inline huxerui::View ProxySpeedButton(bool testing, bool enabled, std::function<
         huxerui::View button;
         if (showButton) {
             button = huxerui::Stack {
-              huxerui::IconButton(app::images::speed, Localized("测速"))
+              huxerui::IconButton(app::images::proxy_speed, Localized("测速"))
                   .With(size, huxerui::Enabled(enabled), huxerui::Foreground(theme.colors.on_primary),
                         huxerui::Tooltip(Localized("测试当前分组延迟")))
                   .OnClick(start)

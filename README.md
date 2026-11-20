@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.123 发布说明](docs/releases/v0.3.123.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.124 发布说明](docs/releases/v0.3.124.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -426,8 +426,8 @@ Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 修复/卸载；界面字符串含简中/繁中/英文）。GitHub Release 统一采用
 `clash-flux-<版本>-<平台>-<架构>.<格式>`，Windows 安装包为
 `clash-flux-<版本>-windows-x86_64.exe`，便携归档为同名前缀的 `.zip`。
-应用内更新兼容已发布的旧 Windows 安装包名称，详见[应用升级](docs/app-updates.md)。
-新安装器使用独立的 Burn 升级标识，并在 MSI 安装提交后迁移清理 0.3.0–0.3.68 的旧 Bundle 注册和专属缓存；MSI 升级标识保持不变，用户数据与共享 MSI 缓存保留。边界见 [HuxerUI fork](docs/huxerui-fork.md#windows-legacy-bundle-migration)。
+应用内更新兼容已发布的旧 Windows 安装包名称。直接运行安装包时，若 Windows 报告文件占用，安装器会显示可用的应用名称；仍在运行的 Clash-Flux 可从系统托盘退出后重试。详见[应用升级](docs/app-updates.md)。
+新安装器使用独立的 Burn 升级标识，并在 MSI 安装提交后迁移清理 0.3.0–0.3.68 的旧 Bundle 注册和专属缓存；MSI 升级标识保持不变，用户数据与共享 MSI 缓存保留。标签 CI 在隔离的 Windows runner 验证升级、回滚和静默卸载。边界见 [HuxerUI fork](docs/huxerui-fork.md#windows-legacy-bundle-migration)。
 
 启动时在首帧构建前同步、只读地读取保存的主题，避免默认主题切换闪烁；自动模式通过 HuxerUI 官方窗口外观接口响应系统深浅变化，手动深浅选择保持独立。其余设置与订阅仍异步加载。Lib-SQLite 启动只读查询已合入所用 fork 的固定提交，详见 [UI 开发约定](docs/ui-development.md)。
 

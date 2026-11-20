@@ -78,7 +78,7 @@ env:
   # 与本机 third_party/huxerui checkout 一致（该目录 gitignore，不入库，
   # CI 必须自行 clone 并钉 commit，保证可复现）。框架补丁集中维护在
   # farna/main；main 保留官方基线。验证集成更新后同步本机 checkout 与此 pin。
-  HUXERUI_COMMIT: 'b65ce62e65eaa594cff587ac0e598b7daa4f7c7d'
+  HUXERUI_COMMIT: 'b88c4d1fa4bd790cb4ef81dedd9d8b3503b5da9f'
   SINGBOX_COMMIT: 'c005f35300ce76427dc285481ec5695f5b179cd2' # v1.14.4
 
 jobs:
@@ -992,6 +992,27 @@ jobs:
           if (-not (Test-Path (Join-Path 'dist-src' "clash-flux-$releaseVersion-windows-x86_64.exe") -PathType Leaf)) {
             throw 'Staged Windows installer is missing'
           }
+
+      - name: Verify legacy Windows upgrade, rollback, and uninstall
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          $plan = Get-Content 'build/huxerui-package/windows/Release/package.json' -Raw | ConvertFrom-Json
+          $installerPlan = Get-Content ([string]$plan.installerPlan) -Raw | ConvertFrom-Json
+          & tests/test_windows_installer_upgrade.ps1 `
+            -Bundle (Join-Path $env:GITHUB_WORKSPACE "dist-src/clash-flux-$($plan.version)-windows-x86_64.exe") `
+            -Wix ([string]$installerPlan.wix) -PackageSource ([string]$plan.packageSource) `
+            -Staging (Join-Path $env:GITHUB_WORKSPACE '.huxerui/package/windows/release/staging') `
+            -Version ([string]$plan.version)
+
+      - name: Upload Windows installer test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-diagnostics
+          path: ${{ runner.temp }}/clashflux-installer-*/*.log
+          if-no-files-found: ignore
+          retention-days: 2
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v7
