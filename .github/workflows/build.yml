@@ -999,10 +999,12 @@ jobs:
         run: |
           $plan = Get-Content 'build/huxerui-package/windows/Release/package.json' -Raw | ConvertFrom-Json
           $installerPlan = Get-Content ([string]$plan.installerPlan) -Raw | ConvertFrom-Json
+          $packageRoot = Join-Path $env:GITHUB_WORKSPACE '.huxerui/package/windows/release'
           & tests/test_windows_installer_upgrade.ps1 `
             -Bundle (Join-Path $env:GITHUB_WORKSPACE "dist-src/clash-flux-$($plan.version)-windows-x86_64.exe") `
             -Wix ([string]$installerPlan.wix) -PackageSource ([string]$plan.packageSource) `
-            -Staging (Join-Path $env:GITHUB_WORKSPACE '.huxerui/package/windows/release/staging') `
+            -BundleSource ([string]$plan.bundleSource) -InstallerStaging (Join-Path $packageRoot 'installer') `
+            -InstallerPayloads (Join-Path $packageRoot 'installer-payloads.wxs') -Staging (Join-Path $packageRoot 'staging') `
             -Version ([string]$plan.version)
 
       - name: Upload Windows installer test logs

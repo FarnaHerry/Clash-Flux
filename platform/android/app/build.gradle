@@ -197,7 +197,7 @@ android {
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
         versionCode = 202
-        versionName = "0.3.124"
+        versionName = "0.3.125"
 
         externalNativeBuild {
             cmake {
