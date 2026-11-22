@@ -4,12 +4,14 @@
 `../HuxerUI-fork`。`farna/main` 是长期集成分支；`main` 保留官方
 `HuxerUI/HuxerUI` 基线。更新采用 merge，不 rebase 或 force push 已发布的集成历史。
 
-Clash-Flux 当前固定 `b88c4d1fa4bd790cb4ef81dedd9d8b3503b5da9f`，各平台 CI 共用
+Clash-Flux 当前固定 `c154e52c7ba322c0ebd97b0e45539a55d565df9c`，各平台 CI 共用
 `.github/workflows/build.yml` 的 `HUXERUI_REPO` / `HUXERUI_COMMIT`。本机应用使用独立的
 `third_party/huxerui` checkout，不直接构建可变的框架维护工作树。Android Java 与 native
 必须来自这同一份源码。源码 CLI 使用 `--sdk <path>` 选择 SDK 或源码目录；CI 的 Android
 job 从锁定的 0.4.0 离线归档取官方 CLI 并以 `--sdk huxerui-source` 指向同一 fork 源码，
 桌面 job 走 HuxerUI 源码通道，不消费离线包的运行时库（不含 fork 专属 `create_initial_window`）。
+
+2026-11-22 跟进 `farna/main` 的 [`c154e52`](https://github.com/FarnaHerry/HuxerUI/commit/c154e52c7ba322c0ebd97b0e45539a55d565df9c)，修复 Android 11 及以上软键盘弹出的闪白，并处理三键导航栏的剩余安全区。
 
 2026-11-20 跟进 `farna/main` 的 [`b88c4d1f`](https://github.com/FarnaHerry/HuxerUI/commit/b88c4d1fa4bd790cb4ef81dedd9d8b3503b5da9f)。
 Windows 安装器显示 Burn 提供的文件占用应用名称，并可按 Bundle 配置在每次 Apply 首次收到 Restart Manager 占用通知时请求正常退出。
@@ -383,7 +385,7 @@ FetchContent 源码缓存仍原样保留，不能因迁移清理它们的未提�
 
 ```bash
 git clone https://github.com/FarnaHerry/HuxerUI.git third_party/huxerui
-git -C third_party/huxerui checkout b88c4d1fa4bd790cb4ef81dedd9d8b3503b5da9f
+git -C third_party/huxerui checkout c154e52c7ba322c0ebd97b0e45539a55d565df9c
 ```
 
 在独立维护仓库中先 `git fetch upstream main`，审查官方更新和集成差异，再在 `farna/main`
