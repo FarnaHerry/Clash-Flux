@@ -100,7 +100,7 @@ huxerui::View UseProxyNameTitle(std::string_view name, Title renderTitle) {
         const auto& theme = huxerui::UseTheme();
         return huxerui::View{huxerui::Image(app::images::globe)
                                  .Fit(huxerui::ImageFit::Contain)
-                                 .Tint(theme.colors.primary)
+                                 .Tint(theme.colors.on_surface_variant)
                                  .With(huxerui::Frame{.width = width, .height = width})};
     });
 }

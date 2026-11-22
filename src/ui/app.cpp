@@ -201,14 +201,14 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
 
     huxerui::SegmentedButtonStyle segments; // Default()：corner_radius=8
     segments.background = spec.colors.surface;
-    segments.selected_background = spec.colors.primary;
+    segments.selected_background = spec.colors.secondary_container;
     segments.label_style = huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                               spec.colors.on_surface};
-    segments.selected_label = spec.colors.on_primary;
+    segments.selected_label = spec.colors.on_secondary_container;
     segments.border = huxerui::Border{spec.colors.outline, 1.0F};
     segments.selected_border = huxerui::Border{spec.colors.primary, 1.0F};
     segments.indication = ResolveFluxIndication(spec);
-    segments.selected_indication = ResolveFluxIndication(spec, spec.colors.on_primary);
+    segments.selected_indication = ResolveFluxIndication(spec);
     definition.Set(segments);
 
     // 内置确认框跟随主题（DialogStyle 是 Environment 值，经 ThemeDefinition::Set
@@ -238,8 +238,8 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     selects.border = huxerui::Border{spec.colors.outline, 1.0F};
     selects.indicator = spec.colors.on_surface_variant;
     selects.popup_background = spec.colors.surface_container;
-    selects.active_item_background = withAlpha(spec.colors.primary, kInteractionHoverOpacity);
-    selects.selected_item_background = withAlpha(spec.colors.primary, kInteractionPressOpacity);
+    selects.active_item_background = withAlpha(spec.colors.on_surface, kInteractionHoverOpacity);
+    selects.selected_item_background = withAlpha(spec.colors.on_surface, kInteractionPressOpacity);
     selects.validation_error = spec.colors.error;
     selects.validation_text_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kChip), spec.colors.error};
@@ -286,14 +286,14 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     progressBar.animation_duration = spec.motion.reduced_motion ? 0.0 : 1.75;
     definition.Set(progressBar);
 
-    // 响应式导航跟随品牌主题，桌面图标栏共用 NavigationPane 的样式。
+    // 桌面侧栏沿用 NavigationPane 的布局和交互样式。
     huxerui::NavigationBarStyle navigationBar =
         huxerui::NavigationBarStyle::Default();
     navigationBar.background = spec.colors.surface_container_low;
     navigationBar.label_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kCaption), spec.colors.on_surface_variant};
-    navigationBar.selected_content = spec.colors.on_primary_container;
-    navigationBar.indicator = spec.colors.primary_container;
+    navigationBar.selected_content = spec.colors.on_surface;
+    navigationBar.indicator = spec.colors.secondary_container;
     navigationBar.indicator_size = huxerui::Size{40.0F, 30.0F};
     navigationBar.indicator_corner_radius = spec.shapes.small;
     navigationBar.item_padding = huxerui::EdgeInsets::Symmetric(2.0F, 2.0F);
@@ -308,11 +308,12 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
 
     huxerui::NavigationPaneStyle navigationPane =
         huxerui::NavigationPaneStyle::Default();
+    const auto navigationForeground = IsDarkTheme(spec) ? huxerui::Color::White() : huxerui::Color::Black();
     navigationPane.background = huxerui::Color::Transparent();
     navigationPane.label_style = huxerui::TextStyle{
-        huxerui::Font::System(font_size::kBody), spec.colors.on_surface_variant};
-    navigationPane.selected_content = spec.colors.on_primary_container;
-    navigationPane.indicator = spec.colors.primary_container;
+        huxerui::Font::System(font_size::kBody), FluxStateLayerColor(navigationForeground, 0.60F)};
+    navigationPane.selected_content = navigationForeground;
+    navigationPane.indicator = FluxStateLayerColor(navigationForeground, 0.10F);
     navigationPane.compact_width = kTopNavigationRailWidth;
     navigationPane.expanded_min_width = 220.0F;
     navigationPane.item_height = kTopNavigationItemHeight;
@@ -321,7 +322,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     navigationPane.compact_indicator_size =
         huxerui::Size{kTopNavigationIndicatorSize, kTopNavigationIndicatorSize};
     navigationPane.indicator_corner_radius = spec.shapes.medium;
-    auto navigationIndication = ResolveFluxIndication(spec);
+    auto navigationIndication = ResolveFluxIndication(spec, navigationForeground);
     navigationIndication.geometry = huxerui::IndicationGeometry{
             .layer_size = navigationPane.compact_indicator_size,
             .clip_corner_radii =
@@ -350,7 +351,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
 // 输入框对齐下拉触发框（Select 全局覆盖为 shapes.small + 48pt，见
 // FluxThemed）：读取当前主题的 TextFieldStyle 后改圆角/高度/字号/内边距
 // 再提供回子树——配色与字体族原样保留；对话框层在 Attach 时捕获环境，
-// 同样生效。PillSearchField 的局部覆盖（去描边/透明底）在其之上继续生效。
+// 同样生效。页面搜索框的局部覆盖（去描边/透明底）在其之上继续生效。
 [[huxerui::composable]] huxerui::View WithUnifiedFieldStyle(huxerui::View content) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     huxerui::TextFieldStyle fields = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
@@ -546,11 +547,15 @@ private:
             }
             return true;
         });
-    return huxerui::ScrollView(huxerui::ProvideEnvironment(tooltip, content)).Controller(scroll)
+    auto navigationTheme = huxerui::UseTheme();
+    navigationTheme.interactions.focus_ring.color = style.selected_content;
+    huxerui::Environment navigationEnvironment;
+    navigationEnvironment.Set(navigationTheme).Set(tooltip);
+    return huxerui::ScrollView(huxerui::ProvideEnvironment(navigationEnvironment, content)).Controller(scroll)
         .With(huxerui::Padding(huxerui::EdgeInsets{.top = kDesktopTopContentGap}));
 }
 
-// 底部导航：选中态把 icon 与文字作为一个整体包进胶囊，而不是只高亮 icon。
+// 底部导航以中性胶囊承托整项，选中图标和标签使用强调色。
 // 内建 NavigationBar 的指示器只覆盖图标层，所以这里自绘条目；同时保留底部
 // 安全区消费与系统导航栏底色，行为对齐原先的内建组件。
 [[huxerui::composable]] huxerui::View AndroidNavigationSurface(
@@ -574,7 +579,7 @@ private:
         const std::size_t destination = kAndroidNavDestinations[index];
         const NavigationEntry& entry = kNavigationEntries[destination];
         const bool isSelected = index == selected;
-        // Tint/文字色没有动画值接口：保留普通色底层，仅渐变选中色覆盖层。
+        // 图标和文字共用同一层的选中颜色和渐变。
         // 动画是框架的呈现修饰符，不逐帧写 State，也不参与槽位布局。
         const auto content = [entry](huxerui::Color color) {
             return huxerui::Column {
@@ -751,7 +756,7 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     huxerui::StringVariant coreStatusLabel = Localized("内核已停止");
     switch (coreView.core.state) {
     case core::CoreState::Running:
-        coreStatusColor = theme.colors.primary;
+        coreStatusColor = SemanticSuccessColor(theme);
         coreStatusLabel = LocalizedFormat(
             "内核运行中 · {}", coreView.core.version.empty()
                                   ? cfg::singboxFallbackLabel()
@@ -913,17 +918,15 @@ huxerui::PageTransition SecondaryPageTransition(
         })
         .With(huxerui::Grow(1.0F));
 
-    // Dock 统一提供导航表面、细边缘与阴影，导航内容保留自己的状态与安全区。
-    huxerui::View dock = CompactNavigationDock(
-        AndroidNavigationSurface(navPage, fromSwipe.Get(), [fromSwipe] { fromSwipe = false; }), spec);
+    const huxerui::View navigationBar =
+        AndroidNavigationSurface(navPage, fromSwipe.Get(), [fromSwipe] { fromSwipe = false; });
     return huxerui::Stack {
-        std::move(pager),
-        // 与桌面 Compact 相同：内容从胶囊导航行中线向下渐隐到页面底色。
-        CompactNavigationScrim(spec),
-        std::move(dock),
+      pager,
+      huxerui::Scope([navigationBar, spec] {
+          return CompactNavigationOverlay(navigationBar, spec, UseAndroidImeOccludesBottom());
+      }),
     }.With(huxerui::Grow(1.0F),
-           huxerui::Align(huxerui::HorizontalAlignment::Stretch,
-                          huxerui::VerticalAlignment::Stretch));
+           huxerui::Align(huxerui::HorizontalAlignment::Stretch, huxerui::VerticalAlignment::Stretch));
 }
 
 // 手机端一级/二级页容器：二级页是 NavigationStack 的 push 目标，四个一级页是

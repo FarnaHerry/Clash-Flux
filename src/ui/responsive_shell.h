@@ -113,6 +113,18 @@ inline huxerui::View CompactNavigationScrim(const huxerui::ThemeSpec& theme) {
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
+// Keep the Android dock mounted while the IME covers the window bottom.
+inline huxerui::View CompactNavigationOverlay(huxerui::View navigation,
+    const huxerui::ThemeSpec& theme, bool bottomOccluded) {
+    const float opacity = bottomOccluded ? 0.0F : 1.0F;
+    return huxerui::Stack {
+      CompactNavigationScrim(theme).With(huxerui::Opacity(opacity)),
+      CompactNavigationDock(navigation, theme)
+          .With(huxerui::Opacity(opacity), huxerui::Enabled(!bottomOccluded),
+                huxerui::Semantics{.hidden = bottomOccluded}),
+    }.With(huxerui::Align(huxerui::HorizontalAlignment::Stretch, huxerui::VerticalAlignment::Stretch));
+}
+
 // Keep the dock on the NavigationStack root page. Pushed pages cover it and
 // reveal the same mounted dock during Pop, without a delayed visibility flag.
 inline huxerui::View CompactRootPageSurface(huxerui::View content, huxerui::View navigation) {

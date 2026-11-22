@@ -303,6 +303,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     auto streamOpen = huxerui::UseState(false);
     auto loaded = huxerui::UseState(false);
     auto searchValue = huxerui::UseState(huxerui::TextEditingValue{""});
+    auto searchExpanded = huxerui::UseState(false);
     const auto scroll = huxerui::UseScrollController();
 
     huxerui::Lifecycle(
@@ -442,21 +443,21 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
                    .With(huxerui::Grow(1.0F));
     }
 
-    huxerui::View searchField = PillSearchField(
-        searchValue, Localized("搜索连接"));
     huxerui::View closeAllButton = huxerui::IconButton(
         app::images::trash, Localized("关闭全部"))
         .With(huxerui::Tooltip(Localized("关闭全部连接")))
         .OnClick([dialog, tasks, toast] {
             ConfirmCloseConnection(dialog, tasks, toast, {}, {}, true);
         });
-    huxerui::View actions = std::move(closeAllButton);
+    const auto title = Localized("连接");
+    huxerui::View searchToolbar = PageSearchToolbar(
+        searchValue, searchExpanded, title, Localized("搜索连接"), closeAllButton);
     return onBack
-        ? SecondaryPageScaffold(std::move(searchField), std::move(actions),
-                                std::move(body), onBack, false, true)
-        : PageScaffold(Localized("连接"), std::move(actions), std::move(body),
-                       false, true, true, std::nullopt, {},
-                       std::move(searchField));
+        ? SecondaryPageScaffold(PageTitleText(theme, title), {},
+                                std::move(body), onBack, false, true, false, true,
+                                std::nullopt, std::move(searchToolbar))
+        : PageScaffold(title, {}, std::move(body),
+                       false, true, true, std::nullopt, {}, std::move(searchToolbar));
 }
 
 namespace {
@@ -587,16 +588,17 @@ huxerui::XYChartData ConnectionChartData(
                 huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface_variant}),
         }.With(huxerui::Spacing(8.0F));
     };
-    huxerui::Color fillDown = theme.colors.primary;
+    const auto trafficColors = ResolveTrafficColors(theme);
+    huxerui::Color fillDown = trafficColors.download;
     fillDown.alpha = 0.18F;
-    const auto upColor = SemanticWarningColor(theme);
-    const auto downColor = theme.colors.primary;
+    const auto upColor = trafficColors.upload;
+    const auto downColor = trafficColors.download;
     const auto points = history.Get();
     huxerui::View chart = huxerui::AreaChart(ConnectionChartData(
         points, huxerui::UseString(Localized("↓ 下载")),
         huxerui::UseString(Localized("↑ 上传"))))
         .Baseline(0.0)
-        .Interpolation(huxerui::ChartInterpolation::Linear)
+        .Interpolation(huxerui::ChartInterpolation::Monotone)
         .XAxis(huxerui::ChartAxis::Linear().Visible(false))
         .YAxis(huxerui::ChartAxis::Linear().IncludeZero().Visible(false)
             .Formatter([](double value) {
@@ -608,11 +610,13 @@ huxerui::XYChartData ConnectionChartData(
         .SeriesStyle("down", huxerui::AreaChartStyle{
             .fill = huxerui::Brush(fillDown),
             .stroke = huxerui::Brush(downColor),
-            .stroke_style = huxerui::StrokeStyle{.width = 2.0F}})
+            .stroke_style = huxerui::StrokeStyle{.width = 2.0F,
+                .cap = huxerui::StrokeCap::Round, .join = huxerui::StrokeJoin::Round}})
         .SeriesStyle("up", huxerui::AreaChartStyle{
             .fill = huxerui::Brush(huxerui::Color::Transparent()),
             .stroke = huxerui::Brush(upColor),
-            .stroke_style = huxerui::StrokeStyle{.width = 1.5F}})
+            .stroke_style = huxerui::StrokeStyle{.width = 1.5F,
+                .cap = huxerui::StrokeCap::Round, .join = huxerui::StrokeJoin::Round}})
         .With(huxerui::Frame{.height = 180.0F});
 
     huxerui::View sections = huxerui::Column{
@@ -621,7 +625,7 @@ huxerui::XYChartData ConnectionChartData(
                           huxerui::TextRole::Title),
             huxerui::Text(Localized(ended.Get() ? "已结束" : "活动中"))
                 .With(huxerui::Foreground(ended.Get()
-                    ? theme.colors.on_surface_variant : theme.colors.primary)),
+                    ? theme.colors.on_surface_variant : SemanticSuccessColor(theme))),
         }.With(huxerui::Spacing(6.0F)), IslandLevel::Raised),
         IslandSurface(huxerui::Column{
             huxerui::Text(Localized("当前速率与累计流量"), huxerui::TextRole::Title),

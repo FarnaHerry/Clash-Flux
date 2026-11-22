@@ -38,6 +38,7 @@ inline huxerui::View HomeEasterEggContent(
     HomeEasterEgg egg, std::function<void(std::string_view)> open) {
     return huxerui::Scope([egg, open = std::move(open)] {
         const auto& theme = huxerui::UseTheme();
+        constexpr float linkHeight = 34.0F;
         return huxerui::Column {
           huxerui::Text(egg.isLibrary ? Localized("HuxerUI 扩展库") : Localized("HuxerUI 官方作者"))
             .Style(huxerui::TextStyle{
@@ -45,10 +46,11 @@ inline huxerui::View HomeEasterEggContent(
               theme.colors.on_surface_variant}),
           huxerui::Row {
             huxerui::Image(app::images::github).Fit(huxerui::ImageFit::Contain).Tint(theme.colors.primary)
-                .With(huxerui::Frame{.width = 18.0F, .height = 18.0F}),
+                .With(huxerui::Frame{.width = 18.0F, .height = 18.0F}, huxerui::LayoutPriority(1.0F)),
             huxerui::Text(std::string{egg.name}).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody), theme.colors.primary}),
-          }.With(huxerui::Spacing(8.0F), huxerui::Frame{.min_height = 28.0F},
+          }.With(huxerui::Spacing(6.0F), huxerui::Padding(huxerui::EdgeInsets::Symmetric(6.0F, 0.0F)),
+                 huxerui::Frame{.min_height = linkHeight}, huxerui::CornerRadius(linkHeight * 0.5F),
                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
                  theme.interactions.indication, huxerui::Focusable(true),
                  huxerui::Semantics{.role = huxerui::SemanticRole::Button,

@@ -427,7 +427,7 @@ private:
         const bool active = tab.key == selectedKey;
         if (active) selectedIndex = items.size();
         const huxerui::Color labelColor =
-            active ? theme.colors.primary : theme.colors.on_surface_variant;
+            active ? theme.colors.on_surface : theme.colors.on_surface_variant;
         huxerui::View labelView =
             huxerui::Text(tab.label, huxerui::TextRole::Label)
                 .With(huxerui::Foreground(labelColor));
@@ -437,7 +437,7 @@ private:
             labelView = huxerui::Text(text, huxerui::TextRole::Label).Style(style)
                 .With(huxerui::Foreground(huxerui::Color::Transparent()),
                       SectionTabLabel{motion, items.size(), active, text, style,
-                          theme.colors.on_surface_variant, theme.colors.primary});
+                          theme.colors.on_surface_variant, theme.colors.on_surface});
         }
         if (!tab.badge.empty()) {
             // 角标用语义警示色，和 label 同字号但更小的心智权重：它只是提示

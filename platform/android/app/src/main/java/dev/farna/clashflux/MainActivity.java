@@ -18,6 +18,8 @@ import android.os.PowerManager;
 import android.os.RemoteException;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.View;
+import android.view.WindowInsets;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -35,6 +37,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.json.JSONObject;
 
 import org.huxerui.HuxerUIActivity;
+import org.huxerui.HuxerUIView;
 
 
 public final class MainActivity extends HuxerUIActivity {
@@ -65,6 +68,7 @@ public final class MainActivity extends HuxerUIActivity {
     private static native void nativeUpdateRuntimeHealth(long epoch, long generation, long sequence,
             long age, int repairs, boolean connected, boolean available, String state);
     private static native void nativeRuntimeBinderAvailable(boolean available);
+    private static native void nativeSetImeOccludesBottom(boolean occluded);
 
     /** Worker-only adapter; body bytes stay in the exclusive native staging file. */
     public static Bundle fetchProfile(String address, int timeoutSeconds,
@@ -84,6 +88,7 @@ public final class MainActivity extends HuxerUIActivity {
     }
 
     private final Handler runtimeHandler = new Handler(Looper.getMainLooper());
+    private boolean imeOccludesBottom;
     private volatile boolean runtimeServiceBound;
     private volatile long runtimeBindingEpoch;
     private final Object runtimeObservationLock = new Object();
@@ -163,6 +168,7 @@ public final class MainActivity extends HuxerUIActivity {
     protected void onCreate(Bundle savedInstanceState) {
         Log.i(TAG, "MainActivity.onCreate entered");
         current = this;
+        nativeSetImeOccludesBottom(false);
         applicationContext = getApplicationContext();
         installBundledRuleSets(this);
         // Initialize the native bridge before HuxerUI composes the first frame.
@@ -180,6 +186,24 @@ public final class MainActivity extends HuxerUIActivity {
         requestNotificationPermission();
         Log.i(TAG, "Android UI process initialized; sing-box runtime is isolated in :background");
         appLog("Android 界面进程已初始化，sing-box 运行时由独立后台进程托管", false);
+    }
+
+    @Override
+    public void setContentView(View content) {
+        if (content instanceof HuxerUIView) {
+            content.setOnApplyWindowInsetsListener((view, insets) -> {
+                boolean occluded = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                        ? insets.getInsets(WindowInsets.Type.ime()).bottom > 0
+                        : insets.getSystemWindowInsetBottom() > insets.getStableInsetBottom();
+                if (current == this && imeOccludesBottom != occluded) {
+                    imeOccludesBottom = occluded;
+                    nativeSetImeOccludesBottom(occluded);
+                }
+                // Keep HuxerUI's viewport and safe-area updates for the page and input fields.
+                return view.onApplyWindowInsets(insets);
+            });
+        }
+        super.setContentView(content);
     }
 
     @Override
@@ -262,6 +286,7 @@ public final class MainActivity extends HuxerUIActivity {
         runtimeReader.shutdownNow();
         if (current == this) {
             current = null;
+            nativeSetImeOccludesBottom(false);
         }
         super.onDestroy();
     }

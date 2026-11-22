@@ -396,7 +396,7 @@ inline bool IsDarkTheme(const huxerui::ThemeSpec& theme) noexcept {
     return theme.brightness == huxerui::ThemeBrightness::Dark;
 }
 
-// 首页流量与流量统计共用的方向色，不随用户强调色或警告语义色改变。
+// 连接详情的方向色，独立于用户强调色和警告语义色。
 struct TrafficColors {
     huxerui::Color upload;
     huxerui::Color download;
@@ -435,7 +435,7 @@ inline huxerui::Color FluxStateLayerColor(huxerui::Color color, float opacity) {
 
 inline huxerui::Indication ResolveFluxIndication(const huxerui::ThemeSpec& theme,
     std::optional<huxerui::Color> foreground = std::nullopt) {
-    const auto color = foreground.value_or(theme.colors.primary);
+    const auto color = foreground.value_or(theme.colors.on_surface);
     return {
         .focus = huxerui::IndicationLayer{.fill = FluxStateLayerColor(color, kInteractionFocusOpacity)},
         .hover = huxerui::IndicationLayer{.fill = FluxStateLayerColor(color, kInteractionHoverOpacity)},
@@ -449,7 +449,7 @@ inline huxerui::Indication ResolveCardIndication(const huxerui::ThemeSpec& theme
     auto hover = indication.hover.value_or(huxerui::IndicationLayer{});
     hover.fill.reset();
     const auto color = selected ? MixThemeColor(theme.colors.primary, theme.colors.on_surface, 0.22F)
-                                : theme.colors.primary;
+                                : MixThemeColor(theme.colors.outline, theme.colors.on_surface_variant, 0.48F);
     hover.border = huxerui::Border{color, kCardOutlineWidth};
     hover.placement = huxerui::IndicationPlacement::AboveContent;
     indication.hover = hover;
@@ -462,26 +462,19 @@ inline void ApplyFluxInteractionTheme(huxerui::ThemeSpec& theme) {
 
 // 覆盖 ButtonStyle 时必须同时提供禁用态，不能带回 Default() 的深色文字。
 // 使用中性表面区分不可操作状态，同时保持标签在深浅主题下可读。
-inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme) {
+inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme, bool primary = false) {
     huxerui::ButtonStyle style;
     style.corner_radii = huxerui::CornerRadii{theme.shapes.small};
-    style.background = theme.colors.primary;
+    style.background = primary ? theme.colors.primary : theme.colors.secondary_container;
+    const auto foreground = primary ? theme.colors.on_primary : theme.colors.on_secondary_container;
     style.label_style = {huxerui::Font::System(theme.typography.label_large),
-                         theme.colors.on_primary};
-    style.indication = ResolveFluxIndication(theme, theme.colors.on_primary);
+                         foreground};
+    style.indication = ResolveFluxIndication(theme, foreground);
     auto disabledBackground = theme.colors.on_surface;
     disabledBackground.alpha *= 0.10F;
     style.disabled_background = disabledBackground;
     style.disabled_label = theme.colors.on_surface;
     style.disabled_label.alpha *= 0.62F;
-    return style;
-}
-
-inline huxerui::ButtonStyle ResolveFluxSecondaryButtonStyle(const huxerui::ThemeSpec& theme) {
-    auto style = ResolveFluxButtonStyle(theme);
-    style.background = theme.colors.surface_container_high;
-    style.label_style.foreground = theme.colors.on_surface;
-    style.indication = ResolveFluxIndication(theme);
     return style;
 }
 
@@ -537,9 +530,7 @@ inline FluxShadowScheme ResolveFluxShadows(const huxerui::ThemeSpec& theme) {
 }
 
 inline huxerui::Color CompactNavigationIndicatorColor(const huxerui::ThemeSpec& theme) {
-    auto color = theme.colors.primary;
-    color.alpha = 0.16F;
-    return color;
+    return FluxStateLayerColor(theme.colors.on_surface, 0.10F);
 }
 
 inline huxerui::Color CompactNavigationSurfaceColor(const huxerui::ThemeSpec& theme) {

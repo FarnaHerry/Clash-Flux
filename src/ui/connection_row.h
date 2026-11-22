@@ -178,9 +178,9 @@ inline huxerui::View ConnectionRowContent(ConnectionRow row, std::string upRate,
                 row.network.empty()
                     ? PlaceholderSlot(0.0F, 18.0F)
                     : huxerui::View{huxerui::Text(row.network).Style(huxerui::TextStyle{
-                          huxerui::Font::Monospace(font_size::kCaption), theme.colors.primary})
+                          huxerui::Font::Monospace(font_size::kCaption), theme.colors.on_secondary_container})
                           .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(5.0F, 2.0F)),
-                                huxerui::Background(theme.colors.primary_container),
+                                huxerui::Background(theme.colors.secondary_container),
                                 huxerui::CornerRadius(4.0F))},
                 huxerui::Text(ConnectionPreviewText(host, compact ? 34 : 50)).Style(huxerui::TextStyle{
                     huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface})

@@ -357,9 +357,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             co_await huxerui::Delay(std::chrono::duration<double>{duration});
             animating.Get()->animating = false;
         });
-        const huxerui::TransitionSpec reveal{
-            huxerui::CircularRevealTransition{}, huxerui::TweenSpec{motion.slow}};
-        transition.RunFromCurrentInteraction(reveal, std::move(mutation));
+        RunThemeModeReveal(transition, motion.slow, std::move(mutation));
     };
 
     const auto dialog = huxerui::UseDialog();
@@ -432,7 +430,6 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const std::size_t selected = LanguageIndex(settings.language);
     std::vector<huxerui::View> choices;
     for (std::size_t index = 0; index < kLanguages.size(); ++index) {
-        if (index != 0) choices.push_back(huxerui::Divider());
         choices.push_back(
             huxerui::RadioButton(index == 0 ? Localized("自动跟随系统语言") : kLanguageNames[index], settings.ready && index == selected)
                 .OnChanged([settingsModel, index, onSelected](bool checked) {
@@ -790,11 +787,11 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                           : Localized("确认后将保存配置、断开代理并关闭 Clash-Flux，然后启动安装。系统可能要求安装授权。")),
                     }.With(huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
                     DialogActions({DialogAction(Localized("取消"), [context] { context.Dismiss(); }, false),
-                        huxerui::Button(kUpdateUsesSystemInstaller ? Localized("继续安装") : Localized("关闭并安装"))
-                          .OnClick([context, runtime] {
+                        DialogAction(kUpdateUsesSystemInstaller ? Localized("继续安装") : Localized("关闭并安装"),
+                          [context, runtime] {
                             context.Dismiss();
                             if (runtime->installAppUpdate) runtime->installAppUpdate();
-                        })}), DialogSize::Small);
+                        }, true)}), DialogSize::Small);
                 });
             };
             updateRows.push_back(AboutActionRow(

@@ -66,7 +66,6 @@
 #include "website_test_card.h"
 #include "qr_scanner_control.h"
 #include "share_qr.h"
-#include "website_test_editor.h"
 #include "website_test_grid.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
@@ -390,26 +389,14 @@ huxerui::View WebsiteFixtureRoot() {
     websiteFixture = huxerui::UseService<WebsiteTestModel>();
     websiteTasks = huxerui::UseApplicationTaskScope();
     const auto visible = huxerui::UseState(true);
-    const auto menuTasks = huxerui::UseTaskScope();
     const auto rows = websiteFixture->sites.Get();
     const auto offset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     std::vector<huxerui::View> cards;
-    const auto dialog = huxerui::UseDialog();
     for (const auto& row : rows)
         cards.push_back(WebsiteTestCard(row, [id = row.id] {
             websiteFixture->Start(*websiteTasks, *websiteProbe, {id});
-        }, [dialog, row] {
-            const auto model = websiteFixture;
-            model->customUrl = huxerui::TextEditingValue::FromText(row.url);
-            model->customName = huxerui::TextEditingValue::FromText(row.name);
-            ShowEditorDialog(dialog, [model, id = row.id](huxerui::DialogContext context) {
-                return WebsiteTestEditorDialog(context, model, true, [model, id] {
-                    return model->Update(id, model->customUrl.Get().text, model->customName.Get().text);
-                });
-            });
-        }, [id = row.id] { websiteFixture->Remove(id); }, menuTasks)
-            .Key("website-card-" + std::to_string(row.id)));
+        }).Key("website-card-" + std::to_string(row.id)));
     return huxerui::Column {
       huxerui::Button("Toggle website panel").OnClick([visible] { visible = !visible.Get(); }),
       visible.Get() ? WebsiteTestGrid(cards, compact, offset).Key("website-panel")
@@ -429,28 +416,22 @@ void testWebsiteTests() {
         ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("zh")});
         ui.PumpAndSettle();
         const auto shared = websiteFixture;
-        const auto openWebsiteMenu = [&](int id) {
-            const auto menu = ui.Find(UiSelector::Key("website-menu-" + std::to_string(id)));
-            if (width == 320.0F) {
-                check(menu.Exists(), "compact website cards keep the touch menu button"); menu.Tap();
-            } else {
-                check(!menu.Exists(), "wide website cards omit the overflow button");
-                const auto info = ui.Find(UiSelector::Key("website-card-" + std::to_string(id))).One();
-                const auto bounds = info.bounds;
-                const huxerui::Point point{bounds.x + 4.0F, bounds.y + bounds.height * 0.5F};
-                static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Down, .pointer_id = 111, .position = point,
-                    .device_kind = huxerui::PointerDeviceKind::Mouse, .changed_button = huxerui::PointerButton::Secondary,
-                    .pressed_buttons = huxerui::PointerButton::Secondary}));
-                static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Up, .pointer_id = 111, .position = point,
-                    .device_kind = huxerui::PointerDeviceKind::Mouse, .changed_button = huxerui::PointerButton::Secondary}));
-            }
-            ui.PumpAndSettle();
-        };
         check(!ui.Find(UiSelector::Text("https://www.baidu.com/")).Exists(), "website cards show names without a URL subtitle");
-        check(WebsiteNameFromUrl("https://www.example.test:8443/Path") == "example.test" &&
-              WebsiteNameFromUrl("http://192.0.2.1:8080/") == "192.0.2.1" &&
-              WebsiteNameFromUrl("http://[2001:db8::1]:8080/") == "2001:db8::1",
-              "automatic names remove URL decoration and retain the actual domain or IPv4/IPv6 host");
+        check(ui.Find(UiSelector::Key("website-icon-0")).Exists() &&
+              ui.Find(UiSelector::Key("website-icon-1")).Exists(),
+              "website cards show their site icons at compact and expanded widths");
+        check(!ui.Find(UiSelector::Key("website-menu-0")).Exists(),
+              "fixed website cards have no edit or delete button");
+        const auto bounds = ui.Find(UiSelector::Key("website-card-0")).One().bounds;
+        const huxerui::Point point{bounds.x + 4.0F, bounds.y + bounds.height * 0.5F};
+        static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Down, .pointer_id = 111, .position = point,
+            .device_kind = huxerui::PointerDeviceKind::Mouse, .changed_button = huxerui::PointerButton::Secondary,
+            .pressed_buttons = huxerui::PointerButton::Secondary}));
+        static_cast<void>(ui.SendPointer({.type = huxerui::PointerEventType::Up, .pointer_id = 111, .position = point,
+            .device_kind = huxerui::PointerDeviceKind::Mouse, .changed_button = huxerui::PointerButton::Secondary}));
+        ui.Pump(kSettle);
+        check(!ui.Find(UiSelector::Key("action-menu-surface")).Exists(),
+              "right-clicking a fixed site does not open an edit menu");
 
         const auto first = ui.Find(UiSelector::Text("Baidu")).One().bounds;
         const auto second = ui.Find(UiSelector::Text("Bilibili")).One().bounds;
@@ -471,57 +452,17 @@ void testWebsiteTests() {
         ui.Find(UiSelector::Key("website-panel")).ScrollBy({0.0F, -1000.0F});
         ui.SetWindowMetrics({.viewport = {width, 640}});
         ui.PumpAndSettle();
-        check(!shared->Add("file:///etc/hosts") && !shared->Add("https://user:pass@example.test/") &&
-              !shared->Add("https://example.test/#secret") && !shared->Add("not a URL"),
-              "custom websites accept only usable HTTP(S) targets without credentials or fragments");
-        check(shared->Add(" https://custom.example.test/path ", "  自定义站点  ") &&
-              !shared->Add("https://custom.example.test/path"),
-              "custom website addition trims and rejects duplicate targets");
-        check(shared->sites.Get().back().name == "自定义站点" &&
-              shared->sites.Get().back().url == "https://custom.example.test/path",
-              "a trimmed remark becomes the card title");
-        check(shared->Add("https://no-remark.example.test/") &&
-              shared->sites.Get().back().name == "no-remark.example.test",
-              "a missing remark falls back to the URL host");
-        check(NormalizeWebsiteUrl(" Example.COM/Path?q=A ") == "https://example.com/Path?q=A" &&
-              NormalizeWebsiteUrl("//EXAMPLE.com") == "https://example.com/" &&
-              NormalizeWebsiteUrl("HTTP://EXAMPLE.com:8080") == "http://example.com:8080/" &&
-              NormalizeWebsiteUrl("localhost:8080/path") == "https://localhost:8080/path" &&
-              NormalizeWebsiteUrl("example.com/Path?url=HTTPS://Other.test") ==
-                  "https://example.com/Path?url=HTTPS://Other.test" &&
-              NormalizeWebsiteUrl("[::1]:8443") == "https://[::1]:8443/",
-              "website normalization fills HTTPS and preserves explicit HTTP, ports, paths and queries");
-        check(!NormalizeWebsiteUrl("") && !NormalizeWebsiteUrl("ftp://example.test/") &&
-              !NormalizeWebsiteUrl("mailto:a@example.test") && !NormalizeWebsiteUrl("https://:443") &&
-              !NormalizeWebsiteUrl("example.test:99999") && !NormalizeWebsiteUrl("example.test:") &&
-              !NormalizeWebsiteUrl("example.test/#fragment") && !NormalizeWebsiteUrl("user@example.test") &&
-              !NormalizeWebsiteUrl(std::string(2049, 'a')),
-              "auto completion does not admit invalid, oversized or unsupported addresses");
-        check(!shared->Add("WWW.BAIDU.COM") && !shared->Add("//www.baidu.com/"),
-              "presets and additions share normalized duplicate detection");
         const auto metrics = std::make_shared<WebsiteFixtureMetrics>();
         const WebsiteTestModel::Probe slow = [metrics](std::string) -> huxerui::Task<WebsiteTestResult> {
             struct Guard { std::shared_ptr<WebsiteFixtureMetrics> value; ~Guard() { --value->active; } } guard{metrics};
             ++metrics->active; ++metrics->started;
             metrics->maximum = std::max(metrics->maximum, metrics->active);
             co_await huxerui::Delay(std::chrono::milliseconds{200});
-            co_return WebsiteTestResult{WebsiteTestPhase::Responded, 403};
+            co_return WebsiteTestResult{WebsiteTestPhase::Failed, 403, "HTTP 403"};
         };
         websiteProbe = std::make_shared<WebsiteTestModel::Probe>(slow);
         const auto testAction = [&](int id) {
-            return ui.Find(UiSelector::Key("website-test-" + std::to_string(id)))
-                .Find(UiSelector::Type<huxerui::IconButton>());
-        };
-        const auto pulsePath = [&ui] {
-            const auto frame = ui.CaptureSnapshot().ToString();
-            constexpr std::string_view foreground = "foreground {\n";
-            for (auto start = frame.find(foreground); start != std::string::npos;
-                 start = frame.find(foreground, start + foreground.size())) {
-                const auto path = frame.find_first_not_of(' ', start + foreground.size());
-                if (std::string_view{frame}.substr(path).starts_with("stroke-path {"))
-                    return frame.substr(path, frame.find("brush {", path) - path);
-            }
-            return std::string{};
+            return ui.Find(UiSelector::Key("website-test-" + std::to_string(id)));
         };
         const auto idleBounds = testAction(0).One().bounds;
         const auto websiteLayout = [&ui] {
@@ -530,21 +471,20 @@ void testWebsiteTests() {
                 ui.Find(UiSelector::Key("website-card-1")).One().bounds,
                 ui.Find(UiSelector::Key("website-card-3")).One().bounds,
                 ui.Find(UiSelector::Key("website-result-0")).One().bounds,
-                ui.Find(UiSelector::Key("website-time-0")).One().bounds,
+                ui.Find(UiSelector::Key("website-test-slot-0")).One().bounds,
             };
         };
         const auto idleLayout = websiteLayout();
-        check(pulsePath().empty(), "idle website actions use the packaged heartbeat icon");
+        check(testAction(0).Find(UiSelector::Key("website-probe-icon")).Exists() &&
+              idleBounds.y > ui.Find(UiSelector::Text("Baidu")).One().bounds.y,
+              "the outlined lightning appears in the bottom-right test slot");
         ui.Find(UiSelector::Key("website-test-0")).Tap();
         ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running && metrics->active == 1,
               "tapping one card starts only that card");
-        const auto firstPulse = pulsePath();
         ui.Pump(std::chrono::milliseconds{112});
-        const auto movingPulse = pulsePath();
-        check(!firstPulse.empty() && !movingPulse.empty() && movingPulse != firstPulse &&
-              testAction(0).One().bounds == idleBounds,
-              "the painted heartbeat moves through a fixed-size website action");
+        check(testAction(0).Find(UiSelector::Key("node-probe-dots")).Exists(),
+              "website tests share the fixed-slot proxy loading dots");
         check(websiteLayout() == idleLayout, "starting a website test preserves cards and result slots");
         check(!testAction(0).One().enabled && testAction(1).One().enabled,
               "a loading website action is disabled while idle websites remain clickable");
@@ -569,8 +509,10 @@ void testWebsiteTests() {
               "each card settles with its own result");
         check(testAction(0).One().enabled && testAction(1).One().enabled,
               "website actions become clickable again after cancellation or completion");
-        check(pulsePath().empty(), "completed website requests restore the idle icon and stop painting the waveform");
-        shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
+        check(testAction(0).Find(UiSelector::Key("website-probe-icon")).Exists() &&
+              !testAction(1).Find(UiSelector::Key("node-probe-dots")).Exists(),
+              "cancelled tests restore lightning and completed tests remove the loading dots");
+        shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6});
         ui.Pump(std::chrono::milliseconds{1});
         check(metrics->active == 3 && metrics->maximum == 3, "website batch launches exactly three asynchronous requests");
         const auto startedBeforeDuplicate = metrics->started;
@@ -578,15 +520,15 @@ void testWebsiteTests() {
         ui.Pump(std::chrono::milliseconds{1});
         check(metrics->started == startedBeforeDuplicate && shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running,
               "a site that is already testing is not started twice");
-        const auto custom = shared->sites.Get().size() - 1;
-        shared->Start(*websiteTasks, slow, {custom});
+        const auto last = shared->sites.Get().back().id;
+        shared->Start(*websiteTasks, slow, {last});
         ui.Pump(std::chrono::milliseconds{1});
-        check(shared->sites.Get()[custom].result.phase == WebsiteTestPhase::Queued,
+        check(shared->sites.Get()[last].result.phase == WebsiteTestPhase::Queued,
               "an idle site accepts its own test while other sites are already running");
-        shared->Cancel(custom);
-        check(shared->sites.Get()[custom].result.phase == WebsiteTestPhase::Cancelled && metrics->active == 3,
+        shared->Cancel(last);
+        check(shared->sites.Get()[last].result.phase == WebsiteTestPhase::Cancelled && metrics->active == 3,
               "cancelling a queued site leaves every running site untouched");
-        shared->Start(*websiteTasks, slow, {custom});
+        shared->Start(*websiteTasks, slow, {last});
         shared->Cancel(0);
         ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Cancelled && metrics->active == 3 &&
@@ -610,9 +552,7 @@ void testWebsiteTests() {
         ui.PumpAndSettle();
         check(ui.Find(UiSelector::Text("失败")).Exists() && !ui.Find(UiSelector::Text("HTTP 403")).Exists(),
               "HTTP rejection shows a failure without status/latency clutter");
-        check(shared->sites.Get()[0].result.completedAt > 0 && ui.Find(UiSelector::Key("website-time-0")).Exists(),
-              "completed results retain their wall-clock completion timestamp");
-        check(websiteLayout() == idleLayout, "showing a completion time preserves the card geometry");
+        check(websiteLayout() == idleLayout, "showing a failure preserves the card geometry");
         ui.SetWindowMetrics({.viewport = {width == 320.0F ? 960.0F : 320.0F, 640}});
         ui.PumpAndSettle();
         check(websiteFixture == shared && shared->sites.Get()[0].result.status == 403,
@@ -623,91 +563,61 @@ void testWebsiteTests() {
         check(card.width <= width && card.x >= 0, "production website card content fits narrow and expanded widths");
         shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
         ui.Pump(std::chrono::milliseconds{1});
-        check(websiteLayout() == idleLayout, "retesting with queued sites preserves the grid as completion times clear");
+        check(websiteLayout() == idleLayout, "retesting with queued sites preserves the grid");
         ui.PumpAndSettle();
         const auto completed = shared->sites.Get();
         check(!shared->AnyActive() && metrics->maximum == 3 && std::all_of(completed.begin(),
             completed.begin() + 8, [](const auto& row) { return row.result.status == 403; }),
             "bounded website workers drain the complete preset batch");
-        auto located = shared->sites.Get();
-        located[0].result = {WebsiteTestPhase::Responded, 200, "", "GB", 1700000000};
-        shared->sites = std::move(located); ui.Pump(kSettle);
-        check(ui.Find(UiSelector::Text("GB")).Exists() && !ui.Find(UiSelector::Text("HTTP 200")).Exists(),
-              "successful website results render their measured country code and packaged flag");
-        check(websiteLayout() == idleLayout, "the country flag and completion time fit the same stable result row");
-        located = shared->sites.Get(); located[0].result.country.clear(); located[0].result.locationSource = WebsiteLocationSource::None; shared->sites = std::move(located); ui.Pump(kSettle);
-        check(ui.Find(UiSelector::Text("可访问")).Exists(), "successful HTTP without location evidence shows reachable instead of failure or unknown location");
+        auto results = shared->sites.Get();
+        results[0].result = {.phase = WebsiteTestPhase::Responded, .status = 200,
+            .outbound = "US-Node", .latencyMs = 1015};
+        shared->sites = std::move(results); ui.Pump(kSettle);
+        const auto route = ui.Find(UiSelector::Key("website-result-0"));
+        check(route.Find(UiSelector::Text("US-Node")).Exists() &&
+              testAction(0).Find(UiSelector::Text("1015")).Exists(),
+              "successful tests show the observed outbound on the left and latency on the right");
+        check(websiteLayout() == idleLayout, "outbound and latency fit the stable result row");
+        results = shared->sites.Get();
+        results[0].result.outbound = "DIRECT";
+        shared->sites = std::move(results); ui.Pump(kSettle);
+        check(route.Find(UiSelector::Text("直连")).Exists(), "confirmed direct is localized");
+        results = shared->sites.Get();
+        results[0].result.outbound.clear();
+        shared->sites = std::move(results); ui.Pump(kSettle);
+        check(route.Find(UiSelector::Text("出站未确认")).Exists() &&
+              testAction(0).Find(UiSelector::Text("1015")).Exists(),
+              "unconfirmed routing preserves successful latency");
+        const auto startedBeforeRetry = metrics->started;
+        const auto number = testAction(0).Find(UiSelector::Text("1015")).One().bounds;
+        const auto button = testAction(0).One().bounds;
+        const auto slot = idleLayout.back();
+        check(button.x > slot.x + 4.0F && std::abs(button.x + button.width - slot.x - slot.width) < 0.1F &&
+              std::abs(number.x - button.x - (button.width - number.width) * 0.5F) < 0.1F,
+              "the hover surface follows the centered latency number at the trailing edge");
+        const huxerui::Point blank{slot.x + 1.0F, slot.y + slot.height * 0.5F};
+        const huxerui::Point onNumber{number.x + number.width * 0.5F, number.y + number.height * 0.5F};
+        const auto hoverAt = [&ui](huxerui::Point point) {
+            ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 141,
+                .position = point, .device_kind = huxerui::PointerDeviceKind::Mouse});
+            ui.Pump();
+            ui.Pump(std::chrono::milliseconds{800});
+            ui.Pump(kSettle);
+        };
+        hoverAt(blank);
+        check(!ui.Find(UiSelector::Text("1015 ms")).Exists(), "the empty slot does not open a latency tooltip");
+        ui.TapAt(blank); ui.Pump(kSettle);
+        check(metrics->started == startedBeforeRetry, "the empty slot does not start a retest");
+        hoverAt(onNumber);
+        check(ui.Find(UiSelector::Text("1015 ms")).Exists(), "hovering the latency opens its tooltip");
+        ui.TapAt(onNumber); ui.PumpAndSettle();
+        check(metrics->started == startedBeforeRetry + 1, "the latency number can retest the site");
         shared->Start(*websiteTasks, [](std::string) -> huxerui::Task<WebsiteTestResult> {
             throw std::runtime_error("injected probe failure"); co_return WebsiteTestResult{};
         }, {0});
         ui.PumpAndSettle();
         check(!shared->AnyActive() && shared->sites.Get()[0].result.phase == WebsiteTestPhase::Failed,
               "probe exceptions release their slot and leave the website ready for retry");
-        openWebsiteMenu(0);
-        ui.Find(UiSelector::Text("编辑")).Tap(); ui.Pump(kSettle);
-        check(ui.Find(UiSelector::Key("website-editor-url")).Exists() &&
-              shared->customUrl.Get().text == "https://www.baidu.com/", "presets open the shared editor");
-        check(ui.Find(UiSelector::Key("website-editor-name")).One().bounds.y < ui.Find(UiSelector::Key("website-editor-url")).One().bounds.y,
-              "name precedes URL in the shared website editor");
-        ui.Find(UiSelector::Key("website-editor-url")).Tap();
-        ui.Find(UiSelector::Key("website-editor-url")).ReplaceText("www.bilibili.com");
-        ui.Pump(kSettle);
-        ui.Find(UiSelector::Key("website-editor-submit")).Tap(); ui.Pump(kSettle);
-        check(ui.Find(UiSelector::Key("website-editor-url")).Exists() &&
-              shared->sites.Get()[0].url == "https://www.baidu.com/" &&
-              shared->customUrl.Get().text == "www.bilibili.com", "failed edits preserve the original and draft");
-        ui.PressKey(huxerui::Key::Escape); ui.Pump(kSettle);
-        check(ui.Find(UiSelector::Key("discard-keep")).Exists(), "editor dismissal guards unsaved changes");
-        ui.Find(UiSelector::Key("discard-keep")).Tap(); ui.Pump(kSettle);
-        shared->customUrl = huxerui::TextEditingValue::FromText("edited.example.test/Path?q=X");
-        shared->customName = huxerui::TextEditingValue::FromText("  Edited preset  ");
-        ui.Pump(kSettle);
-        ui.Find(UiSelector::Key("website-editor-submit")).Tap(); ui.PumpAndSettle();
-        check(!ui.Find(UiSelector::Key("website-editor-url")).Exists() &&
-              shared->sites.Get()[0].url == "https://edited.example.test/Path?q=X" &&
-              shared->sites.Get()[0].name == "Edited preset" &&
-              shared->sites.Get()[0].result.phase == WebsiteTestPhase::Idle,
-              "saving a preset uses normalized addresses and clears the previous target result");
-        shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4});
-        ui.Pump(std::chrono::milliseconds{1});
-        check(shared->Update(0, "edited.example.test/Path?q=X", "Rename during test") &&
-              shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running && metrics->active == 3,
-              "remark-only edits preserve the active request");
-        check(!shared->Update(0, "www.bilibili.com") && metrics->active == 3,
-              "invalid edits do not cancel the running target");
-        check(shared->Update(0, "replacement.example.test") &&
-              shared->sites.Get()[0].result.phase == WebsiteTestPhase::Idle,
-              "changing a running target cancels it before publishing the replacement");
-        shared->Start(*websiteTasks, slow, {0});
-        check(shared->Remove(0) && !shared->Remove(0), "queued preset deletion is limited to its stable ID");
-        // Delete the first remaining in-flight site through the production menu and confirmation.
-        ui.Pump(std::chrono::milliseconds{1});
-        openWebsiteMenu(1);
-        ui.Find(UiSelector::Text("删除")).Tap(); ui.Pump(std::chrono::milliseconds{1});
-        check(shared->sites.Get().front().id == 1, "delete menu waits for explicit confirmation");
-        ui.Find(UiSelector::Key("website-delete-confirm")).Tap(); ui.PumpAndSettle();
-        check(shared->sites.Get().front().id == 2 && !shared->AnyActive() && metrics->active == 0 &&
-              shared->sites.Get().front().result.status == 403,
-              "deleting a running preset preserves other requests and their results after indices shift");
-        ui.Find(UiSelector::Key("website-test-2")).Tap(); ui.Pump(std::chrono::milliseconds{1});
-        check(shared->sites.Get().front().id == 2 &&
-              shared->sites.Get().front().result.phase == WebsiteTestPhase::Running,
-              "card actions still target the stable ID after preceding presets are deleted");
-        check(!testAction(2).One().enabled, "a reindexed running website still exposes a disabled loading action");
-        ui.PumpAndSettle();
-        check(shared->Add("replacement.example.test") && shared->sites.Get().back().id > 9,
-              "readding a removed URL allocates a fresh identity");
-        const auto remaining = shared->sites.Get();
-        for (const auto& row : remaining) shared->Remove(row.id);
-        check(shared->sites.Get().empty() && shared->Add("fresh.example.test"),
-              "all defaults can be removed and the list can be repopulated");
-        while (shared->sites.Get().size() < 24)
-            check(shared->Add("https://extra" + std::to_string(shared->sites.Get().size()) + ".example.test/"),
-                  "custom website slots can be filled");
-        check(!shared->Add("https://overflow.example.test/"), "website session has a bounded card count");
-        const auto last = shared->sites.Get().back();
-        check(shared->Update(last.id, last.url, "At capacity"), "a full list still allows editing an existing site");
-
     }
     websiteFixture.reset(); websiteTasks.reset(); websiteProbe.reset();
 }
@@ -733,32 +643,26 @@ void testWebsiteNetworkAndTimeout() {
     ui.Pump(std::chrono::milliseconds{5}); ui.Pump(std::chrono::milliseconds{25});
     for (int i = 0; i < 3; ++i)
         check(model->sites.Get()[i].result.phase == WebsiteTestPhase::Failed &&
-              model->sites.Get()[i].result.error == clashflux::website::kTimeoutError && model->sites.Get()[i].result.completedAt > 0,
+              model->sites.Get()[i].result.error == clashflux::website::kTimeoutError,
               "hard timeout publishes a completed failure for every stalled slot");
     ui.PumpAndSettle();
     check(*active == 0 && !model->AnyActive() && model->sites.Get()[3].result.status == 200,
           "timed-out probes are cancelled and queued websites continue without deadlocking the batch");
 
-    for (int scenario = 0; scenario < 4; ++scenario) {
-        const auto requests = std::make_shared<std::vector<huxerui::HttpRequest>>();
-        const WebsiteHttpExchange exchange = [requests, scenario](huxerui::HttpRequest request) -> huxerui::Task<WebsiteHttpReply> {
-            requests->push_back(request);
-            if (request.method == huxerui::HttpMethod::Head)
-                co_return WebsiteHttpReply{200, "https://site.test/final", "", ""};
-            co_return WebsiteHttpReply{scenario == 2 ? 404 : 200,
-                scenario == 1 ? "https://unrelated.test/cdn-cgi/trace" : request.url,
-                scenario == 3 ? "not a trace" : "ip=192.0.2.1\nloc=SG\n", ""};
-        };
-        model->Start(*websiteTasks, [exchange](std::string url) { return ProbeWebsiteNetwork(exchange, std::move(url)); }, {0});
-        ui.Pump(std::chrono::milliseconds{1}); ui.Pump(std::chrono::milliseconds{10});
-        const auto& result = model->sites.Get()[0].result;
-        check(result.phase == WebsiteTestPhase::Responded && result.status == 200 && result.country == (scenario == 0 ? "SG" : ""),
-              "country comes only from a valid trace on the tested origin; missing/redirected geography remains unknown");
-        check(requests->size() == 2 && (*requests)[0].method == huxerui::HttpMethod::Head &&
-              (*requests)[1].url == "https://site.test/cdn-cgi/trace" &&
-              (*requests)[0].timeout && (*requests)[1].timeout && *(*requests)[1].timeout <= *(*requests)[0].timeout,
-              "system-network probing follows the final website origin and shares the remaining deadline without a forced proxy");
-    }
+    const auto requests = std::make_shared<std::vector<huxerui::HttpRequest>>();
+    const WebsiteHttpExchange exchange = [requests](huxerui::HttpRequest request, WebsiteStreamObserver)
+        -> huxerui::Task<WebsiteHttpReply> {
+        requests->push_back(request);
+        co_return WebsiteHttpReply{.status = 200, .url = "https://site.test/final", .latencyMs = 85};
+    };
+    model->Start(*websiteTasks, [exchange](std::string url) {
+        return ProbeWebsiteNetwork(exchange, std::move(url));
+    }, {0});
+    ui.Pump(std::chrono::milliseconds{1}); ui.Pump(std::chrono::milliseconds{10});
+    check(requests->size() == 1 && requests->front().method == huxerui::HttpMethod::Head &&
+          requests->front().timeout && *requests->front().timeout <= clashflux::website::kTimeout &&
+          model->sites.Get()[0].result.latencyMs == 85 && model->sites.Get()[0].result.outbound.empty(),
+          "the HEAD probe retains measured header latency without additional site requests");
     ui.Pump(std::chrono::seconds{11});
     check(model->sites.Get()[0].result.phase == WebsiteTestPhase::Responded && !model->AnyActive(),
           "old watchdogs cannot overwrite successful retries or leave a new test busy");
@@ -789,69 +693,44 @@ void testWebsiteNetworkAndTimeout() {
         check(WebsiteRouteLeaf(sameBody, {"c1", "c2"}, "www.baidu.com") == "HK-Node",
               "WebsiteRouteLeaf keeps agreed pooled connections when all match baseline");
     }
-    {
-        auto flight = model->AcquireEgressFlight("runtime|1|1|7899\nUS-Node");
-        check(model->IsEgressInFlight("runtime|1|1|7899\nUS-Node"),
-              "AcquireEgressFlight marks egress key in flight");
-        auto moved = std::move(flight);
-        check(model->IsEgressInFlight("runtime|1|1|7899\nUS-Node"),
-              "moving EgressFlightGuard preserves ownership without early release");
-    }
-    check(!model->IsEgressInFlight("runtime|1|1|7899\nUS-Node"),
-          "destroying EgressFlightGuard clears in-flight key");
-    model->StoreEgress("runtime|1|1|7899\nUS-Node", "US");
-    check(model->CachedEgress("runtime|1|1|7899\nUS-Node") == std::optional<std::string>{"US"},
-          "WebsiteTestModel caches verified egress country per runtime and outbound");
-
-    for (int mode = 0; mode < 4; ++mode) {
-        const WebsiteHttpExchange nonCfExchange = [mode](huxerui::HttpRequest request) -> huxerui::Task<WebsiteHttpReply> {
-            if (request.method == huxerui::HttpMethod::Head) {
-                co_return WebsiteHttpReply{200, "https://www.youtube.com/", "", "",
-                                            mode == 0 ? "US-Node" : ""};
-            }
-            co_return WebsiteHttpReply{404, request.url, "", ""};
+    for (int mode = 0; mode < 5; ++mode) {
+        const WebsiteHttpExchange routedExchange = [mode](huxerui::HttpRequest request, WebsiteStreamObserver observe)
+            -> huxerui::Task<WebsiteHttpReply> {
+            check(request.method == huxerui::HttpMethod::Head, "route probe uses HEAD");
+            WebsiteHttpReply reply{.status = mode == 4 ? 403 : 200,
+                .url = "https://www.youtube.com/", .latencyMs = 76};
+            if ((mode == 0 || mode == 4) && observe) reply.outbound = co_await observe(reply.url);
+            co_return reply;
         };
         WebsiteRouteLocator locator;
         locator.begin = [mode]() -> huxerui::Task<std::optional<WebsiteRouteBaseline>> {
             if (mode == 2) co_return std::nullopt;
-            co_return WebsiteRouteBaseline{"runtime|1|1|7899", 7899, false, {"old"}};
+            co_return WebsiteRouteBaseline{"runtime|1|1|7899", {"old"}};
         };
-        locator.observe = [mode](WebsiteRouteBaseline, std::string finalUrl) -> huxerui::Task<std::string> {
-            check(finalUrl == "https://www.youtube.com/", "fallback route observer receives final URL");
-            co_return mode == 1 ? std::string{"JP-Node"} : std::string{};
+        locator.observe = [mode](WebsiteRouteBaseline baseline, std::string finalUrl) -> huxerui::Task<std::string> {
+            check(finalUrl == "https://www.youtube.com/" && baseline.connectionIds == std::vector<std::string>{"old"},
+                  "outbound observer receives the final URL and initial connection set");
+            if (mode == 3) throw std::runtime_error("injected route lookup failure");
+            if (mode == 1) co_return "JP-Node";
+            co_return "US-Node";
         };
-        locator.locate = [mode](std::optional<WebsiteRouteBaseline> base, std::string leaf,
-                                std::string host, std::chrono::milliseconds) -> huxerui::Task<WebsiteRouteResolution> {
-            check(host == "www.youtube.com", "locator receives normalized host");
-            if (mode == 0) {
-                check(base && leaf == "US-Node", "stream-observed leaf reaches locate");
-                co_return WebsiteRouteResolution{"US", WebsiteLocationSource::CoreOutbound};
-            }
-            if (mode == 1) {
-                check(base && leaf == "JP-Node", "fallback-observed leaf reaches locate");
-                co_return WebsiteRouteResolution{"JP", WebsiteLocationSource::CoreOutbound};
-            }
-            if (mode == 2) {
-                check(!base && leaf.empty(), "pure direct path invokes locate with nullopt baseline");
-                co_return WebsiteRouteResolution{"CN", WebsiteLocationSource::DirectEgress};
-            }
-            co_return WebsiteRouteResolution{};
+        locator.isDirect = [mode]() -> huxerui::Task<bool> {
+            check(mode == 2, "direct verification is used only without a runtime baseline");
+            co_return mode == 2;
         };
-        model->Start(*websiteTasks, [nonCfExchange, locator](std::string url) {
-            return ProbeWebsiteNetwork(nonCfExchange, std::move(url), locator);
+        model->Start(*websiteTasks, [routedExchange, locator](std::string url) {
+            return ProbeWebsiteNetwork(routedExchange, std::move(url), locator);
         }, {0});
-        ui.Pump(std::chrono::milliseconds{1});
-        ui.Pump(std::chrono::milliseconds{20});
+        ui.Pump(std::chrono::milliseconds{1}); ui.Pump(std::chrono::milliseconds{20});
         const auto& result = model->sites.Get()[0].result;
-        if (mode == 0) check(result.country == "US" && result.locationSource == WebsiteLocationSource::CoreOutbound,
-                             "non-Cloudflare site resolves US from stream-observed outbound");
-        else if (mode == 1) check(result.country == "JP" && result.locationSource == WebsiteLocationSource::CoreOutbound,
-                                  "non-Cloudflare site resolves JP from fallback-observed outbound");
-        else if (mode == 2) check(result.country == "CN" && result.locationSource == WebsiteLocationSource::DirectEgress,
-                                  "confirmed pure-direct desktop resolves CN with DirectEgress source");
-        else check(result.country.empty() && result.phase == WebsiteTestPhase::Responded &&
-                   result.locationSource == WebsiteLocationSource::None,
-                   "unconfirmed non-Cloudflare route leaves country empty");
+        const std::array expected{"US-Node", "JP-Node", "DIRECT", "", "US-Node"};
+        check(result.outbound == expected[mode], "website results retain the observed or independently verified outbound");
+        if (mode == 4)
+            check(result.phase == WebsiteTestPhase::Failed && !result.latencyMs && result.error == "HTTP 403",
+                  "HTTP rejection keeps the observed route and publishes failure");
+        else
+            check(result.phase == WebsiteTestPhase::Responded && result.latencyMs == 76,
+                  "route observation and lookup failure leave header latency intact");
     }
     websiteFixture.reset(); websiteTasks.reset(); websiteProbe.reset();
 }
@@ -1865,7 +1744,7 @@ void testLogActions() {
     // 空白占位符契约、首页活动节点解析与宽屏日志虚拟滚动回归。
     {
         using namespace clashflux::ui;
-        check(WebsiteTestTime(0).empty() && ConnectionRuleTypes("").empty() &&
+        check(ConnectionRuleTypes("").empty() &&
               ProfileSubscriptionAddress("relative/private?token=secret").empty(),
               "unset time, unknown rule type, and malformed subscription URL return blank instead of em-dash");
 
@@ -2181,6 +2060,27 @@ huxerui::View HomeGridRoot() {
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
         std::vector<huxerui::View> cards;
         for (const auto& spec : HomeCardCatalog(homeGridDesktop)) {
+            if (spec.kind == HomeCardKind::Download || spec.kind == HomeCardKind::Upload) {
+                const auto& theme = huxerui::UseTheme();
+                const bool hasHistory = model->populated.Get();
+                auto heading = huxerui::Row {
+                  huxerui::Row {}.With(huxerui::Frame{20.0F, 20.0F}).Key("traffic-icon"),
+                  huxerui::Text(std::string(spec.title)).Key("traffic-title"),
+                }.With(huxerui::Spacing(8.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
+                huxerui::View chart;
+                if (hasHistory) {
+                    chart = huxerui::Column {
+                      huxerui::Row {}.With(huxerui::Grow(1.0F)).Key("traffic-plot"),
+                    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
+                           huxerui::Padding(huxerui::EdgeInsets{.top = 6.0F, .right = 8.0F, .bottom = 4.0F, .left = 4.0F}));
+                }
+                auto body = HomeTrafficCardLayout(heading, huxerui::Text("0B/s").Key("traffic-rate"), chart,
+                    ResolveIslandTheme(theme).island_padding);
+                cards.push_back(HomeCardSurface(theme, body, std::string(spec.id), [] {
+                    return huxerui::Text("Card back");
+                }).LayoutValue<HomeCardSpan>({spec.width, spec.height}).Key("home-card-" + std::string(spec.id)));
+                continue;
+            }
             huxerui::View body = model->populated.Get()
                 ? huxerui::View{huxerui::Text("Live " + std::string(spec.id))}
                 : PlaceholderText(huxerui::Font::System(font_size::kBody));
@@ -2256,7 +2156,33 @@ void testFixedHomeGeometry() {
                       "running control placeholder preserves its responsive one/two-column span");
             }
             const auto viewport = ui.Find(UiSelector::Key("home-grid-viewport")).One().bounds;
+            const auto checkTrafficLayout = [&](const char* key) {
+                const auto card = ui.Find(UiSelector::Key(key));
+                const auto bounds = card.One().bounds;
+                const auto plot = card.Find(UiSelector::Key("traffic-plot"));
+                const auto icon = card.Find(UiSelector::Key("traffic-icon")).One().bounds;
+                const auto title = card.Find(UiSelector::Key("traffic-title")).One().bounds;
+                const auto rate = card.Find(UiSelector::Key("traffic-rate")).One().bounds;
+                check(plot.Exists() == populated.Get(), "idle traffic cards have no plot");
+                if (plot.Exists()) {
+                    const auto plotBounds = plot.One().bounds;
+                    check(std::abs(plotBounds.x - bounds.x) < 0.01F &&
+                              std::abs(plotBounds.width - bounds.width) < 0.01F &&
+                              std::abs(plotBounds.y + plotBounds.height - bounds.y - bounds.height) < 0.01F,
+                          "the traffic plot reaches both sides and the bottom of its card");
+                    check(std::abs(plotBounds.y - (rate.y + rate.height + 12.0F)) < 0.01F,
+                          "bleeding through the card padding leaves the gap above the chart intact");
+                }
+                check(icon.x > bounds.x && rate.x == icon.x && title.x > icon.x && icon.y > bounds.y,
+                      "the icon, title and rate remain inside the regular card padding");
+                return std::array{icon, title, rate};
+            };
+            const auto downloadLabels = checkTrafficLayout("home-card-download");
+            const auto uploadLabels = checkTrafficLayout("home-card-upload");
             populated = true; ui.PumpAndSettle();
+            check(checkTrafficLayout("home-card-download") == downloadLabels &&
+                      checkTrafficLayout("home-card-upload") == uploadLabels,
+                  "adding a traffic plot preserves both cards' icon and text bounds");
             for (std::size_t index = 0; index < catalog.size(); ++index) {
                 check(ui.Find(UiSelector::Key("home-card-" + std::string(catalog[index].id))).One().bounds == before[index],
                       "hydration changes card interiors without changing their actual positions or dimensions");
@@ -2265,6 +2191,10 @@ void testFixedHomeGeometry() {
                   "home hydration preserves the scroll viewport");
             if (control) check(ui.Find(UiSelector::Key("home-card-control")).One().bounds == *control,
                                "home hydration preserves the known running control slot");
+            populated = false; ui.PumpAndSettle();
+            check(checkTrafficLayout("home-card-download") == downloadLabels &&
+                      checkTrafficLayout("home-card-upload") == uploadLabels,
+                  "clearing traffic plots preserves both cards' icon and text bounds");
         }
     }
 }
@@ -2612,16 +2542,18 @@ huxerui::View LoadingSkeletonRoot() {
         auto spec = huxerui::FlatLightThemeSpec();
         spec.colors = theme;
         spec.motion.reduced_motion = model->reduced.Get();
-        return huxerui::FlatTheme(spec, clashflux::ui::PageBodyRegion(huxerui::Scope([model] {
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        const float side = compact && model->kind.Get() >= 3 ? clashflux::ui::kProfileCardSpacing : 4.0F;
+        return huxerui::FlatTheme(spec, clashflux::ui::PageBodyRegion(huxerui::Scope([model, compact] {
             ++model->compositions;
             if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
             if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
             const auto& current = huxerui::UseTheme();
-            if (model->kind.Get() >= 3) return clashflux::ui::ProfileLoadingSkeleton(current,
-                huxerui::UseViewportClass() == huxerui::ViewportClass::Compact, model->kind.Get() == 3);
+            if (model->kind.Get() >= 3) return clashflux::ui::ProfileLoadingSkeleton(current, compact,
+                model->kind.Get() == 3);
             return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
                 : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
-        }), 4.0F));
+        }), side));
     });
 }
 const huxerui::Application kLoadingSkeletonApplication{LoadingSkeletonRoot,
@@ -2654,27 +2586,29 @@ void testSkeletonShimmer() {
     }
     for (int kind : {3, 4}) {
         model->kind = kind;
-        for (float width : {320.0F, 599.0F, 600.0F, 695.0F, 696.0F, 1044.0F, 1600.0F, 400.0F}) {
+        for (float width : {320.0F, 599.0F, 600.0F, 723.0F, 724.0F, 1076.0F, 1600.0F, 400.0F}) {
             ui.SetWindowMetrics({.viewport = {width, 600.0F}});
             ui.Pump(std::chrono::milliseconds(50));
             const auto first = ui.Find(UiSelector::Key("profile-loading-item-0")).One().bounds;
             const auto second = ui.Find(UiSelector::Key("profile-loading-item-1")).One().bounds;
             const bool compact = width < 600.0F;
             const auto skeleton = ui.Find(UiSelector::Key("profile-loading-skeleton")).One().bounds;
-            check(std::abs(first.y - skeleton.y - clashflux::ui::ProfileCardRowSpacing(compact)) < 0.01F,
+            check(std::abs(first.y - skeleton.y - 12.0F) < 0.01F,
                   "profile placeholders share the real cards' leading scrollable whitespace");
-            const float side = compact ? 4.0F : 16.0F;
+            const float side = compact ? 12.0F : 16.0F;
             const float columns = compact || kind == 4 ? 1.0F :
-                std::max(1.0F, std::floor((width - 2.0F * side + 8.0F) / 348.0F));
-            const float expectedWidth = (width - 2.0F * side - (columns - 1.0F) * 8.0F) / columns;
+                std::max(1.0F, std::floor((width - 2.0F * side + 12.0F) / 352.0F));
+            const float expectedWidth = (width - 2.0F * side - (columns - 1.0F) * 12.0F) / columns;
             check(std::abs(first.height - (compact ? 108.0F : 180.0F)) < 0.5F &&
                   std::abs(first.width - expectedWidth) < 0.5F && std::abs(first.x - side) < 0.5F,
                   "profile loading cards match real card height, adaptive tracks and section insets");
             check(columns > 1.0F ? std::abs(second.y - first.y) < 0.5F &&
-                      std::abs(second.x - first.x - first.width - 8.0F) < 0.5F
-                  : std::abs(second.y - first.y - first.height - (compact ? 6.0F : 8.0F)) < 0.5F,
+                      std::abs(second.x - first.x - first.width - 12.0F) < 0.5F
+                  : std::abs(second.y - first.y - first.height - 12.0F) < 0.5F,
                   "profile loading responds across breakpoints and preserves mobile single-column capability");
         }
+        check(ui.CaptureSnapshot().ToString().contains("corner_radius=12.000000\n"),
+              "loading placeholders paint with the same 12pt corners as profile cards");
     }
     model->kind = 2;
     ui.Pump(std::chrono::milliseconds(50));
@@ -2953,19 +2887,19 @@ huxerui::View CompactProfileCardsRoot() {
                   huxerui::Text("=").With(huxerui::Frame{.width = 20.0F}),
                   huxerui::Row {huxerui::Text("...")}
                       .With(huxerui::Frame{.width = 40.0F, .height = 40.0F},
+                            huxerui::Tooltip("More subscription actions"),
                             huxerui::Semantics{.role = huxerui::SemanticRole::Button})
                       .OnClick([menuCount] { menuCount = menuCount.Get() + 1; }).Key("profile-more"),
                   CompactProfileTrafficContent(traffic, expiry,
                       ProfileTrafficProgress(traffic.empty() ? 0 : 12, traffic.empty() ? 0 : 100), colors.muted),
                   false, {}, index % 2 == 0 ? "Updated 5 minutes ago" : "Not fetched");
-              return huxerui::Column {body}.With(
-                  huxerui::Frame{.height = ProfileCardHeight(compact)},
-                  huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
-                  huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+              return SelectableTile(body, index == 0, "Subscription " + suffix, [] {},
+                  SelectableTileInteraction::Selectable, SelectableTileStyle::Standard, kProfileCardRadius)
+                  .With(huxerui::Frame{.height = ProfileCardHeight(compact)})
                   .Key("compact-profile-" + suffix);
           }).Columns(huxerui::GridColumns::Fixed(1))
               .EstimatedRowExtent(ProfileCardHeight(compact))
-              .RowSpacing(compact ? kCompactProfileCardSpacing : kSectionCardSpacing)
+              .RowSpacing(kProfileCardSpacing)
               .With(huxerui::Grow(1.0F)).Key("compact-profile-grid"),
         }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     })};
@@ -2986,6 +2920,10 @@ void testCompactProfileCards() {
     for (float width : {320.0F, 599.0F, 960.0F, 400.0F, 320.0F}) {
         ui.SetWindowMetrics({.viewport = {width, 700.0F}});
         ui.PumpAndSettle();
+        const auto first = ui.Find(UiSelector::Key("compact-profile-0")).One().bounds;
+        const auto second = ui.Find(UiSelector::Key("compact-profile-1")).One().bounds;
+        check(std::abs(second.y - first.y - first.height - 12.0F) < 0.5F,
+              "subscription cards retain the expected gap at narrow and wide viewport widths");
         std::optional<float> infoY, barY;
         for (int index = 0; index < 4; ++index) {
             const auto card = ui.Find(UiSelector::Key("compact-profile-" + std::to_string(index)));
@@ -3015,6 +2953,33 @@ void testCompactProfileCards() {
             barY = bar.y - bounds.y;
         }
     }
+    check(ui.CaptureSnapshot().ToString().contains("corner_radius=12.000000\n"),
+          "subscription tile surfaces paint with 12pt corners");
+    const auto secondCard = ui.Find(UiSelector::Key("compact-profile-1"));
+    const auto bounds = secondCard.One().bounds;
+    const std::regex cardBorder{
+        R"(border\s*\{\s*bounds\s*\{\s*x=[\d.-]+\s*y=[\d.-]+\s*width=)" +
+        std::to_string(bounds.width) + R"(\s*height=)" + std::to_string(bounds.height) + R"(\s*\})"};
+    const auto countCardBorders = [&] {
+        const auto snapshot = ui.CaptureSnapshot().ToString();
+        return std::distance(std::sregex_iterator(snapshot.begin(), snapshot.end(), cardBorder), std::sregex_iterator{});
+    };
+    const auto hoverAt = [&](huxerui::Point p) {
+        ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 46,
+            .position = p, .device_kind = huxerui::PointerDeviceKind::Mouse});
+        ui.Pump();
+        ui.Pump(std::chrono::milliseconds(50));
+        ui.Pump(std::chrono::milliseconds(200));
+    };
+    const auto baseline = countCardBorders();
+    const auto more = secondCard.Find(UiSelector::Key("profile-more")).One().bounds;
+    hoverAt({more.x + more.width / 2.0F, more.y + more.height / 2.0F});
+    check(countCardBorders() == baseline + 1, "the subscription card highlights when entered through its menu button");
+    const auto bar = secondCard.Find(UiSelector::Key("profile-traffic-bar")).One().bounds;
+    hoverAt({bar.x + bar.width / 2.0F, bar.y + bar.height / 2.0F});
+    check(countCardBorders() == baseline + 1, "the subscription hover border remains over the traffic bar");
+    hoverAt({bounds.x + bounds.width / 2.0F, bounds.y - kProfileCardSpacing / 2.0F});
+    check(countCardBorders() == baseline, "the gap between subscriptions clears the hover border");
     ui.Find(UiSelector::Key("compact-profile-0")).Find(UiSelector::Key("profile-more")).Tap();
     ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("MENU-1")).Exists(), "the compact card menu remains clickable");
@@ -3077,7 +3042,8 @@ huxerui::View UnifiedProfileListRoot() {
                 .With(huxerui::Frame{.height = ProfileCardHeight(compact)}).Key("unified-row-" + std::to_string(index));
         }).Columns(huxerui::GridColumns::Fixed(1))
           .EstimatedRowExtent(ProfileCardHeight(compact))
-          .RowSpacing(kCompactProfileCardSpacing).With(huxerui::Grow(1.0F)).Key("unified-grid")).With(huxerui::Grow(1.0F))), 4.0F);
+          .RowSpacing(kProfileCardSpacing).With(huxerui::Grow(1.0F)).Key("unified-grid")).With(huxerui::Grow(1.0F))),
+            compact ? kProfileCardSpacing : 4.0F);
     })};
 }
 const huxerui::Application kUnifiedProfileListApplication{UnifiedProfileListRoot,
@@ -3100,7 +3066,7 @@ void testUnifiedProfileList() {
         ui.SetWindowMetrics({.viewport = {width, 700.0F}});
         ui.PumpAndSettle();
         const auto grid = ui.Find(UiSelector::Key("unified-grid")).One().bounds;
-        const float side = width < 600.0F ? 4.0F : 16.0F;
+        const float side = width < 600.0F ? 12.0F : 16.0F;
         check(std::abs(grid.x - side) < 0.5F && std::abs(grid.width - width + 2.0F * side) < 0.5F,
               "the unified list has equal viewport-based insets without an extra outer margin");
         const auto first = ui.Find(UiSelector::Key("unified-row-0"));
@@ -3114,28 +3080,7 @@ void testUnifiedProfileList() {
 huxerui::View HeaderGeometryRoot() {
     return huxerui::FlatTheme{huxerui::Scope([] {
         const auto& theme = huxerui::UseTheme();
-        const auto search = [](const char* surfaceKey) {
-            return huxerui::Scope([surfaceKey] {
-                return clashflux::ui::PageSearchFieldLayout(huxerui::Row{
-                    huxerui::Text("SEARCH"), huxerui::Spacer{}, huxerui::Button("ADD"),
-                }.With(huxerui::Frame{.height = 40.0F}, huxerui::Grow(1.0F))
-                    .Key(surfaceKey),
-                    huxerui::UseViewportClass() == huxerui::ViewportClass::Compact);
-            }).With(huxerui::Grow(1.0F));
-        };
         return huxerui::Column{
-            clashflux::ui::PageHeaderLayout(theme, search("search-single-line"), {}, false, true)
-                .Key("single-search-header"),
-            clashflux::ui::PageHeaderLayout(theme, search("search-with-batch"),
-                huxerui::Text("BATCH"), true, true).Key("batch-search-header"),
-            huxerui::Row {
-              huxerui::Text("TITLE").With(huxerui::Frame{.width = 72.0F}),
-              search("search-between-actions"),
-              huxerui::Button("ACTION").With(huxerui::Frame{.width = 80.0F})
-                  .Key("header-trailing-action"),
-            }.With(huxerui::Spacing(12.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-                .Key("desktop-search-header"),
             clashflux::ui::CenteredPageHeader(theme,
                 huxerui::Text("CREATE").Key("create-centered-title"),
                 huxerui::Button("BACK").With(huxerui::Frame{.width = 32.0F, .height = 32.0F}),
@@ -3155,36 +3100,6 @@ void testHeaderGeometry() {
     huxerui::testing::UiTest ui(kHeaderGeometryApplication, {.viewport = {320.0F, 740.0F}});
     for (float width : {320.0F, 420.0F, 600.0F, 960.0F, 1600.0F, 420.0F}) {
         ui.SetWindowMetrics({.viewport = {width, 740.0F}}); ui.PumpAndSettle();
-        for (const char* name : {"search-single-line", "search-with-batch"}) {
-            const auto bounds = ui.Find(UiSelector::Key(name)).One().bounds;
-            check(std::abs(bounds.height - (width < 600.0F ? 40.0F
-                : clashflux::ui::kDesktopTitleBarSearchHeight)) < 0.5F,
-                  "搜索栏高度固定，不能消耗整页的剩余高度");
-            check(std::abs(bounds.x + bounds.width * 0.5F - width * 0.5F) < 0.5F &&
-                  std::abs(bounds.width - (width < 600.0F ? width - 16.0F
-                      : clashflux::ui::kDesktopTitleBarSearchWidth)) < 0.5F,
-                  "搜索表面居中，桌面封顶 320pt、窄屏恢复可用宽度（含批量动作）");
-        }
-        const auto searchBounds = ui.Find(UiSelector::Key("search-between-actions")).One().bounds;
-        const auto actionBounds = ui.Find(UiSelector::Key("header-trailing-action")).One().bounds;
-        if (width >= 600.0F) {
-            const auto header = ui.Find(UiSelector::Key("desktop-search-header")).One().bounds;
-            check(std::abs(searchBounds.y - header.y - clashflux::ui::kDesktopTitleBarSearchInset) < 0.5F &&
-                  std::abs(header.y + header.height - searchBounds.y - searchBounds.height -
-                           clashflux::ui::kDesktopTitleBarSearchInset) < 0.5F,
-                  "桌面搜索胶囊上下各留 3pt，不顶满自定义标题栏");
-        }
-        check(searchBounds.width > 0.0F && searchBounds.x + searchBounds.width + 11.5F <= actionBounds.x &&
-              std::abs(actionBounds.x + actionBounds.width - (width - 8.0F)) < 0.5F,
-              "标题与动作先保留宽度，搜索随剩余空间收缩且不挤压操作按钮");
-        check(std::abs(searchBounds.x + searchBounds.width * 0.5F -
-                       (8.0F + 72.0F + actionBounds.x) * 0.5F) < 0.5F,
-              "搜索在标题与动作之间的可用区域居中");
-        if (width >= 960.0F) {
-            check(searchBounds.width <= clashflux::ui::kDesktopTitleBarSearchWidth + 0.5F &&
-                  actionBounds.x - searchBounds.x - searchBounds.width > 100.0F,
-                  "宽标题栏在搜索表面与动作间保留拖动空白");
-        }
         for (const char* name : {"create-centered-title", "busy-centered-title"}) {
             const auto bounds = ui.Find(UiSelector::Key(name)).One().bounds;
             check(std::abs(bounds.x + bounds.width * 0.5F - width * 0.5F) < 0.5F,
@@ -3288,59 +3203,228 @@ void testSearchFocusOutline() {
     }
 }
 
-// Exercise the mobile policy even on the desktop test host, including wide
-// mobile viewports. The page content must keep its space below a 48pt search.
-huxerui::View MobileSearchRoot() {
-    return huxerui::FlatTheme{huxerui::Scope([] {
+huxerui::View SearchToolbarFixture(bool secondary) {
+    return huxerui::MaterialTheme{huxerui::Scope([secondary] {
+        using namespace clashflux::ui;
         const auto& theme = huxerui::UseTheme();
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-        auto query = huxerui::UseState(huxerui::TextEditingValue{});
-        auto additions = huxerui::UseState(0);
-        auto search = huxerui::Row {
-          huxerui::Text("SEARCH"),
-          huxerui::TextField(query.Get())
-              .OnChanged([query](const huxerui::TextEditingValue& value) { query = value; })
-              .With(huxerui::Grow(1.0F)).Key("mobile-search-input"),
-          huxerui::Button("CLEAR").OnClick([query] { query = huxerui::TextEditingValue{}; }),
-          huxerui::Button("ADD").OnClick([additions] { ++additions; }),
-        }.With(huxerui::Frame{.height = 48.0F}, huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
-            .Key("mobile-search-surface");
-        return huxerui::Column {
-          clashflux::ui::PageHeaderLayout(theme,
-              clashflux::ui::PageSearchFieldLayout(search, compact, false), {}, false, true),
-          huxerui::Column {
-            huxerui::Text("QUERY:" + query.Get().text),
-            huxerui::Text("ADDITIONS:" + std::to_string(additions.Get())),
-          }.With(huxerui::Grow(1.0F)).Key("mobile-search-content"),
+        const auto query = huxerui::UseState(huxerui::TextEditingValue{});
+        const auto expanded = huxerui::UseState(false);
+        const auto additions = huxerui::UseState(0);
+        auto toolbar = PageSearchToolbar(query, expanded, "Subscriptions", "Search subscriptions",
+            huxerui::Row{
+                huxerui::IconButton(app::images::add, "Add")
+                    .OnClick([additions] { ++additions; }).Key("search-add"),
+                huxerui::IconButton(app::images::more_vertical, "More")
+                    .OnClick([] {}).Key("search-more"),
+            }.With(huxerui::Spacing(4.0F)));
+        huxerui::View back;
+        if (secondary) {
+            back = huxerui::IconButton(app::images::arrow_back, "Back").Key("search-back");
+        }
+        huxerui::View header = compact
+            ? SearchPageHeader(theme, back, toolbar)
+            : huxerui::View{huxerui::Row{DesktopPageTitleContent(
+                huxerui::Text("Subscriptions").With(huxerui::Frame{.width = 180.0F}),
+                {}, std::move(toolbar))}.With(huxerui::Frame{.height = kPageHeaderHeight})};
+        return huxerui::Column{
+            std::move(header),
+            huxerui::Column{
+                huxerui::Text("QUERY:" + query.Get().text),
+                huxerui::Text("ADDITIONS:" + std::to_string(additions.Get())),
+            }.With(huxerui::Grow(1.0F)).Key("search-content"),
         }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 0.0F)),
                huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     })};
 }
-const huxerui::Application kMobileSearchApplication{MobileSearchRoot, {.show_debug_overlay = false}};
-void testMobileSearchGeometry() {
-    huxerui::testing::UiTest ui(kMobileSearchApplication, {.viewport = {390.0F, 740.0F}});
-    ui.PumpAndSettle();
-    ui.Find(UiSelector::Key("mobile-search-input")).Tap();
-    ui.Find(UiSelector::Key("mobile-search-input")).EnterText("demo");
-    ui.Pump(kStep); // A focused editor intentionally keeps its caret clock alive.
-    int additions = 0;
-    for (float width : {320.0F, 390.0F, 420.0F, 600.0F, 960.0F, 390.0F}) {
-        ui.SetWindowMetrics({.viewport = {width, 740.0F}}); ui.Pump(kStep);
-        const auto search = ui.Find(UiSelector::Key("mobile-search-surface")).One().bounds;
-        const auto content = ui.Find(UiSelector::Key("mobile-search-content")).One().bounds;
-        check(std::abs(search.x - 8.0F) < 0.5F && std::abs(search.y) < 0.5F &&
-              std::abs(search.width - width + 16.0F) < 0.5F && std::abs(search.height - 48.0F) < 0.5F,
-              "移动搜索保持原有满宽 48pt，不受桌面限宽居中影响（含宽移动视口）");
-        check(content.y >= 47.5F && content.y < 49.0F && content.height > 680.0F,
-              "移动搜索栏不吞掉下方列表区域");
-        check(ui.Find(UiSelector::Text("QUERY:demo")).Exists(), "移动搜索内容在宽窄切换后保留");
-        ui.Find(UiSelector::Text("ADD")).Tap(); ui.Pump(kStep);
-        check(ui.Find(UiSelector::Text("ADDITIONS:" + std::to_string(++additions))).Exists(),
-              "移动搜索内添加按钮在缩放后仍可点击");
+huxerui::View SearchToolbarRoot() { return SearchToolbarFixture(false); }
+huxerui::View SecondarySearchToolbarRoot() { return SearchToolbarFixture(true); }
+const huxerui::Application kSearchToolbarApplication{SearchToolbarRoot, {.show_debug_overlay = false}};
+const huxerui::Application kSecondarySearchToolbarApplication{SecondarySearchToolbarRoot,
+    {.show_debug_overlay = false}};
+
+void testSearchToolbarIconHover() {
+    using namespace std::chrono_literals;
+    static const std::regex circle{
+        R"(rect\s+\{\s+bounds\s+\{\s+x=([\d.-]+)\s+y=([\d.-]+)\s+width=28\.000000\s+height=28\.000000\s+\}\s+brush\s+\{\s+kind="solid"\s+color\s+\{[^}]*\}\s+\}\s+corner_radius=14\.000000)"};
+
+    for (const float width : {390.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(kSearchToolbarApplication, {.viewport = {width, 640.0F},
+            .resource_provider = AppResources()});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        ui.Pump();
+
+        const auto checkHover = [&](const char* key) {
+            const auto button = ui.Find(UiSelector::Key(key));
+            const auto bounds = button.One().bounds;
+            ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+                .position = {bounds.x + bounds.width / 2.0F, bounds.y + bounds.height / 2.0F},
+                .device_kind = huxerui::PointerDeviceKind::Mouse});
+            ui.Pump(); ui.Pump(180ms);
+            const auto snapshot = ui.CaptureSnapshot().ToString();
+            bool centered = false;
+            for (std::sregex_iterator match(snapshot.begin(), snapshot.end(), circle), end; match != end; ++match) {
+                if (std::abs(std::stof((*match)[1]) - (bounds.width - 28.0F) / 2.0F) < 0.1F &&
+                    std::abs(std::stof((*match)[2]) - (bounds.height - 28.0F) / 2.0F) < 0.1F) {
+                    centered = true;
+                    break;
+                }
+            }
+            check(centered && button.One().bounds == bounds,
+                  "search toolbar hover draws a centered circle without resizing the hit target");
+        };
+
+        checkHover("search-add");
+        checkHover("search-more");
+        checkHover("page-search-toggle");
+        ui.Find(UiSelector::Key("page-search-toggle")).Tap(); ui.Pump(); ui.Pump(240ms);
+        checkHover("page-search-close");
     }
-    ui.Find(UiSelector::Text("CLEAR")).Tap(); ui.Pump(kStep);
-    check(ui.Find(UiSelector::Text("QUERY:")).Exists(), "移动搜索可正常清空");
+}
+
+// Read the retained surface, not the editor's layout, which is already at its final size.
+std::optional<huxerui::Rect> paintedSearchSurface(huxerui::testing::UiTest& ui) {
+    const auto snapshot = ui.CaptureSnapshot().ToString();
+    static const std::regex surface{
+        R"(content\s+\{\s+rect\s+\{\s+bounds\s+\{\s+x=([\d.-]+)\s+y=([\d.-]+)\s+width=([\d.-]+)\s+height=([\d.-]+)\s+\}\s+brush\s+\{\s+kind="solid"\s+color\s+\{[^}]*\}\s+\}\s+corner_radius=[\d.-]+\s+\}\s+border\s+\{)"};
+    std::smatch match;
+    if (!std::regex_search(snapshot, match, surface)) return std::nullopt;
+    const auto toolbar = ui.Find(UiSelector::Key("page-search-toolbar")).One().bounds;
+    return huxerui::Rect{toolbar.x + std::stof(match[1]), toolbar.y + std::stof(match[2]),
+        std::stof(match[3]), std::stof(match[4])};
+}
+
+void testPageSearchToolbar() {
+    using namespace std::chrono_literals;
+    huxerui::testing::UiTest ui(kSearchToolbarApplication, {.viewport = {960.0F, 740.0F},
+        .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.Pump();
+    const auto toggle = ui.Find(UiSelector::Key("page-search-toggle"));
+    const auto pill = ui.Find(UiSelector::Key("pill-search-field"));
+    const auto input = ui.Find(UiSelector::Key("page-search-input"));
+    const auto close = ui.Find(UiSelector::Key("page-search-close"));
+    const auto add = ui.Find(UiSelector::Key("search-add"));
+    const auto more = ui.Find(UiSelector::Key("search-more"));
+    const auto content = ui.Find(UiSelector::Key("search-content")).One().bounds;
+    const auto wideAdd = add.One().bounds;
+    const auto wideMore = more.One().bounds;
+    const auto collapsed = toggle.One().bounds;
+    check(!input.Exists() && collapsed.x + collapsed.width <= wideAdd.x &&
+          wideAdd.x + wideAdd.width <= wideMore.x && std::abs(wideMore.x + wideMore.width - 944.0F) < 0.5F,
+          "wide search starts as the leftmost icon of the right-aligned actions");
+    ui.PressKey(huxerui::Key::Tab); ui.Pump();
+    check(toggle.One().focused, "keyboard traversal reaches search before the adjacent actions");
+
+    toggle.Tap(); ui.Pump();
+    check(!paintedSearchSurface(ui), "the first wide frame keeps the original magnifier without a capsule flash");
+    ui.Pump(12ms);
+    const auto firstWidePaint = paintedSearchSurface(ui);
+    check(firstWidePaint && firstWidePaint->width > collapsed.width && firstWidePaint->width < 200.0F &&
+          std::abs(firstWidePaint->x + firstWidePaint->width - collapsed.x - collapsed.width) < 0.5F,
+          "wide search grows from its trigger and stays to the left of the actions");
+    ui.Pump(78ms);
+    check(add.One().bounds == wideAdd && more.One().bounds == wideMore && add.One().enabled,
+          "wide actions keep their exact position and remain enabled during expansion");
+    add.Tap(); ui.Pump(); ui.Pump(120ms);
+    check(ui.Find(UiSelector::Text("ADDITIONS:1")).Exists(),
+          "wide actions accept pointer input during the search animation");
+    const auto widePill = pill.One().bounds;
+    check(std::abs(widePill.width - 360.0F) < 0.5F &&
+          std::abs(widePill.x + widePill.width - collapsed.x - collapsed.width) < 0.5F &&
+          close.One().bounds.x + close.One().bounds.width < wideAdd.x,
+          "wide search expands left to 360pt and keeps its close button internal");
+    // The wide action just took focus. Refocus the editor before driving text.
+    input.Tap();
+    input.ReplaceText("de"); ui.Pump(kStep);
+    check(input.One().focused, "wide search preserves editor focus when the results update");
+    input.EnterText("mo"); ui.Pump(kStep);
+    check(ui.Find(UiSelector::Text("QUERY:demo")).Exists() &&
+          ui.Find(UiSelector::Key("search-content")).One().bounds == content,
+          "typing filters results without moving the content below the header");
+
+    ui.SetWindowMetrics({.viewport = {600.0F, 740.0F}}); ui.Pump(kStep);
+    const auto mediumPill = pill.One().bounds;
+    check(mediumPill.width < widePill.width && mediumPill.x + mediumPill.width <= add.One().bounds.x &&
+          add.One().enabled && more.One().enabled,
+          "medium widths limit the search by available space while preserving actions");
+
+    ui.SetWindowMetrics({.viewport = {390.0F, 740.0F}}); ui.Pump(kStep); ui.Pump(220ms); ui.Pump(kStep);
+    const auto narrowPill = pill.One().bounds;
+    const auto narrowAdd = add.One().bounds;
+    const auto narrowMore = more.One().bounds;
+    const auto pageTitle = ui.Find(UiSelector::Key("page-title"));
+    const auto titleSemantics = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Label("Subscriptions"));
+    check(std::abs(narrowPill.x - 8.0F) < 0.5F && std::abs(narrowPill.width - 374.0F) < 0.5F &&
+          std::abs(narrowPill.height - 48.0F) < 0.5F && close.One().bounds.x > input.One().bounds.x,
+          "compact search occupies the available row and preserves its 48pt height");
+    check(!titleSemantics.Exists() && !add.One().enabled && !more.One().enabled &&
+          ui.Find(UiSelector::Text("QUERY:demo")).Exists() &&
+          ui.Find(UiSelector::Key("search-content")).One().bounds.y == content.y,
+          "compact search disables covered actions and retains the active query and body position");
+    ui.TapAt({narrowAdd.x + narrowAdd.width / 2.0F, narrowAdd.y + narrowAdd.height / 2.0F});
+    ui.Pump(kStep);
+    check(ui.Find(UiSelector::Text("ADDITIONS:1")).Exists(), "covered compact actions cannot be clicked");
+    input.Tap();
+    input.ReplaceText("narrow"); ui.Pump(kStep);
+    check(input.One().focused && ui.Find(UiSelector::Text("QUERY:narrow")).Exists(),
+          "compact search preserves editor focus when the results update");
+
+    close.Tap(); ui.Pump(); ui.Pump(160ms);
+    check(!input.Exists() && toggle.Exists() && add.One().enabled && add.One().bounds == narrowAdd &&
+          more.One().bounds == narrowMore && ui.Find(UiSelector::Text("QUERY:")).Exists(),
+          "close clears the filter and restores the compact buttons in place");
+    const auto titleBounds = pageTitle.One().bounds;
+    const auto compactToggle = toggle.One().bounds;
+    check(titleSemantics.Exists() && std::abs(titleBounds.x - 8.0F) < 0.5F &&
+          titleBounds.x + titleBounds.width <= compactToggle.x &&
+          compactToggle.x + compactToggle.width <= narrowAdd.x &&
+          narrowAdd.x + narrowAdd.width <= narrowMore.x &&
+          std::abs(narrowMore.x + narrowMore.width - 382.0F) < 0.5F,
+          "compact keeps the title left and the magnifier followed by actions at the right edge");
+    add.Tap(); ui.Pump();
+    check(ui.Find(UiSelector::Text("ADDITIONS:2")).Exists(), "restored compact actions are clickable");
+
+    toggle.Tap(); ui.Pump();
+    check(!paintedSearchSurface(ui), "the first compact frame keeps the original magnifier without a capsule flash");
+    ui.Pump(8ms);
+    const auto firstCompactPaint = paintedSearchSurface(ui);
+    const float triggerCenter = compactToggle.x + compactToggle.width / 2.0F;
+    check(firstCompactPaint && firstCompactPaint->width > compactToggle.width &&
+          firstCompactPaint->width < narrowPill.width &&
+          std::abs(firstCompactPaint->x + firstCompactPaint->width / 2.0F - triggerCenter) < 0.5F,
+          "compact search initially expands equally on both sides of the magnifier");
+    ui.Pump(60ms);
+    const auto growingPaint = paintedSearchSurface(ui);
+    check(firstCompactPaint && growingPaint && growingPaint->width > firstCompactPaint->width &&
+          growingPaint->width < narrowPill.width,
+          "the visible capsule keeps growing before it reaches its full width");
+    ui.Pump(152ms); ui.Pump(kStep);
+    check(input.One().focused && !add.One().enabled, "opening compact search focuses input and hides actions");
+    ui.PressKey(huxerui::Key::Escape); ui.Pump(); ui.Pump(180ms); ui.Pump(kStep);
+    check(toggle.One().focused && !input.Exists(), "Escape closes search and restores focus to the magnifier");
+
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+    ui.Pump();
+    toggle.Tap(); ui.Pump();
+    close.Tap(); ui.Pump();
+    check(toggle.Exists() && !input.Exists() && add.One().enabled,
+          "background search switches immediately without leaving a blocking transition");
+
+    huxerui::testing::UiTest secondary(kSecondarySearchToolbarApplication, {.viewport = {320.0F, 640.0F},
+        .resource_provider = AppResources()});
+    secondary.Pump();
+    const auto back = secondary.Find(UiSelector::Key("search-back"));
+    const auto backBounds = back.One().bounds;
+    const auto secondaryTitle = secondary.Find(UiSelector::Key("page-title")).One().bounds;
+    check(secondaryTitle.x >= backBounds.x + backBounds.width,
+          "compact secondary pages place the title after the back button");
+    secondary.Find(UiSelector::Key("page-search-toggle")).Tap(); secondary.Pump();
+    const auto secondaryPill = secondary.Find(UiSelector::Key("pill-search-field")).One().bounds;
+    check(back.One().enabled && back.One().bounds == backBounds &&
+          secondaryPill.x >= backBounds.x + backBounds.width &&
+          std::abs(secondaryPill.x + secondaryPill.width - 312.0F) < 0.5F,
+          "expanded compact search fills the row beside the unchanged back button");
 }
 
 // 回归复现：带 UsePopup 锚点的动作视图在响应式断点切换（标题栏结构性替换）
@@ -4036,7 +4120,7 @@ struct ScrollHoverFixture {
     huxerui::State<bool> nested{false}, blocked{false}, enabled{true}, sideBySide{false};
     huxerui::State<float> innerHeight{1000.0F}, outerHeight{1000.0F};
     huxerui::ScrollController outer, inner;
-    huxerui::Color primary;
+    huxerui::Color hoverColor;
     int clicks = 0, compositions = 0;
 };
 std::shared_ptr<ScrollHoverFixture> scrollHoverFixture;
@@ -4046,7 +4130,7 @@ huxerui::View ScrollHoverRoot() {
     const auto model = huxerui::UseState(std::make_shared<ScrollHoverFixture>()).Get();
     scrollHoverFixture = model;
     ++model->compositions;
-    model->primary = huxerui::UseTheme().colors.primary;
+    model->hoverColor = huxerui::UseTheme().colors.on_surface_variant;
     if (model->sideBySide.Get()) return huxerui::Row {
       PageScrollView(huxerui::Text("Left content").With(huxerui::Frame{.height = 1000.0F}), model->outer)
           .With(huxerui::Grow(1.0F)),
@@ -4075,12 +4159,12 @@ std::vector<float> highlightedScrollThumbs(huxerui::testing::UiTest& ui) {
     const std::regex pattern{
         R"(rect\s+\{\s+bounds\s+\{\s+x=[\d.-]+\s+y=[\d.-]+\s+width=6\.000000\s+height=([\d.-]+)\s+\}\s+brush\s+\{\s+kind="solid"\s+color\s+\{\s+red=([\d.-]+)\s+green=([\d.-]+)\s+blue=([\d.-]+)\s+alpha=([\d.-]+))"};
     std::vector<float> heights;
-    const auto primary = scrollHoverFixture->primary;
+    const auto hoverColor = scrollHoverFixture->hoverColor;
     for (auto it = std::sregex_iterator(snapshot.begin(), snapshot.end(), pattern);
          it != std::sregex_iterator(); ++it) {
-        if (std::abs(std::stof((*it)[2]) - primary.red) < 0.001F &&
-            std::abs(std::stof((*it)[3]) - primary.green) < 0.001F &&
-            std::abs(std::stof((*it)[4]) - primary.blue) < 0.001F && std::stof((*it)[5]) > 0.9F)
+        if (std::abs(std::stof((*it)[2]) - hoverColor.red) < 0.001F &&
+            std::abs(std::stof((*it)[3]) - hoverColor.green) < 0.001F &&
+            std::abs(std::stof((*it)[4]) - hoverColor.blue) < 0.001F && std::stof((*it)[5]) > 0.9F)
             heights.push_back(std::stof((*it)[1]));
     }
     return heights;
@@ -4730,38 +4814,6 @@ void testTabCardScrollSpace() {
         }
     }
     tabCardSpaceFixture.reset();
-}
-
-std::shared_ptr<clashflux::ui::WebsiteTestModel> websiteFormFixture;
-huxerui::View WebsiteFormRoot() {
-    using namespace clashflux::ui;
-    websiteFormFixture = huxerui::UseState(std::make_shared<WebsiteTestModel>()).Get();
-    return huxerui::Column {
-      CenteredPageHeader(huxerui::UseTheme(), huxerui::Text("Website"), {},
-          FormHeaderAction(app::images::check, "Save", [] {}).Key("website-header-save")),
-      WebsiteTestPageForm(websiteFormFixture),
-    }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-}
-const huxerui::Application kWebsiteFormApplication{WebsiteFormRoot, {.show_debug_overlay = false}};
-void testWebsiteFormScroll() {
-    huxerui::testing::UiTest ui(kWebsiteFormApplication,
-        {.viewport = {320.0F, 420.0F}, .resource_provider = AppResources()});
-    ui.PumpAndSettle();
-    const auto save = ui.Find(UiSelector::Key("website-header-save")).One().bounds;
-    const auto name = ui.Find(UiSelector::Key("website-editor-name"));
-    // Focused fields keep scheduling caret blinks; inspect settled layout at a
-    // bounded frame time rather than waiting for the window to become idle.
-    name.Tap(); name.ReplaceText("Short viewport"); ui.Pump(kSettle);
-    ui.SetWindowMetrics({.viewport = {320.0F, 140.0F}}); ui.Pump(kSettle);
-    ui.Find(UiSelector::Key("website-form-scroll")).ScrollBy({0.0F, 1000.0F}); ui.Pump(kSettle);
-    check(name.One().in_viewport && name.One().bounds.y + name.One().bounds.height <= 140.5F &&
-          ui.Find(UiSelector::Key("website-header-save")).One().bounds == save &&
-          websiteFormFixture->customName.Get().text == "Short viewport",
-          "production website form reaches its final input after keyboard-sized viewport shrink without moving save");
-    ui.SetWindowMetrics({.viewport = {320.0F, 420.0F}}); ui.Pump(kSettle);
-    check(ui.Find(UiSelector::Key("website-editor-url")).One().in_viewport,
-          "short website form restores its normal viewport without a fixed blank band");
-    websiteFormFixture.reset();
 }
 
 huxerui::View GroupPickerSelectionContent() {
@@ -5788,6 +5840,9 @@ void testProxySpeedShutter() {
     struct Fixture {
         clashflux::ui::ProxyTestModel tests;
         huxerui::State<bool> reducedMotion{false};
+        huxerui::State<bool> inToolbar{false};
+        huxerui::State<bool> searchExpanded{false};
+        huxerui::State<huxerui::TextEditingValue> search{huxerui::TextEditingValue{}};
         int clicks = 0;
     };
     std::shared_ptr<Fixture> fixture;
@@ -5796,13 +5851,19 @@ void testProxySpeedShutter() {
             const auto state = huxerui::UseService<Fixture>();
             auto theme = huxerui::MaterialLightThemeSpec();
             theme.motion.reduced_motion = state->reducedMotion.Get();
-            return huxerui::MaterialTheme {
-              theme,
-              clashflux::ui::ProxySpeedButton(state->tests.progress.Get().busy, true, [state] {
+            const auto button = clashflux::ui::ProxySpeedButton(
+                state->tests.progress.Get().busy || state->tests.preparing.Get(),
+                state->tests.singlePending.Get() == 0, [state] {
                   ++state->clicks;
                   state->tests.Begin();
-              }),
-            };
+                });
+            if (!state->inToolbar.Get()) return huxerui::MaterialTheme{theme, button};
+            auto toolbar = clashflux::ui::PageSearchToolbar(state->search, state->searchExpanded,
+                "Proxies", "Search nodes", button);
+            return huxerui::MaterialTheme {theme, huxerui::Column {
+              clashflux::ui::SearchPageHeader(theme, {}, std::move(toolbar)),
+              huxerui::Text("Proxy nodes below the search"),
+            }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
         });
     }, {.show_debug_overlay = false, .application_hooks = {
         [&fixture](huxerui::ApplicationContext& context) {
@@ -5827,14 +5888,22 @@ void testProxySpeedShutter() {
         std::smatch match;
         return std::regex_search(snapshot, match, clip) ? std::stof(match[1]) : 0.0F;
     };
+    const auto hasBackdrop = [&] {
+        const auto snapshot = ui.CaptureSnapshot().ToString();
+        static const std::regex plate{
+            R"(\brect\s+\{\s+bounds\s+\{[^}]*width=32\.000000\s+height=32\.000000\s*\})"};
+        return snapshot.find("shadow {") != std::string::npos || std::regex_search(snapshot, plate);
+    };
+    check(!hasBackdrop(), "the idle group test icon has no backplate or shadow");
 
     action.Tap(); ui.Pump();
     const float startingRadius = aperture();
     ui.Pump(260ms);
     const float midClosingRadius = aperture();
-    check(fixture->clicks == 1 && !action.Exists() && std::abs(startingRadius - 42.0F) < 0.1F &&
-              midClosingRadius > 0.0F && midClosingRadius < startingRadius,
-          "group test hides the action and closes a centered circle over the speed button");
+    check(fixture->clicks == 1 && !action.Exists() &&
+              std::abs(startingRadius - clashflux::ui::kProxySpeedButtonSize * 0.75F) < 0.1F &&
+              midClosingRadius > 0.0F && midClosingRadius < startingRadius && !hasBackdrop(),
+          "group test closes a centered circle over the icon without restoring its backplate");
     ui.Pump(270ms);
     const auto hidden = ui.CaptureSnapshot();
     ui.TapAt(center); ui.Pump(700ms);
@@ -5859,6 +5928,43 @@ void testProxySpeedShutter() {
     check(!action.Exists() && aperture() == 0.0F, "reduced motion skips the shutter close");
     finishTest(); ui.Pump();
     check(action.Exists() && aperture() == 0.0F, "reduced motion restores the button immediately");
+
+    fixture->inToolbar = true;
+    const auto toggle = ui.Find(UiSelector::Key("page-search-toggle"));
+    const auto pill = ui.Find(UiSelector::Key("pill-search-field"));
+    const auto input = pill.Find(UiSelector::Key("page-search-input"));
+    const auto close = pill.Find(UiSelector::Key("page-search-close"));
+    const auto body = ui.Find(UiSelector::Text("Proxy nodes below the search"));
+    for (const float width : {320.0F, 960.0F}) {
+        ui.SetWindowMetrics({.viewport = {width, 420.0F}});
+        ui.Pump();
+        const auto slotBounds = slot.One().bounds;
+        const auto contentBounds = body.One().bounds;
+        check(!pill.Exists() && action.One().enabled &&
+              toggle.One().bounds.x + toggle.One().bounds.width <= slotBounds.x,
+              "group test follows the collapsed search control");
+        toggle.Tap(); ui.Pump();
+        input.ReplaceText("Tokyo"); ui.Pump();
+        check(fixture->search.Get().text == "Tokyo" && slot.One().bounds == slotBounds &&
+              body.One().bounds == contentBounds && !pill.Find(UiSelector::Key("proxy-speed-action")).Exists(),
+              "the group test is outside the field and stays in its original slot");
+        check(action.One().enabled == (width >= 600.0F),
+              "expanded compact search disables group testing and wide search keeps it available");
+        if (width >= 600.0F) {
+            fixture->tests.singlePending = 1; ui.Pump();
+            check(!action.One().enabled, "single-node testing also disables the group action during wide search");
+            fixture->tests.singlePending = 0; ui.Pump();
+            const int before = fixture->clicks;
+            action.Tap(); ui.Pump();
+            check(fixture->clicks == before + 1 && !action.Exists() && slot.One().bounds == slotBounds &&
+                  fixture->search.Get().text == "Tokyo" && body.One().bounds == contentBounds,
+                  "wide group testing preserves the query, button slot, and content below");
+            finishTest();
+        }
+        close.Tap(); ui.Pump();
+        check(action.One().enabled && toggle.Exists() && fixture->search.Get().text.empty(),
+              "closing search clears the filter and restores group testing");
+    }
 }
 
 void testSingleProxyProbeCard() {
@@ -5917,9 +6023,12 @@ void testSingleProxyProbeCard() {
         }
         return false;
     };
-    check(tile("single-a").Find(UiSelector::Type<huxerui::Text>()).Count() == 3 &&
-          action("single-a").Exists(),
-          "untested node exposes the speed test label in the bottom slot");
+    const auto probeIcon = action("single-a").Find(UiSelector::Type<huxerui::Image>());
+    const auto probeSemantics = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Identifier("node-probe:single-a"));
+    check(probeIcon.Exists() && probeIcon.One().size == huxerui::Size{14.0F, 14.0F} &&
+              action("single-a").Find(UiSelector::Type<huxerui::Text>()).Count() == 0 &&
+              probeSemantics.Exists() && probeSemantics.One().label.ends_with(": single-a"),
+          "untested node exposes only a compact probe icon with an accessible action name");
     const auto measuredAction = action("single-b").One().bounds;
     const auto measuredTile = measured.One().bounds;
     const auto title = measured.Find(UiSelector::Text("single-b")).One().bounds;
@@ -5938,12 +6047,30 @@ void testSingleProxyProbeCard() {
     const std::regex rectPaint{R"(\brect \{)"};
     const auto existingBorders = countPaint(borderPaint);
     const auto existingFills = countPaint(rectPaint);
+    const std::regex tileBorderPaint{
+        R"(border\s*\{\s*bounds\s*\{\s*x=[\d.-]+\s*y=[\d.-]+\s*width=)" +
+        std::to_string(measuredTile.width) + R"(\s*height=)" + std::to_string(measuredTile.height) + R"(\s*\})"};
+    const auto settleHover = [&] {
+        ui.Pump(std::chrono::milliseconds(50));
+        ui.Pump(std::chrono::milliseconds(200));
+    };
+    const auto trackProbeArea = [&] {
+        const auto bounds = action("single-b").One().bounds;
+        move({bounds.x + bounds.width / 2.0F, bounds.y + bounds.height / 2.0F});
+        settleHover();
+    };
     hover("single-b"); ui.Pump(std::chrono::milliseconds(100));
     check(countPaint(borderPaint) == existingBorders + 1 && countPaint(rectPaint) == existingFills,
           "node card hover adds one border without adding a surface fill");
     check(measured.Find(UiSelector::Text("234")).One().bounds == number &&
               action("single-b").One().bounds == measuredAction,
           "hover leaves the numeric result and its hit target in place");
+    trackProbeArea();
+    check(countPaint(tileBorderPaint) == 1, "the card border remains while the pointer crosses onto the probe action");
+    move({500.0F, 650.0F}); settleHover();
+    check(countPaint(tileBorderPaint) == 0, "leaving the card clears the full-card hover border");
+    trackProbeArea();
+    check(countPaint(tileBorderPaint) == 1, "entering through the probe action also highlights the full card");
     move({500.0F, 650.0F});
     for (int step = 0; step < 8 && !action("single-b").One().focused; ++step)
         ui.PressKey(huxerui::Key::Tab);
@@ -5962,7 +6089,7 @@ void testSingleProxyProbeCard() {
     action("single-a").Tap(); ui.Pump();
     fixture->model->End(batch); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a"} && fixture->selected.Get() == 0 &&
-          probing("single-a"),
+          probing("single-a") && !probeIcon.Exists(),
           "single probe targets the clicked runtime tag and does not activate the parent selection");
     check(tile("single-a").Find(UiSelector::Key("node-probe-slot")).One().bounds == slot &&
               fixture->model->Begin() == 0,
@@ -5982,6 +6109,8 @@ void testSingleProxyProbeCard() {
           !measured.Find(UiSelector::Text("234")).Exists() &&
           measured.Find(UiSelector::Key("node-probe-dots")).Exists(),
           "clicking the delay starts an independent probe and replaces only that delay with dots");
+    trackProbeArea();
+    check(countPaint(tileBorderPaint) == 1, "the pending probe dots retain the full-card hover border");
     toggle(); fixture->releases.at(0) = true; advance(); toggle(); move({500.0F, 650.0F});
     check(tile("single-a").Find(UiSelector::Text("81")).Exists() &&
           probing("single-b"),
@@ -6853,6 +6982,72 @@ void testThemeColorSurfaces() {
         }
     }
 }
+
+huxerui::View ThemeModeRevealRoot() {
+    using namespace clashflux::ui;
+    auto dark = huxerui::UseState(false);
+    auto theme = dark.Get() ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+    theme.colors = dark.Get() ? FluxDarkColors() : FluxLightColors();
+    return huxerui::MaterialTheme(theme, huxerui::Scope([dark] {
+        const auto& theme = huxerui::UseTheme();
+        const auto transition = huxerui::UseSceneTransition();
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        const float width = compact ? kThemeModeCompactCardWidth : kThemeModeCardWidth;
+        const auto choose = [dark, transition, duration = theme.motion.slow](bool next) {
+            if (next != dark.Get()) RunThemeModeReveal(transition, duration, [dark, next] { dark = next; });
+        };
+        return huxerui::Row {
+          ThemeModeCardSurface(theme, app::images::moon, dark.Get(), "Dark", [choose] { choose(true); }, width)
+              .Key("reveal-dark"),
+          ThemeModeCardSurface(theme, app::images::sun, !dark.Get(), "Light", [choose] { choose(false); }, width)
+              .Key("reveal-light"),
+        }.With(huxerui::Spacing(8.0F), huxerui::Padding(24.0F));
+    }));
+}
+
+void testThemeModeReveal() {
+    using namespace huxerui;
+    const Application app{ThemeModeRevealRoot, {.show_debug_overlay = false}};
+    // The path starts at the rightmost point and the first cubic ends at the bottommost point.
+    const std::regex circle{
+        R"(push-path-clip\s+\{\s+path\s+\{\s+path-command\s+\{\s+verb=\d+\s+point0\s+\{\s+x=([\d.-]+)\s+y=([\d.-]+)\s+\}\s+\}\s+path-command\s+\{\s+verb=\d+\s+point0\s+\{[^}]*\}\s+point1\s+\{[^}]*\}\s+point2\s+\{\s+x=([\d.-]+)\s+y=([\d.-]+))"};
+    for (float width : {320.0F, 960.0F}) {
+        constexpr float height = 600.0F;
+        testing::UiTest ui(app, {.viewport = {width, height}, .resource_provider = AppResources()});
+        const auto checkCircle = [&](Point origin) {
+            ui.Pump(std::chrono::milliseconds(100));
+            const auto snapshot = ui.CaptureSnapshot().ToString();
+            std::smatch match;
+            const bool found = std::regex_search(snapshot, match, circle);
+            check(found, "theme mode switch paints a circular clip on the incoming scene");
+            if (!found) return;
+            const Point center{std::stof(match[3]), std::stof(match[2])};
+            const float radius = std::stof(match[1]) - center.x;
+            const float maximumRadius = std::hypot(std::max(origin.x, width - origin.x),
+                                                   std::max(origin.y, height - origin.y));
+            check(std::abs(center.x - origin.x) < 0.01F && std::abs(center.y - origin.y) < 0.01F,
+                  "the reveal stays centered on the actual activation point in window coordinates");
+            check(std::abs(radius - (std::stof(match[4]) - center.y)) < 0.01F,
+                  "the clip expands equally in both axes around the activation point");
+            check(radius > 0.0F && radius < 0.25F * maximumRadius,
+                  "the reveal still shows the activation point at 100ms instead of filling most of the window");
+            ui.Pump(kSettle);
+            check(ui.CaptureSnapshot().ToString().find("push-path-clip") == std::string::npos,
+                  "the scene clip is removed when the theme finishes changing");
+        };
+        const Rect dark = ui.Find(UiSelector::Key("reveal-dark")).One().bounds;
+        const Rect light = ui.Find(UiSelector::Key("reveal-light")).One().bounds;
+        ui.PressKey(Key::Tab);
+        ui.PressKey(Key::Enter);
+        checkCircle({dark.x + dark.width / 2.0F, dark.y + dark.height / 2.0F});
+        const Point mouse{light.x + light.width - 14.0F, light.y + light.height - 12.0F};
+        ui.TapAt(mouse, {.device_kind = PointerDeviceKind::Mouse});
+        checkCircle(mouse);
+        const Point touch{dark.x + 14.0F, dark.y + 12.0F};
+        ui.TapAt(touch, {.device_kind = PointerDeviceKind::Touch});
+        checkCircle(touch);
+    }
+}
 } // namespace
 
 void testCustomThemeColors() {
@@ -6951,10 +7146,29 @@ void testCustomThemeColors() {
         const auto accent = ResolveFluxAccent(hex);
         check(accent.id == hex, "custom color retains its stable identity");
         for (bool dark : {false, true}) {
-            const auto colors = dark ? FluxDarkColors(hex) : FluxLightColors(hex);
+            auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+            const auto traffic = ResolveTrafficColors(theme);
+            theme.colors = dark ? FluxDarkColors(hex) : FluxLightColors(hex);
+            const auto& colors = theme.colors;
             const float a = ThemeColorLuminance(colors.primary), b = ThemeColorLuminance(colors.on_primary);
             check((std::max(a, b) + 0.05F) / (std::min(a, b) + 0.05F) >= 4.5F,
                   "custom button text retains readable contrast in both modes");
+            const auto ordinary = ResolveFluxButtonStyle(theme);
+            const auto primary = ResolveFluxButtonStyle(theme, true);
+            const auto selected = ResolveSelectableTileColors(theme, true);
+            check(ordinary.background == huxerui::VisualFill{colors.secondary_container} &&
+                  ordinary.label_style.foreground == colors.on_secondary_container &&
+                  primary.background == huxerui::VisualFill{colors.primary} &&
+                  primary.label_style.foreground == colors.on_primary,
+                  "default buttons are neutral and explicitly primary actions retain the chosen accent");
+            check(selected.surface == colors.secondary_container && selected.fg == colors.on_surface &&
+                  selected.muted == colors.on_surface_variant,
+                  "selected cards use neutral surfaces and text at every accent and brightness");
+            check(CompactNavigationIndicatorColor(theme) == FluxStateLayerColor(colors.on_surface, 0.10F) &&
+                  DelayLevelColor(theme, 450) == colors.on_surface_variant &&
+                  ResolveTrafficColors(theme).download == traffic.download &&
+                  ResolveTrafficColors(theme).upload == traffic.upload,
+                  "navigation backgrounds and measured values stay independent of the chosen accent");
         }
     }
 }
@@ -8158,8 +8372,9 @@ std::size_t homeEasterEggFixtureIndex = 0;
 huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
     auto theme = dark ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec();
     theme.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
+    clashflux::ui::ApplyFluxInteractionTheme(theme);
     theme.motion.reduced_motion = reduced;
-    return huxerui::MaterialTheme(theme, huxerui::Scope([theme] {
+    return huxerui::MaterialTheme(theme, huxerui::Scope([theme, dark] {
         auto backCount = huxerui::UseState(0);
         const auto content = huxerui::Scope([] {
             auto count = huxerui::UseState(0);
@@ -8186,7 +8401,7 @@ huxerui::View HomeCardFlipRoot(bool dark, bool reduced) {
                   clashflux::ui::kHomeEasterEggPool[homeEasterEggFixtureIndex],
                   [](std::string_view url) { homeEasterEggOpenedUrl = url; });
           })
-              .With(huxerui::Frame{.width = 280.0F, .height = 188.0F}).Key("flip-card-two"),
+              .With(huxerui::Frame{.width = dark ? 280.0F : 140.0F, .height = 88.0F}).Key("flip-card-two"),
           clashflux::ui::HomeCardSurface(theme, huxerui::Text("Cat control excluded"), "control")
               .With(huxerui::Frame{.width = 280.0F, .height = 88.0F}).Key("flip-card-excluded"),
         }.With(huxerui::Spacing(12.0F));
@@ -8223,7 +8438,7 @@ huxerui::View ModeChoiceRoot() {
         const auto tabs = huxerui::UseEnvironment<huxerui::TabsStyle>();
         const auto matches = [theme](const auto& indication) {
             return indication && indication->ripple &&
-                indication->ripple->color == FluxStateLayerColor(theme.colors.primary, kInteractionRippleOpacity);
+                indication->ripple->color == FluxStateLayerColor(theme.colors.on_surface, kInteractionRippleOpacity);
         };
         modeThemeMatches = radio.selected_color == theme.colors.primary &&
             toggle.checked_track == theme.colors.primary && matches(icons.indication) &&
@@ -8428,7 +8643,7 @@ void testModeChoiceFeedback() {
         for (auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
             huxerui::testing::UiTest ui(kModeChoiceApplication, {.viewport = {320.0F, 300.0F}});
             ui.PumpAndSettle();
-            check(modeThemeMatches, "Material selection colors and owning feedback follow the current accent in both themes");
+            check(modeThemeMatches, "checked controls follow the accent while ordinary owning feedback stays neutral");
             const auto bounds = ui.Find(UiSelector::Key("home-mode-1")).One().bounds;
             huxerui::PointerEvent event{.type = huxerui::PointerEventType::Down, .pointer_id = 91,
                 .position = {bounds.x + bounds.width - 4.0F, bounds.y + bounds.height * 0.5F},
@@ -8719,6 +8934,63 @@ void testRetainedRootDock() {
         "switching directly from a secondary route to home accepts all card shared markers");
 }
 
+struct ImeDockFixture {
+    huxerui::State<bool> imeOccludesBottom;
+    int dockMounts = 0;
+    int dockTaps = 0;
+};
+ImeDockFixture imeDockFixture;
+huxerui::View ImeDockRoot() {
+    return huxerui::FlatTheme{huxerui::Stack {
+      huxerui::Text("PAGE-CONTENT"),
+      huxerui::Scope([] {
+          imeDockFixture.imeOccludesBottom = huxerui::UseState(false);
+          const auto dock = huxerui::Scope([] {
+                huxerui::Lifecycle([] { ++imeDockFixture.dockMounts; return [] {}; });
+                return huxerui::Button("PRIMARY-DOCK")
+                    .OnClick([] { ++imeDockFixture.dockTaps; })
+                    .With(huxerui::Frame{.height = 64.0F});
+          });
+          return clashflux::ui::CompactNavigationOverlay(dock,
+              huxerui::UseTheme(), imeDockFixture.imeOccludesBottom.Get());
+      }),
+    }.With(huxerui::Align(huxerui::HorizontalAlignment::Stretch, huxerui::VerticalAlignment::Stretch))};
+}
+
+void testImeOccludesRootDock() {
+    const huxerui::Application app{ImeDockRoot, {.show_debug_overlay = false}};
+    imeDockFixture = {};
+    huxerui::testing::UiTest ui(app, {.viewport = {400.0F, 700.0F}});
+    ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("PRIMARY-DOCK")).Tap();
+    ui.PumpAndSettle();
+    const auto initialDock = paintedToast(ui, "PRIMARY-DOCK");
+    check(initialDock && initialDock->opacity == 1.0F && imeDockFixture.dockTaps == 1,
+        "the primary dock is visible and clickable before the keyboard opens");
+
+    imeDockFixture.imeOccludesBottom = true;
+    ui.SetWindowMetrics({.viewport = {400.0F, 400.0F}});
+    ui.PumpAndSettle();
+    const auto coveredDock = paintedToast(ui, "PRIMARY-DOCK");
+    ui.TapAt({200.0F, 360.0F}, {.device_kind = huxerui::PointerDeviceKind::Touch});
+    ui.PumpAndSettle();
+    check((!coveredDock || coveredDock->opacity == 0.0F) &&
+          !ui.FindSemantics(huxerui::testing::UiSemanticSelector::Label("PRIMARY-DOCK")).Exists() &&
+          imeDockFixture.dockTaps == 1 &&
+          ui.Find(UiSelector::Text("PAGE-CONTENT")).Exists(),
+        "a docked keyboard conceals dock paint, input and semantics while the page stays available");
+
+    imeDockFixture.imeOccludesBottom = false;
+    ui.SetWindowMetrics({.viewport = {400.0F, 700.0F}});
+    ui.PumpAndSettle();
+    ui.Find(UiSelector::Text("PRIMARY-DOCK")).Tap();
+    ui.PumpAndSettle();
+    const auto restoredDock = paintedToast(ui, "PRIMARY-DOCK");
+    check(initialDock && restoredDock && restoredDock->opacity == 1.0F &&
+          restoredDock->y == initialDock->y && imeDockFixture.dockMounts == 1 && imeDockFixture.dockTaps == 2,
+        "closing the keyboard restores the mounted dock at its original position");
+}
+
 void testHomeCardFlip() {
     using huxerui::testing::UiSemanticSelector;
     using clashflux::ui::kHomeEasterEggPool;
@@ -8784,9 +9056,37 @@ void testHomeCardFlip() {
                   second.Find(UiSelector::Key("home-card-back")).Exists(),
                   "each card retains its own independent flip state and local transition");
             const auto& egg = kHomeEasterEggPool[homeEasterEggFixtureIndex];
-            check(ui.Find(UiSelector::Text(std::string{egg.name})).Exists() &&
-                  homeEasterEggOpenedUrl.empty(), "the Easter egg shows its name without opening the link");
-            ui.Find(UiSelector::Key("home-easter-egg-link")).Tap(); ui.PumpAndSettle();
+            const auto link = ui.Find(UiSelector::Key("home-easter-egg-link"));
+            const auto label = link.Find(UiSelector::Text(std::string{egg.name}));
+            check(label.Exists() && homeEasterEggOpenedUrl.empty(),
+                  "the Easter egg shows its name without opening the link");
+            const auto bounds = link.One().bounds;
+            const auto textBounds = label.One().bounds;
+            check(bounds.height >= 34.0F && bounds.x > secondBounds.x &&
+                  bounds.x + bounds.width < secondBounds.x + secondBounds.width &&
+                  textBounds.x >= bounds.x + 30.0F &&
+                  textBounds.x + textBounds.width <= bounds.x + bounds.width - 5.5F &&
+                  textBounds.y >= bounds.y && textBounds.y + textBounds.height <= bounds.y + bounds.height,
+                  "the rounded link fits inside its card with room for the GitHub icon, label and padding");
+            const huxerui::Point paddedEdge{bounds.x + 4.0F, bounds.y + bounds.height / 2.0F};
+            if (device == huxerui::PointerDeviceKind::Mouse) {
+                ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1,
+                    .position = paddedEdge, .device_kind = device});
+                ui.Pump(); ui.Pump(std::chrono::milliseconds(180));
+                const auto snapshot = ui.CaptureSnapshot().ToString();
+                static const std::regex pill{
+                    R"(rect\s+\{\s+bounds\s+\{\s+x=0\.000000\s+y=0\.000000\s+width=([\d.]+)\s+height=([\d.]+)\s+\}\s+brush\s+\{\s+kind="solid"\s+color\s+\{[^}]*\}\s+\}\s+corner_radius=17\.000000)"};
+                bool fillsLink = false;
+                for (std::sregex_iterator match(snapshot.begin(), snapshot.end(), pill), end; match != end; ++match) {
+                    if (std::abs(std::stof((*match)[1]) - bounds.width) < 0.1F &&
+                        std::abs(std::stof((*match)[2]) - bounds.height) < 0.1F) {
+                        fillsLink = true;
+                        break;
+                    }
+                }
+                check(fillsLink, "hovering the link padding paints a capsule across the full clickable row");
+            }
+            ui.TapAt(paddedEdge, {.device_kind = device}); ui.PumpAndSettle();
             check(homeEasterEggOpenedUrl == egg.url, "the Easter egg opens its own GitHub link on click");
             ui.TapAt(counterPoint, {.device_kind = device}); ui.PumpAndSettle();
             check(first.Find(UiSelector::Key("home-card-back")).Exists() &&
@@ -9431,11 +9731,37 @@ void testSettingsReadiness() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--root-dock") {
+        testRetainedRootDock();
+        testImeOccludesRootDock();
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--theme-reveal") {
+        testThemeModeReveal();
+        if (failures == 0) std::puts("theme-reveal passed");
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--accent-roles") {
+        testCustomThemeColors();
+        testThemeColorSurfaces();
+        testModeChoiceFeedback();
+        testFlatDialogLayoutAndDismissal();
+        testScrollTargetHover();
+        std::printf("accent-roles %s\n", failures == 0 ? "passed" : "failed");
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--home-grid") {
         testFixedHomeGeometry(); return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--profile-file-filter") {
         testProfileFileFilter(); return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--profile-cards") {
+        testCompactProfileCards();
+        testSkeletonShimmer();
+        testUnifiedProfileList();
+        std::printf("profile-cards %s\n", failures == 0 ? "passed" : "failed");
+        return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--subscription-ua") {
         testSubscriptionUserAgentOrder(); return failures == 0 ? 0 : 1;
@@ -9448,6 +9774,11 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--home-gear") {
         testHomeSettingsGear(); return failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--home-easter-egg") {
+        testHomeCardFlip();
+        std::printf("home-easter-egg %s\n", failures == 0 ? "passed" : "failed");
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--home-card-surface") {
         testHomeHeaderControl();
         testHomeCardPress();
@@ -9456,6 +9787,18 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-node-card") {
         testSingleProxyProbeCard(); return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--page-search") {
+        try {
+            testPageSearchToolbar();
+            testSearchToolbarIconHover();
+            testSearchFocusOutline();
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "page-search: %s\n", error.what());
+            return 1;
+        }
+        std::printf("page-search %s\n", failures == 0 ? "passed" : "failed");
+        return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-speed-shutter") {
         testProxySpeedShutter(); return failures == 0 ? 0 : 1;
@@ -9466,7 +9809,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--qr-share") {
         testQrShareBounds(); return failures == 0 ? 0 : 1;
     }
-    if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); testWebsiteFormScroll(); return failures == 0 ? 0 : 1; }
+    if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--home-network") { testHomeNetworkModel(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--home-proxy-pickers") {
         testHomeProxyPickers();
@@ -9694,8 +10037,9 @@ int main(int argc, char** argv) {
     testVpnPublication();
     testCustomThemeColors();
     testThemeColorSurfaces();
+    testThemeModeReveal();
     testHomeCardPress();
-    try { testModeChoiceFeedback(); testToastExitMotion(); testToastStack(); testRetainedRootDock(); testHomeCardFlip(); }
+    try { testModeChoiceFeedback(); testToastExitMotion(); testToastStack(); testRetainedRootDock(); testImeOccludesRootDock(); testHomeCardFlip(); }
     catch (const std::exception& error) {
         std::printf("FAIL: home card flip: %s\n", error.what());
         ++failures;
@@ -9773,7 +10117,8 @@ int main(int argc, char** argv) {
     testHeaderGeometry();
     testSearchFocusOutline();
     testSectionTabBodyInsets();
-    testMobileSearchGeometry();
+    testPageSearchToolbar();
+    testSearchToolbarIconHover();
     testResponsiveAnchorMount();
     testCompactPageBottom();
     testHeaderFormAction();
@@ -9789,7 +10134,6 @@ int main(int argc, char** argv) {
     testScrollWheelRouting();
     testScrollEdges();
     testTabCardScrollSpace();
-    testWebsiteFormScroll();
     testProfileFormNavigation();
     testProfileListSections();
     testUnifiedProfileList();

@@ -139,7 +139,7 @@ huxerui::View SubscriptionRuleContent(std::string kind, std::string pattern, std
         const huxerui::TextStyle body{huxerui::Font::System(font_size::kBodySmall),
             enabled ? theme.colors.on_surface : theme.colors.on_surface_variant};
         const huxerui::TextStyle secondary{huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant};
-        const huxerui::TextStyle destination{huxerui::Font::System(font_size::kBodySmall), theme.colors.primary};
+        const huxerui::TextStyle destination{huxerui::Font::System(font_size::kBodySmall), theme.colors.on_surface};
         const float kindWidth = std::min(88.0F, std::ceil(huxerui::UseTextMeasurer().MeasureText(kind, body).size.width));
         return huxerui::Row {
           huxerui::Column {

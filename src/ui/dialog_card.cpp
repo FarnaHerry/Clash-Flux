@@ -49,11 +49,11 @@ struct EditorDismissBinding {
 [[huxerui::composable]] huxerui::View DialogAction(huxerui::StringVariant label,
     std::function<void()> action, bool primary, bool enabled, bool danger) {
     const auto& theme = huxerui::UseTheme();
-    auto style = ResolveFluxButtonStyle(theme);
+    auto style = ResolveFluxButtonStyle(theme, primary);
     style.minimum_height = 40.0F;
     if (!primary) {
         style.background = huxerui::Color::Transparent();
-        style.label_style.foreground = theme.colors.primary;
+        style.label_style.foreground = theme.colors.on_surface;
         style.disabled_background = huxerui::Color::Transparent();
         style.indication = ResolveFluxIndication(theme);
     }

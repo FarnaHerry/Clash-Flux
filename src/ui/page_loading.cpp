@@ -119,12 +119,12 @@ private:
 };
 
 huxerui::View SkeletonCard(huxerui::View content, const huxerui::ThemeSpec& theme, float height,
-    std::optional<huxerui::EdgeInsets> padding = std::nullopt) {
+    std::optional<huxerui::EdgeInsets> padding = std::nullopt, std::optional<float> radius = std::nullopt) {
     const auto islands = ResolveIslandTheme(theme);
     return huxerui::Column {content}.With(
         huxerui::Padding(padding.value_or(huxerui::EdgeInsets::All(islands.island_padding))),
         huxerui::Frame{.height = height},
-        huxerui::Background(islands.raised), huxerui::CornerRadius(islands.nested_radius),
+        huxerui::Background(islands.raised), huxerui::CornerRadius(radius.value_or(islands.nested_radius)),
         huxerui::ClipChildren(),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
@@ -209,14 +209,14 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
         return SkeletonCard(huxerui::Column(rows).With(
             huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-            theme, ProfileCardHeight(compact), huxerui::EdgeInsets::Symmetric(10.0F, 8.0F))
+            theme, ProfileCardHeight(compact), huxerui::EdgeInsets::Symmetric(10.0F, 8.0F), kProfileCardRadius)
             .Key("profile-loading-item-" + std::to_string(index));
     };
-    const auto grid = PageVirtualGrid(8, item, ProfileCardRowSpacing(compact),
-        ScrollAreaInsets::Symmetric(ProfileCardRowSpacing(compact), compact ? kCompactFloatingNavigationInset : 0.0F))
+    const auto grid = PageVirtualGrid(8, item, kProfileCardSpacing,
+        ScrollAreaInsets::Symmetric(kProfileCardSpacing, compact ? kCompactFloatingNavigationInset : 0.0F))
         .Columns(ProfileGridColumns(compact, groupByType))
         .EstimatedRowExtent(ProfileCardHeight(compact))
-        .ColumnSpacing(kSectionCardSpacing)
+        .ColumnSpacing(kProfileCardSpacing)
         .With(huxerui::Grow(1.0F));
     return SkeletonLoadingRegion(UnifiedProfileList(grid), shimmer).Key("profile-loading-skeleton");
 }

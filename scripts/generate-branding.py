@@ -58,15 +58,12 @@ def encode(image, kind="PNG", **options):
 def exports(tray_only=False):
     master = ET.parse(ROOT / "assets/branding/logo.svg").getroot()
     output = {}
-    for name, color in [("tray_default", "#253851"), ("tray_tun", "#0BAA9E"),
-                        ("tray_system_proxy", "#7451C2")]:
-        vector = svg_variant(master, {
-            "#111318": color, "#e8edf0": "#ffffff", "#626a75": color},
-            "Clash-Flux tray mark, complete cat and box")
-        if name == "tray_default":
-            output["assets/tray/logo.svg"] = vector
-        for size, suffix in [(32, ""), (64, "@2x"), (96, "@3x")]:
-            output[f"resources/images/{name}{suffix}.png"] = encode(raster(vector, size))
+    tray = svg_variant(master, {
+        "#111318": "#253851", "#e8edf0": "#ffffff", "#626a75": "#253851"},
+        "Clash-Flux tray mark, complete cat and box")
+    output["assets/tray/logo.svg"] = tray
+    for size, suffix in [(32, ""), (64, "@2x"), (96, "@3x")]:
+        output[f"resources/images/tray_default{suffix}.png"] = encode(raster(tray, size))
     if tray_only:
         return output
 

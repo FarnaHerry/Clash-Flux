@@ -6,6 +6,7 @@
 #include <utility>
 #include <huxerui/huxerui.h>
 
+#include "card_hover_outline.h"
 #include "ui.h"
 
 namespace clashflux::ui {
@@ -20,43 +21,22 @@ inline huxerui::IconButton HomeCardLeadingIconButton(
         .With(huxerui::Offset(huxerui::Point{-inset, 0.0F}));
 }
 
-struct HomeCardHoverOutline {
-    class Extension;
-    huxerui::Border border;
-    huxerui::CornerRadii corners;
-    huxerui::AnimationSpec fade;
-    bool hovered;
-    bool operator==(const HomeCardHoverOutline&) const = default;
-};
-
-class HomeCardHoverOutline::Extension final : public huxerui::NodeExtension {
-public:
-    Extension(huxerui::ViewNode&, const HomeCardHoverOutline& outline)
-        : outline_(outline), opacity_(outline.hovered ? 1.0F : 0.0F) {}
-
-    void Update(huxerui::ViewNode&, const HomeCardHoverOutline& outline) {
-        outline_ = outline;
-        opacity_.AnimateTo(outline.hovered ? 1.0F : 0.0F, outline.fade);
-        InvalidatePaint(PaintInvalidation::Foreground);
+inline huxerui::View HomeTrafficCardLayout(huxerui::View heading, huxerui::View rate,
+    huxerui::View chart, float cardInset) {
+    huxerui::View plot;
+    if (chart) {
+        // Lib-Charts reserves left/right/bottom gutters even with both axes hidden.
+        plot = huxerui::Column {std::move(chart).With(huxerui::Grow(1.0F))}.With(
+            huxerui::Padding(huxerui::EdgeInsets{.right = -(cardInset + 8.0F),
+                .bottom = -(cardInset + 4.0F), .left = -(cardInset + 4.0F)}),
+            huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
-
-    FrameResult OnFrame(huxerui::ViewNode&, const huxerui::FrameInfo& frame) override {
-        const auto result = opacity_.Advance(frame);
-        if (result.changed) InvalidatePaint(PaintInvalidation::Foreground);
-        return {.needs_frame = result.needs_frame, .wake_after = result.wake_after};
-    }
-
-    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
-        auto color = outline_.border.color;
-        color.alpha *= std::clamp(opacity_.Value(), 0.0F, 1.0F);
-        if (color.alpha <= 0.0F) return;
-        paint.DrawBorder(node.Bounds(), color, huxerui::StrokeStyle{.width = outline_.border.width}, outline_.corners);
-    }
-
-private:
-    HomeCardHoverOutline outline_;
-    huxerui::MotionController opacity_;
-};
+    return huxerui::Column {
+      std::move(heading),
+      std::move(rate),
+      plot,
+    }.With(huxerui::Spacing(6.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
 
 // Build the dashboard surface on its own node so its fill and hover layer share
 // the same rounded geometry. A passive card does not acquire a click action.
@@ -133,7 +113,7 @@ inline huxerui::View HomeCardSurface(const huxerui::ThemeSpec& theme,
             huxerui::CornerRadius(islands.nested_radius),
             huxerui::ClipChildren(),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-            HomeCardHoverOutline{hoverStyle.border.value(), huxerui::CornerRadii{islands.nested_radius},
+            CardHoverOutline{hoverStyle.border.value(), huxerui::CornerRadii{islands.nested_radius},
                 showOutline ? hoverStyle.enter : hoverStyle.exit, showOutline}
         ).On<huxerui::ViewEvents::Hover>([hovered](const huxerui::HoverEvent& event) {
             // A nested control owns its indication. The card observes containment independently.

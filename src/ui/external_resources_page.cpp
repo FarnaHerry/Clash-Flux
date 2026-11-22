@@ -118,7 +118,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
         const bool busy = std::ranges::find(pending, key) != pending.end();
         rows.push_back(huxerui::Row {
             huxerui::Image(app::images::link)
-                .Tint(theme.colors.primary)
+                .Tint(theme.colors.on_surface_variant)
                 .With(huxerui::Frame{.width = 18.0F, .height = 18.0F}),
             huxerui::Column {
                 huxerui::Row {
@@ -128,7 +128,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
                     huxerui::Text(ExternalResourceKindName(resource.kind))
                         .Style(huxerui::TextStyle{
                             huxerui::Font::System(font_size::kCaption),
-                            theme.colors.primary}),
+                            theme.colors.on_surface_variant}),
                 }.With(huxerui::Spacing(8.0F),
                        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
                 FittedSingleLineLabel(url,

@@ -178,8 +178,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                           huxerui::Font::System(font_size::kCaption), colors.muted}),
                     }
                   : huxerui::View{},
-              huxerui::ProgressBar(ProfileTrafficProgress(profile.usedBytes, profile.totalBytes))
-                  .With(huxerui::Frame{.height = 3.0F}),
+              ProfileQuotaBar(ProfileTrafficProgress(profile.usedBytes, profile.totalBytes)),
               FittedSingleLineLabel(updatedLabel, huxerui::TextStyle{
                   huxerui::Font::System(font_size::kCaption), colors.muted})
                   .With(huxerui::Frame{.height = 16.0F}).Key("profile-preview-updated"),
@@ -190,7 +189,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     }
     huxerui::View preview = SelectableTile(previewContent,
         profile.selected, profile.name, {}, SelectableTileInteraction::ReadOnly,
-        SelectableTileStyle::DragPreview);
+        SelectableTileStyle::DragPreview, kProfileCardRadius);
     return std::move(preview).With(
         huxerui::Frame{.width = width, .height = ProfileCardHeight(compact)},
         // Compact 的 20pt 手柄在标题行中居中，补偿留白和垂直居中偏移。
@@ -634,14 +633,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                 }.With(huxerui::CrossAlign(
                     huxerui::CrossAxisAlignment::Center)));
         }
-        subviews.push_back(
-            huxerui::ProgressBar(std::clamp(
-                profile.totalBytes > 0
-                    ? static_cast<float>(profile.usedBytes) /
-                          static_cast<float>(profile.totalBytes)
-                    : 1.0F,
-                0.0F, 1.0F))
-                .With(huxerui::Frame{.height = 3.0F}));
+        subviews.push_back(ProfileQuotaBar(ProfileTrafficProgress(profile.usedBytes, profile.totalBytes)));
         trafficSection = huxerui::Column(std::move(subviews))
                              .With(huxerui::Spacing(4.0F),
                                    huxerui::CrossAlign(
@@ -684,9 +676,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
 
-    // 订阅卡复用代理页节点卡的形状原语（SelectableTile）：同一套内边距、圆角、
-    // 表面色与选中态（选中 = primary_container 淡染底 + primary 描边 +
-    // on_primary_container 文字）。不再自己叠描边或第二层选中背景。
+    // 订阅卡复用 SelectableTile 的内边距、表面色与选中态，使用订阅自己的圆角。
     const std::string updatedLabel = nativeVpn ? ""
         : preparing ? huxerui::UseString(Localized("资源准备中"))
         : preparationFailed ? huxerui::UseString(Localized("资源准备失败，可重试"))
@@ -786,8 +776,8 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
                 return;
             }
             activateProfile(id);
-        }, nativeVpn ? SelectableTileInteraction::ReadOnly
-                     : SelectableTileInteraction::Selectable);
+        }, nativeVpn ? SelectableTileInteraction::ReadOnly : SelectableTileInteraction::Selectable,
+        SelectableTileStyle::Standard, kProfileCardRadius);
 
     // 矩形卡统一高度；宽度由虚拟网格的轨道均分，铺满页面而不固定尺寸
     // （内容已单行截断，ClipChildren 兜底）。

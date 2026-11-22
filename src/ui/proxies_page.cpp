@@ -22,8 +22,7 @@
 // 只存用户走出的链，渲染期经 resolvePath 对最新 groups 校验裁剪，订阅刷新
 // 导致组消失时自动回落，无需泵写状态。
 //
-// 延迟测试：页面右下角统一一个悬浮测速按钮（测试当前分组），组头不再各自
-// 挂按钮；Compact 悬浮导航之上留出内缩量。
+// 延迟测试：搜索右侧的闪电测试当前分组。
 //
 // 数据流：只读 ProxiesModel 的 State（AppRoot 驱动的唯一来源），原文变化时才
 // 到任务线程解析，只同步有变化的组。测速 / 切节点
@@ -222,9 +221,6 @@ constexpr float kProxyNodeWidth = 196.0F;
 // 消除该抖动并把同时挂载的卡片数减少约四成。
 constexpr float kProxyGridCacheExtent = 200.0F;
 
-// 桌面右下角悬浮测速按钮的滚动尾部净空：56pt 按钮 + 24pt 底部外边距。
-constexpr float kSpeedFabFooterHeight = 80.0F;
-
 // sing-box constant.TCPTimeout；单节点和组测速都使用内核同一上限。
 constexpr int kProxyDelayTimeoutMs = 15000;
 
@@ -316,7 +312,7 @@ struct ProxySyncCache {
     std::uint64_t ticket = 0;
 };
 
-// 节点名占满首行，末行左侧显示协议或组信息，右侧显示延迟或测速动画。
+// 节点名占满首行，末行左侧显示协议或组信息，右侧显示空心闪电、结果或圆点动画。
 [[huxerui::composable]] huxerui::View NodeCard(
     const ProxyNode& node, std::string groupName, std::string groupNow, float dotsWidth,
     huxerui::State<SelectionIntent> selectionIntent, bool selectable,
@@ -491,23 +487,13 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     return huxerui::Row{};
 }
 
-[[huxerui::composable]] huxerui::View ProxySpeedFloatingAction(
-    std::string groupName, bool compact,
+[[huxerui::composable]] huxerui::View ProxySpeedSearchAction(
+    std::string groupName,
     std::shared_ptr<ProxyTestModel> testModel,
     std::function<void(const std::string&)> triggerGroupTest) {
-    const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool testing = testModel->progress.Get().busy || testModel->preparing.Get();
     const auto start = [triggerGroupTest, groupName] { triggerGroupTest(groupName); };
-    return huxerui::Column {
-      WithoutIconButtonOutlines(ProxySpeedButton(testing, testModel->singlePending.Get() == 0, start)),
-    }.With(huxerui::Padding(huxerui::EdgeInsets{
-               .right = theme.spacing.medium + (compact ? 0.0F : kScrollBarGutter),
-               .bottom = compact ? kCompactFloatingNavigationInset
-                                 : theme.spacing.large,
-               .left = theme.spacing.medium,
-           }),
-           huxerui::MainAlign(huxerui::MainAxisAlignment::End),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::End));
+    return WithoutIconButtonOutlines(ProxySpeedButton(testing, testModel->singlePending.Get() == 0, start));
 }
 
 } // namespace
@@ -525,6 +511,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     auto mode = huxerui::UseState<std::string>("rule");
     auto degradedGroups = huxerui::UseState<std::set<std::string>>({});
     auto proxySearch = huxerui::UseState(huxerui::TextEditingValue{});
+    auto searchExpanded = huxerui::UseState(false);
     auto sectionMotion = UseSectionTabMotion();
     const auto testTasks = huxerui::UseApplicationTaskScope();
     const auto testModel = proxiesModel->tests;
@@ -716,11 +703,8 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
     // 每个根组仅声明轻量虚拟网格；Pager 提供有界视口并只测量参与显示的页。
     // 不给各页叠加单独入场动画，避免与 Pager 的完整出入场轨道冲突。
-    // 桌面悬浮测速按钮存在时，滚动尾部要留出它的净空，否则最后一行节点
-    // 会被按钮遮住。
-    const bool showSpeedFab = !direct && current != nullptr;
     auto gridInsets = ScrollAreaInsets::Symmetric(kSectionCardSpacing,
-        compact ? kCompactFloatingNavigationInset : (showSpeedFab ? kSpeedFabFooterHeight : 0.0F));
+        compact ? kCompactFloatingNavigationInset : 0.0F);
     gridInsets.rail_bottom_avoidance = 0.0F;
     const std::function<void()> onSelectFailure = [toast] {
         toast.Show(Localized("线路切换失败，请查看日志"));
@@ -846,23 +830,16 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                           huxerui::CrossAxisAlignment::Stretch));
     }
 
-    // 出站模式切换入口在首页卡片；代理页标题行只保留节点搜索胶囊。
-    huxerui::View searchField = PillSearchField(
-        proxySearch, Localized("搜索节点"));
-    huxerui::View page = PageScaffold(Localized("代理"), huxerui::View{},
-                                      std::move(content), false, true, true,
-                                      std::nullopt, {}, std::move(searchField));
-    std::vector<huxerui::View> layers;
-    layers.reserve(3);
-    layers.push_back(sync);
-    layers.push_back(std::move(page));
-    // 延迟测试按钮统一收在页面右下角：测试当前选中的分组。Compact 下要避开
-    // 悬浮底部导航，桌面只留常规外边距。
+    huxerui::View speedAction;
     if (!direct && current != nullptr) {
-        layers.push_back(ProxySpeedFloatingAction(
-            current->name, compact, testModel, triggerGroupTest));
+        speedAction = ProxySpeedSearchAction(current->name, testModel, triggerGroupTest);
     }
-    return huxerui::Stack(std::move(layers)).With(
+    const auto title = Localized("代理");
+    huxerui::View searchToolbar = PageSearchToolbar(
+        proxySearch, searchExpanded, title, Localized("搜索节点"), speedAction);
+    huxerui::View page = PageScaffold(title, {}, std::move(content),
+                                    false, true, true, std::nullopt, {}, std::move(searchToolbar));
+    return huxerui::Stack {sync, page}.With(
         huxerui::Grow(1.0F),
         huxerui::Align(huxerui::HorizontalAlignment::Stretch,
                        huxerui::VerticalAlignment::Stretch));

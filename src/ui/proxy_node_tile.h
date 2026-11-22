@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "app_resources.h"
+#include "card_hover_outline.h"
 #include "ui.h"
 
 namespace clashflux::ui {
@@ -324,14 +326,15 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
     detail = std::move(detail).With(huxerui::Grow(1.0F), huxerui::Semantics{.hidden = true});
     return huxerui::Scope([=] {
         const auto& theme = huxerui::UseTheme();
+        const auto hovered = huxerui::UseState(false);
         const auto colors = ResolveSelectableTileColors(theme, selected);
         huxerui::View status = testing ? ProxyProbeDots(selected ? colors.fg : colors.muted, dotsWidth) : delay;
         if (canProbe) {
             if (!status) {
-                auto color = selected ? colors.fg : colors.muted;
-                status = huxerui::Text(Localized("测速"))
-                    .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
-                    .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
+                status = huxerui::Image(app::images::proxy_node_probe_outline)
+                    .Fit(huxerui::ImageFit::Contain)
+                    .Tint(selected ? colors.fg : colors.muted)
+                    .With(huxerui::Frame{.width = 14.0F, .height = 14.0F}, huxerui::Semantics{.hidden = true});
             }
             const auto probeLabel = huxerui::UseString(Localized("测速")) + ": " + label;
             huxerui::View action = huxerui::Row {status}
@@ -384,12 +387,11 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
                                   .selected = selected},
                huxerui::Focusable(interactive),
                huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
-        if (selected) {
-            tile = std::move(tile).With(huxerui::Border(theme.colors.primary, kCardOutlineWidth));
-        }
         if (interactive) {
-            tile = std::move(tile).With(ResolveCardIndication(theme, selected))
+            tile = WithSelectableCardHover(std::move(tile), theme, hovered, kSelectableTileRadius, selected)
                 .OnClick(activate);
+        } else if (selected) {
+            tile = std::move(tile).With(huxerui::Border(theme.colors.primary, kCardOutlineWidth));
         }
         return tile;
     });

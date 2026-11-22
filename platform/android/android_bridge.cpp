@@ -26,12 +26,16 @@
 
 #include "android_profile_http.h"
 #include "clashflux_android_legacy.h"
+#include "ui.h"
 
 namespace {
 
 std::mutex g_mutex;
 JavaVM* g_vm = nullptr;
 jclass g_activity_class = nullptr;
+// WindowInsets dispatch and the HuxerUI composition both run on the Activity UI thread.
+bool g_ime_occludes_bottom = false;
+huxerui::State<bool> g_ime_occlusion_state;
 // Owned by ClashVpnService, never inferred from a saved setting.
 // 0=closed, 1=building, 2=attached, 3=failed.
 std::atomic<int> g_vpn_state{0};
@@ -81,6 +85,24 @@ JNIEnv* current_environment(bool& attached) noexcept {
 }
 
 } // namespace
+
+bool clashflux::ui::UseAndroidImeOccludesBottom() {
+    const auto occluded = huxerui::UseState(g_ime_occludes_bottom);
+    huxerui::Lifecycle([occluded] {
+        g_ime_occlusion_state = occluded;
+        occluded = g_ime_occludes_bottom;
+        return [] { g_ime_occlusion_state = huxerui::State<bool>{}; };
+    });
+    return occluded.Get();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_farna_clashflux_MainActivity_nativeSetImeOccludesBottom(JNIEnv*, jclass, jboolean occluded) {
+    g_ime_occludes_bottom = occluded == JNI_TRUE;
+    if (g_ime_occlusion_state.IsValid()) {
+        g_ime_occlusion_state = g_ime_occludes_bottom;
+    }
+}
 
 clashflux::android::ProfileHttpResponse
 clashflux::android::DownloadProfileToFile(const std::string& url, int timeoutSecs,

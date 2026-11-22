@@ -9,21 +9,18 @@
 #include <huxerui/huxerui.h>
 
 #include "app_resources.h"
-#include "page_layout.h"
 #include "ui.h"
 
 namespace clashflux::ui {
 
-inline constexpr float kProxySpeedButtonSize = 56.0F;
+inline constexpr float kProxySpeedButtonSize = 32.0F;
 
 struct ProxySpeedIrisChanged : huxerui::Event<void(bool)> {};
 
 struct ProxySpeedIris {
     class Extension;
     huxerui::VectorAsset icon;
-    huxerui::Color fill;
     huxerui::Color foreground;
-    huxerui::Shadow shadow;
     float iconSize;
     bool testing;
     bool snap;
@@ -75,19 +72,10 @@ public:
         const float c = std::cos(angle);
         const float s = std::sin(angle);
         const float opacity = std::lerp(1.0F, 0.2F, closure);
-        const huxerui::CornerRadii corners{kFloatingActionCornerRadius};
-        auto fill = iris_.fill;
-        auto shadowColor = iris_.shadow.color;
-        fill.alpha *= opacity;
-        shadowColor.alpha *= opacity;
-
         paint.PushClip({center.x - radius, center.y - radius, 2.0F * radius, 2.0F * radius},
                        huxerui::CornerRadii{radius});
         paint.PushTransform({c, s, -s, c, center.x - c * center.x + s * center.y,
                                          center.y - s * center.x - c * center.y});
-        paint.DrawShadow(bounds, shadowColor, iris_.shadow.offset, iris_.shadow.blur_radius,
-                         iris_.shadow.spread, corners);
-        paint.DrawRect(bounds, fill, corners);
         const float iconSize = std::clamp(iris_.iconSize, 0.0F, bounds.width);
         paint.DrawImage(iris_.icon, {center.x - iconSize * 0.5F, center.y - iconSize * 0.5F, iconSize, iconSize},
                         iris_.foreground, opacity);
@@ -107,12 +95,11 @@ inline huxerui::View ProxySpeedButton(bool testing, bool enabled, std::function<
         const auto open = huxerui::UseState(!testing);
         const bool showButton = open.Get() && !testing;
         const bool background = huxerui::UseWindow().LifecycleState() == huxerui::WindowLifecycleState::Background;
-        const auto shadow = kPageTitlesInWindow ? ResolveFluxShadows(theme).floating_action
-            : huxerui::Shadow{ThemeShadowColor(theme, 0.28F), {}, 14.0F, 2.0F};
+        const auto icon = app::images::proxy_node_probe;
+        const float iconSize = huxerui::UseEnvironment<huxerui::IconButtonStyle>().icon_size;
         constexpr huxerui::Frame size{.width = kProxySpeedButtonSize, .height = kProxySpeedButtonSize};
         huxerui::View iris = huxerui::Row {}.With(size, ProxySpeedIris{
-            huxerui::UseVectorImage(app::images::proxy_speed), theme.colors.primary, theme.colors.on_primary, shadow,
-            huxerui::UseEnvironment<huxerui::IconButtonStyle>().icon_size, testing, background, !showButton,
+            huxerui::UseVectorImage(icon), theme.colors.on_surface, iconSize, testing, background, !showButton,
         }).On<ProxySpeedIrisChanged>([open](bool value) { open = value; }).Key("proxy-speed-iris");
         if (testing) {
             iris = std::move(iris).With(huxerui::Semantics{
@@ -122,14 +109,11 @@ inline huxerui::View ProxySpeedButton(bool testing, bool enabled, std::function<
 
         huxerui::View button;
         if (showButton) {
-            button = huxerui::Stack {
-              huxerui::IconButton(app::images::proxy_speed, Localized("测速"))
-                  .With(size, huxerui::Enabled(enabled), huxerui::Foreground(theme.colors.on_primary),
-                        huxerui::Tooltip(Localized("测试当前分组延迟")))
-                  .OnClick(start)
-                  .Key("proxy-speed-action"),
-            }.With(size, huxerui::Background(theme.colors.primary),
-                   huxerui::CornerRadius(kFloatingActionCornerRadius), shadow);
+            button = huxerui::IconButton(icon, Localized("测速"))
+                .With(size, huxerui::Enabled(enabled), huxerui::Foreground(theme.colors.on_surface),
+                      huxerui::Tooltip(Localized("测试当前分组延迟")))
+                .OnClick(start)
+                .Key("proxy-speed-action");
         }
         return huxerui::Stack {
           iris,

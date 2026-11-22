@@ -10,38 +10,26 @@ namespace clashflux::ui {
 huxerui::Task<WebsiteHttpReply> SendWebsiteRequest(
     std::shared_ptr<AppHttpClient> http, huxerui::HttpRequest request,
     WebsiteStreamObserver observeRoute) {
-    const bool head = request.method == huxerui::HttpMethod::Head;
     const std::string requestUrl = request.url;
+    const auto started = std::chrono::steady_clock::now();
     auto received = co_await http->SendStreamAsync(std::move(request));
+    const auto latency = std::chrono::ceil<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started);
     if (!received.Succeeded()) co_return WebsiteHttpReply{.error = received.Error().code == huxerui::HttpErrorCode::Timeout
         ? clashflux::website::kTimeoutError : received.Error().message};
     auto stream = std::move(received).Value();
-    WebsiteHttpReply reply{.status = stream.StatusCode(), .url = stream.Url()};
-    if (head && reply.status >= 200 && reply.status < 400 && observeRoute) {
+    WebsiteHttpReply reply{.status = stream.StatusCode(), .url = stream.Url(),
+        .latencyMs = static_cast<int>(latency.count())};
+    if (reply.url.empty()) reply.url = requestUrl;
+    if (observeRoute) {
         // Observe the kernel's connection table while `stream` is still open
         // on this frame so pooled/short-lived connections haven't torn down yet.
-        const std::string effectiveUrl = reply.url.empty() ? requestUrl : reply.url;
-        try { reply.routeLeaf = co_await observeRoute(effectiveUrl); }
-        catch (...) { reply.routeLeaf.clear(); }
+        reply.outbound = co_await observeRoute(reply.url);
     }
-    if (head) {
-        // Finish the empty HEAD body instead of destroying an unfinished
-        // stream: completion lets the platform keep its connection pooled, so
-        // the kernel's live connection table can also retain the route.
-        for (int reads = 0; reads < 2; ++reads) {
-            auto chunk = co_await stream.Body().ReadAsync(1);
-            if (!chunk.Succeeded() || std::move(chunk).Value().empty()) break;
-        }
-        co_return reply;
-    }
-    if (reply.status != 200) co_return reply;
-    for (;;) {
-        auto chunk = co_await stream.Body().ReadAsync(4097 - reply.body.size());
-        if (!chunk.Succeeded()) { reply.error = "位置响应读取失败"; co_return reply; }
-        auto bytes = std::move(chunk).Value();
-        if (bytes.empty()) break;
-        if (bytes.size() > 4096 - reply.body.size()) { reply.error = "位置响应过大"; co_return reply; }
-        reply.body.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    // Finish the empty HEAD body so the platform can retain a pooled connection.
+    for (int reads = 0; reads < 2; ++reads) {
+        auto chunk = co_await stream.Body().ReadAsync(1);
+        if (!chunk.Succeeded() || std::move(chunk).Value().empty()) break;
     }
     co_return reply;
 }
@@ -74,66 +62,47 @@ std::string WebsiteRouteLeaf(std::string_view connectionsBody,
     return pool.front();
 }
 
-namespace {
-bool IsCountryCode(const std::string& code) {
-    return code.size() == 2 && code[0] >= 'A' && code[0] <= 'Z' && code[1] >= 'A' && code[1] <= 'Z' && code != "XX";
-}
-} // namespace
-
 huxerui::Task<WebsiteTestResult> ProbeWebsiteNetwork(WebsiteHttpExchange exchange, std::string url,
                                                      WebsiteRouteLocator locator) {
     const auto deadline = std::chrono::steady_clock::now() + clashflux::website::kTimeout;
-    const auto remaining = [&] { return std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()); };
-    // Correlation is optional evidence: any failure here leaves the website
-    // test on the plain system-network path.
+    const auto remaining = [deadline] {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    };
     std::optional<WebsiteRouteBaseline> baseline;
-    if (locator.begin && locator.locate) {
+    if (locator.begin && locator.observe) {
         try { baseline = co_await locator.begin(); } catch (...) { baseline.reset(); }
     }
+    constexpr auto routeBudget = std::chrono::milliseconds{1200};
+    WebsiteStreamObserver observer;
+    if (baseline) {
+        observer = [base = *baseline, observe = locator.observe, remaining, routeBudget](std::string finalUrl)
+            -> huxerui::Task<std::string> {
+            if (remaining() < routeBudget) co_return std::string{};
+            try { co_return co_await observe(base, std::move(finalUrl)); }
+            catch (...) { co_return std::string{}; }
+        };
+    }
     huxerui::HttpRequest request;
-    request.url = std::move(url); request.method = huxerui::HttpMethod::Head;
-    request.timeout = remaining(); request.headers = {{"Cache-Control", "no-cache"}};
-    auto site = co_await exchange(std::move(request));
+    request.url = url;
+    request.method = huxerui::HttpMethod::Head;
+    request.timeout = remaining();
+    if (*request.timeout <= std::chrono::milliseconds::zero())
+        co_return WebsiteTestResult{WebsiteTestPhase::Failed, 0, clashflux::website::kTimeoutError};
+    request.headers = {{"Cache-Control", "no-cache"}};
+    auto site = co_await exchange(std::move(request), observer);
     if (!site.error.empty()) co_return WebsiteTestResult{WebsiteTestPhase::Failed, site.status, site.error};
-    if (site.status < 200 || site.status >= 400) co_return WebsiteTestResult{WebsiteTestPhase::Failed, site.status, "HTTP " + std::to_string(site.status)};
-    if (site.routeLeaf.empty() && baseline && locator.observe) {
-        try { site.routeLeaf = co_await locator.observe(*baseline, site.url); }
-        catch (...) { site.routeLeaf.clear(); }
+    if (site.outbound.empty() && observer) {
+        site.outbound = co_await observer(site.url.empty() ? std::move(url) : std::move(site.url));
     }
-    WebsiteTestResult result{WebsiteTestPhase::Responded, site.status};
-    const auto origin = WebsiteOrigin(site.url);
-    if (origin && remaining() >= std::chrono::milliseconds{100}) {
-        // The tested origin's own trace observes this request's exit even
-        // behind another VPN or system proxy.
-        request = {}; request.url = *origin + "/cdn-cgi/trace"; request.timeout = remaining();
-        request.headers = {{"Cache-Control", "no-cache"}};
+    if (site.outbound.empty() && !baseline && locator.isDirect && remaining() >= routeBudget) {
         try {
-            const auto location = co_await exchange(std::move(request));
-            if (location.error.empty() && location.status == 200 && WebsiteOrigin(location.url) == origin &&
-                location.body.size() <= 4096) result.country = clashflux::website::TraceCountry(location.body);
-        } catch (...) { /* A location failure must not turn a reachable website into a failure. */ }
-        if (!result.country.empty()) {
-            result.locationSource = WebsiteLocationSource::SiteTrace;
-            co_return result;
-        }
+            if (co_await locator.isDirect()) site.outbound = "DIRECT";
+        } catch (...) { /* No route evidence. */ }
     }
-    // Otherwise attribute only what this application's kernel observed for
-    // the final host, or a verified pure-direct desktop connection. Another
-    // client's or PAC-direct traffic stays unconfirmed.
-    if (result.country.empty() && locator.locate && remaining() >= std::chrono::milliseconds{300}) {
-        const auto host = WebsiteHost(site.url);
-        WebsiteRouteResolution resolved;
-        try {
-            if (!host.empty()) {
-                resolved = co_await locator.locate(std::move(baseline), std::move(site.routeLeaf), host, remaining());
-            }
-        } catch (...) { resolved = {}; /* Correlation is optional evidence. */ }
-        if (IsCountryCode(resolved.country)) {
-            result.country = std::move(resolved.country);
-            result.locationSource = resolved.source == WebsiteLocationSource::None
-                ? WebsiteLocationSource::CoreOutbound : resolved.source;
-        }
-    }
-    co_return result;
+    if (site.status < 200 || site.status >= 400)
+        co_return WebsiteTestResult{WebsiteTestPhase::Failed, site.status, "HTTP " + std::to_string(site.status),
+            std::move(site.outbound)};
+    co_return WebsiteTestResult{WebsiteTestPhase::Responded, site.status, {},
+        std::move(site.outbound), site.latencyMs};
 }
 } // namespace clashflux::ui

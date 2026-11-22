@@ -16,7 +16,7 @@ namespace clashflux::ui {
     auto document = huxerui::UseState(TextDocumentHandle{});
     if (!document.Get() || document.Get()->InitialText() != report)
         document = std::make_shared<TextDocument>(report);
-    auto secondary = ResolveFluxSecondaryButtonStyle(theme);
+    auto secondary = ResolveFluxButtonStyle(theme);
     secondary.minimum_height = 40.0F;
 
     huxerui::View reportArea;

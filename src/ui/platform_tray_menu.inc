@@ -40,12 +40,11 @@
             }
             if (!trayRuntime->control) return;
             const CoreControl& control = *trayRuntime->control;
-            const CoreView core = coreModel->view.Get();
-            const std::string mode = core.Mode();
-            const bool running = core.core.state == core::CoreState::Running;
+            const std::string mode = coreModel->view.Get().Mode();
             const bool menuRunning = control.Running();
             const bool proxyEnabled = control.SystemProxyEnabled();
             const bool tunEnabled = control.TunEnabled();
+            const bool proxyActive = control.ProxyActive();
             const bool busy = control.Busy();
             const auto& profiles = profilesModel->list.Get();
             const auto& groups = proxiesModel->snapshot.Get().groups;
@@ -66,10 +65,8 @@
                      &menuText.lightweight, &menuText.quit}) append(*label);
             for (const auto& label : menuText.mode.options) append(label);
             append(mode);
-            key += std::format("{}{}{}{}{}{}{}{}",
-                running, menuRunning, proxyEnabled, tunEnabled, busy,
-                core.systemProxyActive, core.TunActive(), settings.lightweightTray);
-            key += core.ProxyActive() ? '1' : '0';
+            key += std::format("{}{}{}{}{}{}",
+                menuRunning, proxyEnabled, tunEnabled, busy, proxyActive, settings.lightweightTray);
             for (const model::Profile& profile : profiles) {
                 if (profile.type == "pptp") continue;
                 key += std::to_string(profile.id);
@@ -178,14 +175,14 @@
             entries.push_back(huxerui::MenuItem(menuText.selectLine,
                                                 std::move(lineEntries)));
             entries.push_back(huxerui::MenuItem(
-                control.ProxyActive() ? menuText.disconnect : menuText.connect,
+                proxyActive ? menuText.disconnect : menuText.connect,
                 [trayRuntime] {
                     if (trayRuntime->control) {
                         const CoreControl control = trayRuntime->MenuControl();
                         control.Run({.action = control.ProxyActive()
                             ? CoreAction::Disconnect : CoreAction::Connect});
                     }
-                }).Checked(control.ProxyActive()).Enabled(!busy));
+                }).Checked(proxyActive).Enabled(!busy));
             entries.push_back(huxerui::MenuItem(
                 menuRunning ? menuText.stopCore : menuText.startCore,
                 [trayRuntime] {
@@ -223,12 +220,7 @@
             entries.push_back(huxerui::MenuSection{});
             entries.push_back(huxerui::MenuItem(menuText.quit, finishExit));
 
-            huxerui::ImageVariant icon = app::images::tray_default;
-            if (running) {
-                if (core.TunActive()) icon = app::images::tray_tun;
-                else if (core.systemProxyActive) icon = app::images::tray_system_proxy;
-            }
-            tray.Show(std::move(icon), huxerui::SystemTrayOptions{
+            tray.Show(app::images::tray_default, huxerui::SystemTrayOptions{
                 .tooltip = "Clash-Flux", .menu = std::move(entries)});
             trayRuntime->presentationKey = std::move(key);
         };

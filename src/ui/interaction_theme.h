@@ -13,7 +13,7 @@ inline huxerui::View FluxInteractionStyles(huxerui::View content) {
         icons.indication = ResolveFluxIndication(theme);
         auto chips = huxerui::UseEnvironment<huxerui::ChipStyle>();
         chips.indication = ResolveFluxIndication(theme);
-        chips.selected_indication = ResolveFluxIndication(theme, theme.colors.on_primary_container);
+        chips.selected_indication = ResolveFluxIndication(theme);
         auto tabs = huxerui::UseEnvironment<huxerui::TabsStyle>();
         tabs.indication = ResolveFluxIndication(theme);
         auto toasts = huxerui::UseEnvironment<huxerui::ToastStyle>();

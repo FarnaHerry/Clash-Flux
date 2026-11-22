@@ -338,7 +338,7 @@ huxerui::View ScrollArea(Scrollable scrollable,
             auto railInsets = contentInsets;
             railInsets.bottom_avoidance = contentInsets.rail_bottom_avoidance.value_or(contentInsets.bottom_avoidance);
             return huxerui::Row {}.With(ScrollRail{controller, style, remembered, wide,
-                selected, theme.colors.primary, route, region, controls,
+                selected, theme.colors.on_surface_variant, route, region, controls,
                 huxerui::UseString(controls.up_label), huxerui::UseString(controls.down_label),
                 huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background, motion,
                 ResolveScrollAreaInsets(theme, railInsets)})

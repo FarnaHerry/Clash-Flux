@@ -53,7 +53,7 @@ inline constexpr float kSectionCardSpacing = 8.0F;
 // Shared gap below the desktop title bar for page content and the navigation rail.
 inline constexpr float kDesktopTopContentGap = 4.0F;
 inline constexpr float kDesktopTitleBarHeight = 40.0F;
-inline constexpr float kDesktopTitleBarSearchWidth = 320.0F;
+inline constexpr float kDesktopTitleBarSearchWidth = 360.0F;
 inline constexpr float kDesktopTitleBarSearchInset = 3.0F;
 inline constexpr float kDesktopTitleBarSearchHeight =
     kDesktopTitleBarHeight - 2.0F * kDesktopTitleBarSearchInset;
@@ -228,7 +228,7 @@ inline huxerui::Color DelayLevelColor(const huxerui::ThemeSpec& theme, int delay
                                       bool unavailable = false) {
     if (unavailable || delay <= 0) return theme.colors.error;
     if (delay < 300) return SemanticSuccessColor(theme);
-    if (delay < 600) return theme.colors.primary;
+    if (delay < 600) return theme.colors.on_surface_variant;
     if (delay < 1000) return SemanticWarningColor(theme);
     return theme.colors.error;
 }
@@ -427,6 +427,9 @@ huxerui::View DesktopKernelSettingsRoutePage();
 #endif
 
 // 应用壳层的平台边界：AppRoot 仅在调用点用宏选择，不持有托盘/窗口等平台状态。
+#if defined(__ANDROID__)
+bool UseAndroidImeOccludesBottom();
+#endif
 void AndroidPreparePlatformDataDirectory(
     const huxerui::ApplicationHandle& application);
 void DesktopPreparePlatformDataDirectory(
@@ -468,10 +471,14 @@ inline huxerui::View FormHeaderAction(huxerui::ImageResource icon,
                huxerui::Enabled(false), huxerui::Tooltip(label),
                huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = label, .busy = true});
     }
-    return huxerui::IconButton(icon, label)
-        .With(huxerui::Frame{.width = kFormHeaderActionSize, .height = kFormHeaderActionSize},
-              huxerui::Enabled(enabled), huxerui::Tooltip(label))
-        .OnClick(std::move(onClick));
+    return huxerui::Scope([icon, label, onClick = std::move(onClick), enabled] {
+        auto style = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+        style.foreground = huxerui::UseTheme().colors.primary;
+        return huxerui::ProvideEnvironment(style, huxerui::IconButton(icon, label)
+            .With(huxerui::Frame{.width = kFormHeaderActionSize, .height = kFormHeaderActionSize},
+                  huxerui::Enabled(enabled), huxerui::Tooltip(label))
+            .OnClick(onClick));
+    });
 }
 
 inline huxerui::View FormPageContent(huxerui::View content) {
@@ -489,7 +496,7 @@ huxerui::View PageScaffold(huxerui::StringVariant title, huxerui::View actions,
                            bool windowTitle = false,
                            std::optional<float> contentSpacing = std::nullopt,
                            huxerui::View leading = {},
-                           huxerui::View titleSearchField = {},
+                           huxerui::View searchToolbar = {},
                            bool showInlineHeader = true,
                            huxerui::View inlineHeader = {},
                            bool scrollToContentEdges = true);
@@ -519,10 +526,13 @@ huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     bool fullWidthSections = false,
                                     bool centerTitle = false,
                                     bool scrollToContentEdges = true,
-                                    std::optional<float> contentSpacing = std::nullopt);
-huxerui::View PillSearchField(huxerui::State<huxerui::TextEditingValue> value,
-                              huxerui::StringVariant placeholder,
-                              huxerui::View trailingAction = {});
+                                    std::optional<float> contentSpacing = std::nullopt,
+                                    huxerui::View searchToolbar = {});
+huxerui::View PageSearchToolbar(huxerui::State<huxerui::TextEditingValue> value,
+                                huxerui::State<bool> expanded,
+                                huxerui::StringVariant title,
+                                huxerui::StringVariant placeholder,
+                                huxerui::View actions = {});
 
 // 卡片容器（二级岛）：raised 表面 + nested 圆角 + 内边距，常态无描边。
 // contentPadding 可显式设为 0，让整行反馈铺满表面，留白交给行内内容。
@@ -562,7 +572,8 @@ huxerui::View SelectableTile(huxerui::View content, bool selected,
                              std::string semantics_label,
                              std::function<void()> on_click,
                              SelectableTileInteraction interaction,
-                             SelectableTileStyle style = SelectableTileStyle::Standard);
+                             SelectableTileStyle style = SelectableTileStyle::Standard,
+                             float corner_radius = kSelectableTileRadius);
 
 // 注意（踩过的坑）：**不要在 composable 的返回值上补 `Background/Border/CornerRadius`**。
 // composable 返回的是 hcg 生成的 Scope 包装节点，那些 paint 修饰符只会画在整棵子树

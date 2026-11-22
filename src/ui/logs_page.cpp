@@ -107,6 +107,7 @@ struct LogFeedBuffer {
     auto revision = huxerui::UseState<std::uint64_t>(0);
     auto filter = huxerui::UseState<std::size_t>(0);
     auto logSearch = huxerui::UseState(huxerui::TextEditingValue{});
+    auto searchExpanded = huxerui::UseState(false);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto textWidthPx = huxerui::UseState<int>(0);
     auto postedWidthPx = huxerui::UseState(std::make_shared<int>(0)).Get();
@@ -315,13 +316,14 @@ struct LogFeedBuffer {
     huxerui::View actions = LogActionsMenu(filter.Get(),
         [filter](std::size_t index) { filter = index; }, copy, exportFile, clear,
         picker->CanSaveFiles() && !exporting.Get());
-    huxerui::View searchField = PillSearchField(
-        logSearch, Localized("搜索日志"));
-    if (onBack) return SecondaryPageScaffold(std::move(searchField), std::move(actions),
-                                              std::move(body), onBack, false, true);
-    return PageScaffold(Localized("日志"), std::move(actions), std::move(body),
-                        false, true, true, std::nullopt, {},
-                        std::move(searchField));
+    const auto title = Localized("日志");
+    huxerui::View searchToolbar = PageSearchToolbar(
+        logSearch, searchExpanded, title, Localized("搜索日志"), actions);
+    if (onBack) return SecondaryPageScaffold(PageTitleText(theme, title), {},
+                                             std::move(body), onBack, false, true, false, true,
+                                             std::nullopt, std::move(searchToolbar));
+    return PageScaffold(title, {}, std::move(body),
+                        false, true, true, std::nullopt, {}, std::move(searchToolbar));
 }
 
 } // namespace clashflux::ui

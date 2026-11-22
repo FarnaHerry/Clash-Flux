@@ -47,6 +47,7 @@
 #include "empty_state.h"
 #include "home_network_model.h"
 #include "home_proxy_picker.h"
+#include "profile_card_layout.h"
 #include "public_ip_lookup.h"
 #include "task_bridge.h"
 
@@ -334,7 +335,7 @@ huxerui::Font HomeCardHeadingFont() {
     return HomeCardHeadingWith(
         huxerui::Image(icon)
             .Fit(huxerui::ImageFit::Contain)
-            .Tint(theme.colors.primary)
+            .Tint(theme.colors.on_surface_variant)
             .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
         std::move(title));
 }
@@ -379,9 +380,6 @@ huxerui::XYChartData BuildTrafficChartData(
 // 流量统计：圆环旁保留方向占比，累计上传/下载量固定排在卡片底部。
 [[huxerui::composable]] huxerui::View HomeTotalCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const auto trafficColors = ResolveTrafficColors(theme);
-    const huxerui::Color upColor = trafficColors.upload;
-    const huxerui::Color downColor = trafficColors.download;
     const std::int64_t upload = s.coreReady ? std::max<std::int64_t>(0, s.totalUp) : 0;
     const std::int64_t download = s.coreReady ? std::max<std::int64_t>(0, s.totalDown) : 0;
     const double total = static_cast<double>(upload) + static_cast<double>(download);
@@ -392,18 +390,16 @@ huxerui::XYChartData BuildTrafficChartData(
     };
     const auto shareFont = huxerui::Font::System(font_size::kCaption)
                                .WithWeight(huxerui::FontWeight::SemiBold);
-    const auto shareMetric = [shareFont](std::string direction, huxerui::Color color,
-                                         const std::string& share) {
+    const auto shareMetric = [&theme, shareFont](std::string direction, const std::string& share) {
         return huxerui::Text(direction + " " + share)
-            .Style(huxerui::TextStyle{shareFont, color});
+            .Style(huxerui::TextStyle{shareFont, theme.colors.on_surface_variant});
     };
     const auto amountFont = huxerui::Font::System(font_size::kBody)
                                 .WithWeight(huxerui::FontWeight::SemiBold);
-    const auto amountMetric = [&theme, amountFont](std::string direction, huxerui::Color color,
-                                                   std::int64_t bytes) {
+    const auto amountMetric = [&theme, amountFont](std::string direction, std::int64_t bytes) {
         return huxerui::Row {
             huxerui::Text(std::move(direction))
-                .Style(huxerui::TextStyle{amountFont, color}),
+                .Style(huxerui::TextStyle{amountFont, theme.colors.on_surface_variant}),
             huxerui::Text(bytes == 0 ? "0B" : formatBytes(bytes))
                 .Style(huxerui::TextStyle{amountFont, theme.colors.on_surface}),
         }.With(huxerui::Spacing(6.0F),
@@ -422,12 +418,12 @@ huxerui::XYChartData BuildTrafficChartData(
         huxerui::Row {
             huxerui::PieChart(data)
                 .Style(huxerui::PieChartStyle{.inner_radius = 0.62F, .rounded_caps = true})
-                .SliceStyle("upload", {.fill = huxerui::Brush(upColor)})
-                .SliceStyle("download", {.fill = huxerui::Brush(downColor)})
+                .SliceStyle("upload", {.fill = huxerui::Brush(theme.colors.on_surface_variant)})
+                .SliceStyle("download", {.fill = huxerui::Brush(theme.colors.on_surface)})
                 .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
             huxerui::Column {
-                shareMetric("↑", upColor, shareText(upload)),
-                shareMetric("↓", downColor, shareText(download)),
+                shareMetric("↑", shareText(upload)),
+                shareMetric("↓", shareText(download)),
             }.With(huxerui::Grow(1.0F),
                    huxerui::Spacing(12.0F),
                    huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
@@ -436,8 +432,8 @@ huxerui::XYChartData BuildTrafficChartData(
                huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Column {
-            amountMetric("↑", upColor, upload),
-            amountMetric("↓", downColor, download),
+            amountMetric("↑", upload),
+            amountMetric("↓", download),
         }.With(huxerui::Spacing(4.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(8.0F),
@@ -447,28 +443,20 @@ huxerui::XYChartData BuildTrafficChartData(
 [[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s, bool upload) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const bool fresh = huxerui::UseService<CoreModel>()->view.Get().health.traffic.state == health::State::Fresh;
-    const auto trafficColors = ResolveTrafficColors(theme);
-    const auto color = upload ? trafficColors.upload : trafficColors.download;
+    const auto color = theme.colors.on_surface_variant;
     auto fill = color;
-    fill.alpha = upload ? 0.0F : 0.18F;
+    fill.alpha = 0.18F;
     const auto rateField = upload ? &stream::TrafficPoint::up : &stream::TrafficPoint::down;
     const auto rate = s.latest.*rateField;
     const auto title = upload ? Localized("上传") : Localized("下载");
     const auto chartLabel = huxerui::UseString(title);
+    const bool hasTraffic = std::ranges::any_of(s.history, [](std::int64_t sample) { return sample > 0; }, rateField);
     huxerui::View chart;
-    if (s.history.empty()) {
-        chart = huxerui::Column {
-          huxerui::Spacer(),
-          huxerui::Divider(),
-        }.With(huxerui::Grow(1.0F),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-               huxerui::Semantics{.role = huxerui::SemanticRole::Image,
-                                  .label = chartLabel, .value = "0B/s"});
-    } else {
+    if (hasTraffic) {
         chart = huxerui::AreaChart(BuildTrafficChartData(s.history, chartLabel, rateField))
             .Baseline(0.0)
-            .Interpolation(huxerui::ChartInterpolation::Linear)
-            // 只显示折线：两轴的轴线/刻度数字/网格全部隐藏（Visible(false)
+            .Interpolation(huxerui::ChartInterpolation::Monotone)
+            // 隐藏两轴的轴线、刻度数字和网格（Visible(false)
             // 不改变标度域）。Y 轴 formatter 仍供 tooltip 与语义读数使用。
             .XAxis(huxerui::ChartAxis::Linear().Visible(false))
             .YAxis(huxerui::ChartAxis::Linear()
@@ -483,16 +471,14 @@ huxerui::XYChartData BuildTrafficChartData(
                          huxerui::AreaChartStyle{
                              .fill = huxerui::Brush(fill),
                              .stroke = huxerui::Brush(color),
-                             .stroke_style = huxerui::StrokeStyle{.width = upload ? 1.5F : 2.0F}})
-            .With(huxerui::Grow(1.0F));
+                             .stroke_style = huxerui::StrokeStyle{.width = upload ? 1.5F : 2.0F,
+                                 .cap = huxerui::StrokeCap::Round, .join = huxerui::StrokeJoin::Round}});
     }
-    return huxerui::Column {
+    return HomeTrafficCardLayout(
         HomeCardHeading(upload ? app::images::arrow_up : app::images::arrow_down, title),
         huxerui::Text(fresh && rate > 0 ? formatRate(rate) : "0B/s")
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color}),
-        chart,
-    }.With(huxerui::Spacing(6.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        std::move(chart), ResolveIslandTheme(theme).island_padding);
 }
 
 // 出站模式：纵向单选列表（规则/全局/直连），排布参考 FlClash；单选圈、配色
@@ -595,7 +581,7 @@ huxerui::XYChartData BuildTrafficChartData(
         children.push_back(huxerui::Row {
             huxerui::Image(app::images::request)
                 .Fit(huxerui::ImageFit::Contain)
-                .Tint(theme.colors.primary)
+                .Tint(theme.colors.on_surface_variant)
                 .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             PlaceholderText(HomeCardHeadingFont(), 64.0F),
         }.With(huxerui::Spacing(8.0F),
@@ -613,7 +599,7 @@ huxerui::XYChartData BuildTrafficChartData(
     }
     if (hasProfile) {
         children.push_back(
-            huxerui::ProgressBar(progress).With(huxerui::Frame{.height = 3.0F}));
+            ProfileQuotaBar(progress));
     }
 
     return huxerui::Column(std::move(children))
@@ -784,7 +770,7 @@ huxerui::Task<wire::PublicIpLookup> FetchPublicIp(std::shared_ptr<AppHttpClient>
         huxerui::Row {
             huxerui::Image(icon)
                 .Fit(huxerui::ImageFit::Contain)
-                .Tint(theme.colors.primary)
+                .Tint(theme.colors.on_surface_variant)
                 .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
             huxerui::Text(label).Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kBody)

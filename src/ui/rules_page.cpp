@@ -602,7 +602,7 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
               huxerui::Font::System(font_size::kBody), theme.colors.on_surface})
               .With(huxerui::Grow(1.0F)),
           huxerui::Text(Localized("规则集")).Style(huxerui::TextStyle{
-              huxerui::Font::System(font_size::kCaption), theme.colors.primary}),
+              huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant}),
         }.With(huxerui::Spacing(8.0F)),
         FittedSingleLineLabel(resource->type == "remote" ? resource->url :
             huxerui::UseString(Localized("本地内容 · JSON")), huxerui::TextStyle{
@@ -1575,7 +1575,7 @@ DialogAction(Localized("保存"), [=] {
                                     directRule ? Localized("直连") :
                                     LocalizedFormat("目标不可用/待应用 · {}", huxerui::UseString(Localized(kUnavailableNames[static_cast<std::size_t>(rule.unavailable)]))))
                                     .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption),
-                                        active ? theme.colors.primary : theme.colors.on_surface_variant}),
+                                        theme.colors.on_surface_variant}),
                                 huxerui::Text(Localized(rule.tier == vpn::RuleTier::UserOverride ? "全局覆盖" : "来源分流")),
                                 readOnly ? huxerui::View{huxerui::Row{}} : huxerui::View{huxerui::Row {
                                   huxerui::Button(Localized(rule.enabled ? "禁用" : "启用")).With(huxerui::Enabled(!policySaving.Get()))

@@ -1,5 +1,145 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-22 桌面一级侧栏黑白反馈
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。桌面宽屏一级侧栏的图标、选中底板和交互反馈在浅色模式用黑色，深色模式用白色，以透明度区分状态。键盘焦点的颜色覆盖作用于侧栏。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition --root-dock`、`--accent-roles` 和 CTest `ui_resources` 通过。
+- Windows 原生隔离预览核对了深浅模式的侧栏图标和选中效果，隔离的无窗口检查使用生产侧栏和样式，核对了悬停、按压、波纹和焦点绘制，以及鼠标切页和 Home/End 滚动定位。本轮未重跑完整 `page_transition`。
+
+## 2026-11-22 首页彩蛋链接圆角悬停
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。共用彩蛋链接使用最小高度 34pt、左右各 6pt 留白的全圆角反馈层。GitHub 图标保持 18pt，窄卡上的较长名称可以自然换行。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition --home-easter-egg` 和 CTest `ui_resources` 通过。定向回归覆盖 140pt 和 280pt 卡片里的链接几何、悬停绘制和留白区点击，并核对六个彩蛋的目标地址。
+- Windows 原生隔离预览核对了 140pt 卡上换行的 Lib-CodeEditor 和 220pt 卡上单行的 FinalScave 悬停效果。本轮未重跑完整 `page_transition` 或移动端实机验收。
+
+## 2026-11-22 搜索工具栏圆形悬停反馈
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。搜索工具栏为图标按钮统一提供居中的 28pt 圆形状态层，覆盖放大镜、页内操作和输入框内的叉号。沿用按钮的点击范围、主题反馈色和操作行为。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition --page-search`、`--proxy-speed-shutter` 和 CTest `ui_resources` 通过。悬停定向回归核对 390pt 和 960pt 下各按钮绘制的圆形直径、圆心和点击范围。Windows 窄窗隔离预览核对了页内操作的悬停效果。
+- 本轮未重跑完整 `page_transition` 或移动端实机验收。
+
+## 2026-11-22 搜索框从放大镜中心展开
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。搜索工具栏以真实放大镜宽度与位置为起点绘制胶囊，窄屏的两侧从中心同时展开，宽屏右缘止于操作区。输入内容与叉号保持原尺寸淡入，收起沿同一几何轨迹返回，后台及减少动态效果时直接就位。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition --page-search`、`--proxy-speed-shutter` 与 CTest `ui_resources` 通过。定向回归读取实际绘制命令并验证宽窄屏首帧无全宽胶囊、窄屏初始扩展以放大镜为中心、宽屏边缘和操作区保持分离，以及连续输入和关闭复原。
+- Windows 原生隔离预览验证了窄窗展开、叉号点击及收起过程。本轮未重跑完整 `page_transition` 或移动端实机验收。
+
+## 2026-11-22 窄屏搜索页头对齐
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。订阅、代理、连接和日志的 Compact 页头收起时左侧显示页名，放大镜与动作作为一组右对齐。展开搜索时页名和操作淡出，返回入口保留，输入框包含在覆盖区域内的叉号仍可点击。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition --page-search`、`--proxy-speed-shutter` 与 CTest `ui_resources` 通过。定向回归验证 390pt 页名和动作对齐、展开至全宽、叉号点击后原位复原，以及 320pt 二级页的返回入口。
+- Windows 原生隔离预览确认了窄窗收起与展开的布局，最终点击层级由定向回归验证。本轮未重跑完整 `page_transition` 或移动端实机验收。
+
+## 2026-11-22 页面搜索工具栏
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。订阅、代理、连接和日志默认显示放大镜；宽屏在右上角向左展开，右侧动作原位可用，Compact 展开占满工具栏可用宽度并暂时隐藏页内动作。叉号与 Esc 清除筛选并复原，跨宽窄切换保留展开状态和搜索词。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、CTest `ui_resources` 及 `test_page_transition --page-search`、`--proxy-speed-shutter`、`--menus` 通过。专项回归覆盖伸展宽度、键盘遍历、连续输入不丢焦点、遮挡期间的点击和按钮复原。
+- CTest 完整 `page_transition` 在 180 秒超时，最后输出来自首页动画。使用集成生产工具栏的 Windows 原生隔离预览验证了逐键输入、从宽屏缩到窄屏保留筛选、点击叉号清除筛选，以及宽窄屏动作按钮的实际点击。未运行完整应用窗口或移动端实机验收。
+
+## 2026-11-22 Android 键盘覆盖一级底部导航
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。Android 使用系统 IME 底部 Insets 控制一级导航及渐隐层的绘制、点击和无障碍，键盘收起恢复同一挂载实例与选中项。页面继续按 HuxerUI 视口避让键盘。顺手补齐网站测速协程对既有路由预算的捕获，修复 Android Clang 构建。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、CTest `ui_resources` 和 `test_page_transition` 的 `--root-dock`、`--website-tests` 通过。完整 `page_transition` 在 90 秒超时，定向回归覆盖底栏显隐、点击、无障碍、挂载和位置恢复。
+
+## 2026-11-22 代理组测速移入搜索框
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。宽窄屏共用搜索胶囊的末尾动作位，实心闪电测试当前组。桌面网格恢复常规末尾留白，Compact 网格继续避让底部导航。
+- Windows/MSVC Debug 下主目标和 `test_page_transition` 构建、`./run.ps1 --version`（v0.3.125）、`git diff --check`、CTest `ui_resources`、`--proxy-speed-shutter` 与 `--proxy-node-card` 通过。生产搜索胶囊回归覆盖 320/960pt 的按钮位置、输入与清除、测速期间几何和状态，以及快门动效。未做原生窗口或实网测速检查。
+
+## 2026-11-22 网站测速悬停范围
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。固定宽度的测速槽只负责排版，悬停底色、提示和重测由槽内右对齐的按钮承载。
+- Windows/MSVC Debug 下主目标和 `test_page_transition` 构建、`./run.ps1 --version`（v0.3.125）、`git diff --check`、CTest `ui_resources` 及 `--website-tests` 通过。320/960pt 断言四位延迟数字在反馈范围内居中，左侧槽空白不会弹出提示或重测，移到数字可查看毫秒提示并点击重测。未做原生窗口复查。
+
+## 2026-11-22 网站测试出站与延迟
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。卡片左下角显示关联到的代理节点或直连，右下角显示待测空心闪电、测试圆点、响应头耗时或失败状态。页头全测使用实心闪电。测速使用目标站点 HEAD 请求和当前运行环境的出站记录。
+- Windows/MSVC Debug 下主目标与 `test_page_transition` 构建、`./run.ps1 --version`（v0.3.125）、`git diff --check`、CTest `ui_resources`、`--website-tests` 及 `--proxy-node-card` 通过。网站回归包含宽窄卡片、独立与批量请求、点延迟重测、真实出站关联的夹具与未确认回落。未验证公网线路、原生窗口或其它平台。
+
+## 2026-11-22 首页流量卡零状态
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。上传和下载分别在历史出现正值时绘制曲线。空历史和全零历史的绘图区留空，速率读数继续显示。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition --home-grid` 及 CTest `ui_resources` 通过。布局回归在 320/960/1400pt 检查曲线槽显隐、图文位置和绘图区贴边。附加 `--home-card-surface` 超过 45 秒后中止，未做原生窗口复查。
+
+## 2026-11-21 网站测试固定站点与图标
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。沿用八个内置测试地址，打包站点图标，移除新增、编辑和删除入口及表单。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition --website-tests` 及 CTest `ui_resources` 通过。核对生产包中的站点图标，定向测试覆盖 320/960pt 卡片、图标、滚动、单站与批量排队、超时和路由核实。
+- 运行了隔离 Windows 宽窄窗预览。隐藏窗口截图没有捕获到合成画面，原生视觉核对未完成。本轮未对公网逐站测试，也未运行完整页面套件或其它平台。
+
+## 2026-11-21 托盘图标使用固定配色
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。完整托盘和无窗简版共用默认猫咪图标，移除 TUN 和系统代理变色资源。菜单继续按可见状态刷新。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 8`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--subscription-ua` 和 CTest `ui_resources` 通过。品牌生成输出与四份托盘资源一致（SVG 按 LF 比较）。
+- 隔离 Windows GUI 验证有窗及无窗启动均成功发布原生托盘图标，模拟系统代理、TUN 和停止状态切换时图标保持存在，菜单正常刷新。未操作真实内核或系统接管，未检查其它平台。完整 `page_transition` 及附加 `--menus`、`--accent-roles` 等待未完成后中止。
+
+## 2026-11-21 语言与 UA 选项分隔线
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。语言选择与「UA 尝试顺序」分别在弹窗和二级页共用选项列表，选项之间只保留行内留白。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 8`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--subscription-ua`、`--settings-selects` 和 CTest `ui_resources` 通过。未做原生窗口或其它平台复查。
+
+## 2026-11-21 单节点与组测速闪电样式
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。节点卡使用 14pt 空心闪电，悬浮组测速使用同轮廓的实心闪电。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--proxy-node-card`、`--proxy-speed-shutter` 及 CTest `ui_resources` 通过。核对 SVG 共用路径与空心/实心绘制属性。本轮保留用户运行中的窗口，未做新图标的原生窗口复查。
+
+## 2026-11-21 窄屏底栏选中文字与悬浮测速图标
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。窄屏底栏选中文字与图标同用主题强调色，胶囊底板使用中性色。代理页组测速采用无底板、无阴影的中性色对称闪电，保留 56pt 点击区和图标快门动效。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--accent-roles`、`--proxy-node-card`、`--proxy-speed-shutter` 及 CTest `ui_resources` 通过。隔离原生样例检查宽、窄窗的悬浮闪电，并核对蓝色切粉色时窄屏底栏选中文字和图标同步变化。未运行完整套件、其它平台或真实节点测速。
+
+## 2026-11-21 代理节点对称闪电测速入口
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。未测速节点显示 14pt 中心对称闪电。测速提示、无障碍名称、圆点动画和点击延迟结果复测沿用原入口。组测速仍使用四角星。
+- Windows/MSVC Debug 下主目标构建与 HuxerUI codegen、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--proxy-node-card`、`--proxy-speed-shutter` 及 CTest `ui_resources` 通过。SVG 的六个顶点以 `(12, 12)` 为中心成对对称。原生样例代理页确认首版图标位置，用户停止了原生窗口操作，对称版本通过资源和定向回归验证。本轮未运行完整套件或实网测速。
+
+## 2026-11-21 首页流量图中性配色
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。独立上传、下载卡的速率、曲线和 18% 不透明度的面积填充统一用中性色。流量统计比例和累计标识用中性色，饼图以上传柔和灰、下载高对比灰区分。
+- Windows/MSVC Debug 的 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--home-grid` 和 CTest `ui_resources` 通过。隔离 Windows 原生预览以样例流量检查深浅主题下的曲线、填充和饼图。未运行完整页面套件或其它平台原生验证。
+
+## 2026-11-21 首页流量图铺到卡片边缘
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。首页上传和下载的曲线、面积或零线延伸到卡片两侧和底边，沿用原圆角裁切与图文布局。
+- Windows/MSVC Debug 的 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--home-grid`、`--home-card-surface` 与 CTest `ui_resources` 通过。布局回归覆盖 320pt、960pt、1400pt 及有无历史数据，核对绘图区和图文位置；隔离 Windows 原生预览用样例流量核对宽窄窗及圆角。未运行完整页面套件或其它平台原生验证。
+
+## 2026-11-21 首页上传曲线面积填充
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。首页上传和下载曲线共用 18% 不透明度，面积沿用各自方向色。
+- Windows/MSVC Debug 的 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--home-grid` 及 CTest `ui_resources` 通过。在隔离 Windows 原生预览中以样例流量核对蓝色下载与橙色上传面积。未运行完整页面套件或其它平台原生验证。
+
+## 2026-11-21 流量曲线平滑
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。首页上下行和连接详情的速率图启用 Lib-Charts 单调插值与圆角描边，沿用原有采样、标度和方向色。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--home-grid` 和 CTest `ui_resources` 通过。隔离 Windows 原生预览用样例流量检查首页两条曲线的峰谷、平台和下载面积。未在原生窗口验证真实连接详情，未运行完整页面套件或其它平台。
+
+## 2026-11-21 深浅主题展开起点
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。原生宽窄窗口的圆弧与点击坐标吻合，原缓出曲线在前段覆盖过快。主题切换使用同一条缓入缓出曲线，让新主题从实际点击或触摸点逐步铺开。键盘仍以获得焦点的主题卡片中心为圆心。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check` 与 CTest `ui_resources` 通过。`test_page_transition --theme-reveal` 在 320pt、960pt 验证鼠标和触摸的非居中触发位置、键盘激活、100ms 的圆半径与动画结束后移除裁剪。旧曲线的六次半径检查失败，调整后全部通过。
+- 使用同一 UI 代码的隔离 Windows 原生预览检查宽窗和窄窗的双向切换，设置写入临时目录并跳过后台服务启动。本轮未运行完整页面套件、其它原生平台或触屏实机检查。
+
+## 2026-11-21 界面强调色收敛
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。普通反馈、选中卡片表面、一级导航指示器、静态标签和常驻订阅配额条使用中性色。主操作、选中描边、导航图标、分区指示线与任务进度继续使用强调色。首页和连接详情共用上传橙、下载蓝。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）及 `git diff --check` 通过。定向 `--accent-roles`、`--profile-cards`、`--proxy-node-card`、`--settings-selects`、`--home-grid`、`--profile-file-filter`、`--home-card-surface`、`--proxy-speed-shutter` 与 CTest `ui_resources` 通过。强调色回归覆盖深浅模式、六种自定义色、交互反馈、中性选中面和固定流量色。
+- 使用相同界面代码构建隔离 Windows 原生预览，跳过后台网络服务启动，配置写入临时目录。实查默认深色首页、浅色及高饱和自定义色 `#FF056D`、宽窄导航、设置页、新建订阅主次按钮和文件虚线选区。填入样例数据的订阅与代理卡片由定向测试覆盖。本轮未运行完整页面测试套件、其它平台原生或手机实机检查。
+
+## 2026-11-21 订阅卡片悬停描边
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。回归先复现从卡外进入「更多」按钮时整卡缺少描边，再验证订阅卡复用代理节点的外框悬停逻辑，经过操作按钮和流量条时保持高亮，移至卡间空隙后淡出。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`--profile-cards`、`--proxy-node-card`、`--home-card-surface`、`--home-proxy-pickers` 与 CTest `ui_resources` 均通过。未运行原生窗口视觉检查与完整页面套件。
+
+## 2026-11-21 代理节点卡悬停描边
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。无窗口回归复现从卡外直接进入测速区域时整张卡缺少悬停描边。节点卡改用首页共用的 `CardHoverOutline`，通过 `ViewEvents::Hover` 观察整张卡，保留卡内控件独立的操作语义。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.125）、`git diff --check`、`test_page_transition` 的 `--proxy-node-card`、`--home-card-surface`、`--profile-cards` 及 CTest `ui_resources` 通过。代理回归覆盖进入和离开、指针跨到测速控件、测速中状态以及测速与选线各自响应。未运行原生窗口视觉与完整页面套件。
+
+## 2026-11-21 订阅卡片圆角与间距
+
+- 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。订阅卡片、骨架、拖动预览与放置描边使用 12pt 圆角。宽窄屏卡间距与 Compact 正文左右留白共用 12pt 常量。
+- Windows/MSVC Debug 下 `cmake --build build --target clash-flux test_page_transition` 通过，`./run.ps1 --version` 输出 v0.3.125，`git diff --check` 通过。`test_page_transition --profile-cards` 检查卡片与骨架圆角、卡间距、Compact 左右留白和虚拟滚动，CTest `ui_resources` 通过。未运行完整页面套件与原生窗口视觉检查。
+
 ## 2026-11-21 v0.3.125 补丁发布
 
 - 发布内容继承 `v0.3.124`（`6680de8`），应用与 CI 仍固定 HuxerUI `b88c4d1f`。候选标签未发布安装包，故 Android versionCode 202 仍为前一个正式发布的 201 加一，versionName 更新为 0.3.125。

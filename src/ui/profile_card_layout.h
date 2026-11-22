@@ -13,7 +13,8 @@ namespace clashflux::ui {
 inline constexpr float kCardWidth = 340.0F;
 inline constexpr float kCardHeight = 180.0F;
 inline constexpr float kCompactProfileCardHeight = 108.0F;
-inline constexpr float kCompactProfileCardSpacing = 6.0F;
+inline constexpr float kProfileCardRadius = 12.0F;
+inline constexpr float kProfileCardSpacing = 12.0F;
 
 constexpr float ProfileCardHeight(bool compact) {
     return compact ? kCompactProfileCardHeight : kCardHeight;
@@ -22,10 +23,6 @@ constexpr float ProfileCardHeight(bool compact) {
 inline huxerui::GridColumns ProfileGridColumns(bool compact, bool groupByType) {
     return compact || !groupByType ? huxerui::GridColumns::Fixed(1)
                                   : huxerui::GridColumns::Adaptive(kCardWidth);
-}
-
-constexpr float ProfileCardRowSpacing(bool compact) {
-    return compact ? kCompactProfileCardSpacing : kSectionCardSpacing;
 }
 
 inline std::string ProfileSubscriptionAddress(std::string_view url) {
@@ -45,6 +42,17 @@ inline float ProfileTrafficProgress(std::int64_t used, std::int64_t total) {
     return total > 0 ? std::clamp(static_cast<float>(used) / static_cast<float>(total), 0.0F, 1.0F) : 1.0F;
 }
 
+inline huxerui::View ProfileQuotaBar(float fraction) {
+    return huxerui::Scope([fraction] {
+        const auto& colors = huxerui::UseTheme().colors;
+        auto style = huxerui::UseEnvironment<huxerui::ProgressBarStyle>();
+        style.indicator_color = colors.secondary;
+        style.track_color = colors.secondary_container;
+        return huxerui::ProvideEnvironment(style,
+            huxerui::ProgressBar(fraction).With(huxerui::Frame{.height = 3.0F}));
+    });
+}
+
 // Empty labels keep their slots. Unknown quota retains the wide card's full bar.
 inline huxerui::View CompactProfileTrafficContent(std::string traffic, std::string expiry,
     float progress, huxerui::Color muted) {
@@ -56,7 +64,7 @@ inline huxerui::View CompactProfileTrafficContent(std::string traffic, std::stri
             .With(huxerui::Grow(1.0F)).Key("profile-expiry-label"),
       }.With(huxerui::Frame{.height = 20.0F}, huxerui::Spacing(6.0F),
              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-      huxerui::ProgressBar(progress).With(huxerui::Frame{.height = 3.0F}).Key("profile-traffic-bar"),
+      ProfileQuotaBar(progress).Key("profile-traffic-bar"),
     }.With(huxerui::Spacing(4.0F), huxerui::Grow(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }

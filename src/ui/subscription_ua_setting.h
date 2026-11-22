@@ -23,7 +23,6 @@ inline huxerui::View SubscriptionUserAgentChoices(
         const std::size_t selected = subscription_http::OrderIndex(order);
         std::vector<huxerui::View> options;
         for (std::size_t index = 0; index < subscription_http::kOrders.size(); ++index) {
-            if (index != 0) options.push_back(huxerui::Divider());
             const auto agents = subscription_http::OrderUserAgents(index);
             std::vector<huxerui::View> values;
             for (const auto agent : agents) {

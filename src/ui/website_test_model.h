@@ -10,106 +10,44 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <huxerui/huxerui.h>
 #include "../website_probe.h"
+#include "app_resources.h"
 
 namespace clashflux::ui {
 
 enum class WebsiteTestPhase { Idle, Queued, Running, Responded, Failed, Cancelled };
-// Where a confirmed country came from. Unconfirmed results keep None.
-enum class WebsiteLocationSource { None, SiteTrace, CoreOutbound, DirectEgress };
 struct WebsiteTestResult {
     WebsiteTestPhase phase = WebsiteTestPhase::Idle;
     int status = 0;
     std::string error;
-    std::string country;
-    std::int64_t completedAt = 0;
-    WebsiteLocationSource locationSource = WebsiteLocationSource::None;
+    std::string outbound;
+    std::optional<int> latencyMs;
     bool operator==(const WebsiteTestResult&) const = default;
 };
 struct WebsiteTestSite {
     std::string name, url;
+    huxerui::ImageResource icon;
     WebsiteTestResult result;
     std::size_t id = 0;
     bool operator==(const WebsiteTestSite&) const = default;
 };
 
-inline std::vector<WebsiteTestSite> DefaultWebsiteTests() {
-    std::vector<WebsiteTestSite> rows{{"Baidu", "https://www.baidu.com/"}, {"Bilibili", "https://www.bilibili.com/"},
-        {"QQ", "https://www.qq.com/"}, {"JD", "https://www.jd.com/"},
-        {"Google", "https://www.google.com/generate_204"}, {"YouTube", "https://www.youtube.com/"},
-        {"GitHub", "https://github.com/"}, {"Cloudflare", "https://www.cloudflare.com/"}};
+inline std::vector<WebsiteTestSite> FixedWebsiteTests() {
+    std::vector<WebsiteTestSite> rows{
+        {"Baidu", "https://www.baidu.com/", app::images::website_baidu},
+        {"Bilibili", "https://www.bilibili.com/", app::images::website_bilibili},
+        {"QQ", "https://www.qq.com/", app::images::website_qq},
+        {"JD", "https://www.jd.com/", app::images::website_jd},
+        {"Google", "https://www.google.com/generate_204", app::images::website_google},
+        {"YouTube", "https://www.youtube.com/", app::images::website_youtube},
+        {"GitHub", "https://github.com/", app::images::github},
+        {"Cloudflare", "https://www.cloudflare.com/", app::images::website_cloudflare},
+    };
     for (std::size_t i = 0; i < rows.size(); ++i) rows[i].id = i;
     return rows;
-}
-
-inline void TrimWebsiteInput(std::string& text) {
-    const auto begin = text.find_first_not_of(" \t\r\n");
-    if (begin == std::string::npos) { text.clear(); return; }
-    text = text.substr(begin, text.find_last_not_of(" \t\r\n") - begin + 1);
-}
-
-// Normalize once on submit, preserving path/query spelling and explicit HTTP.
-// The same representation is used for presets, additions, edits and duplicates.
-inline std::optional<std::string> NormalizeWebsiteUrl(std::string url) {
-    TrimWebsiteInput(url);
-    if (url.empty() || url.size() > 2048) return std::nullopt;
-    if (url.starts_with("//")) url = "https:" + url;
-    else {
-        const auto colon = url.find(':');
-        const bool explicitScheme = colon != std::string::npos && colon < url.find_first_of("/?#") &&
-            url.compare(colon, 3, "://") == 0;
-        if (!explicitScheme) url = "https://" + url;
-    }
-    const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 'a' - 'A') : c; };
-    const auto schemeEnd = url.find(':');
-    std::transform(url.begin(), url.begin() + schemeEnd, url.begin(), lower);
-    const auto parsed = huxerui::Uri::Parse(url);
-    if (!parsed || (parsed->Scheme() != "http" && parsed->Scheme() != "https") ||
-        !parsed->Authority() || parsed->Authority()->empty() ||
-        parsed->Authority()->find('@') != std::string::npos || parsed->Fragment()) return std::nullopt;
-    const auto authority = *parsed->Authority();
-    const auto hostEnd = authority.starts_with('[') ? authority.find(']') + 1 : authority.find(':');
-    if (hostEnd == 0) return std::nullopt;
-    if (hostEnd != std::string::npos && hostEnd < authority.size()) {
-        const auto port = authority.substr(hostEnd + 1);
-        unsigned number = 0;
-        if (port.empty()) return std::nullopt;
-        for (const char digit : port) {
-            if (digit < '0' || digit > '9' || number > 65535) return std::nullopt;
-            number = number * 10 + static_cast<unsigned>(digit - '0');
-        }
-        if (number == 0 || number > 65535) return std::nullopt;
-    }
-    const auto authorityBegin = schemeEnd + 3;
-    std::transform(url.begin() + authorityBegin, url.begin() + authorityBegin + authority.size(),
-        url.begin() + authorityBegin, lower);
-    if (parsed->Path().empty()) url.insert(authorityBegin + authority.size(), "/");
-    if (url.size() > 2048) return std::nullopt;
-    return url;
-}
-
-inline std::string WebsiteNameFromUrl(const std::string& url) {
-    const auto uri = huxerui::Uri::Parse(url);
-    if (!uri || !uri->Authority()) return {};
-    std::string host(*uri->Authority());
-    if (host.starts_with('[')) {
-        const auto end = host.find(']');
-        return end == std::string::npos ? std::string{} : host.substr(1, end - 1);
-    }
-    if (const auto port = host.find(':'); port != std::string::npos) host.resize(port);
-    if (host.size() > 4 && host.starts_with("www.")) host.erase(0, 4);
-    return host;
-}
-
-inline std::optional<std::string> WebsiteOrigin(const std::string& url) {
-    const auto parsed = huxerui::Uri::Parse(url);
-    if (!parsed || (parsed->Scheme() != "http" && parsed->Scheme() != "https") ||
-        !parsed->Authority() || parsed->Authority()->empty() || parsed->Authority()->find('@') != std::string_view::npos) return {};
-    return std::string(parsed->Scheme()) + "://" + std::string(*parsed->Authority());
 }
 
 // Lowercase host of an absolute HTTP(S) URL, without port, brackets or a trailing dot.
@@ -132,37 +70,29 @@ inline std::string WebsiteHost(const std::string& url) {
 
 struct WebsiteHttpReply {
     int status = 0;
-    std::string url, body, error, routeLeaf;
+    std::string url, error, outbound;
+    std::optional<int> latencyMs;
 };
 class AppHttpClient;
 using WebsiteStreamObserver = std::function<huxerui::Task<std::string>(std::string finalUrl)>;
 huxerui::Task<WebsiteHttpReply> SendWebsiteRequest(
     std::shared_ptr<AppHttpClient> http, huxerui::HttpRequest request,
     WebsiteStreamObserver observeRoute = {});
-using WebsiteHttpExchange = std::function<huxerui::Task<WebsiteHttpReply>(huxerui::HttpRequest)>;
+using WebsiteHttpExchange =
+    std::function<huxerui::Task<WebsiteHttpReply>(huxerui::HttpRequest, WebsiteStreamObserver)>;
 
 // Connections already known to this application's running kernel before the
 // website request. identity pins the exact runtime instance/plan/listener.
 struct WebsiteRouteBaseline {
     std::string identity;
-    int proxyPort = 0;
-    bool tunEnabled = false;
     std::vector<std::string> connectionIds;
 };
-struct WebsiteRouteResolution {
-    std::string country;
-    WebsiteLocationSource source = WebsiteLocationSource::None;
-};
-// Optional correlation with this application's own kernel or verified pure-
-// direct egress. begin() returns nullopt when the kernel does not carry
-// traffic; observe() inspects live connections while the HEAD stream is still
-// open; locate() resolves a confirmed ISO country. Blocking work runs off UI.
+// The observer reads live connections while the HEAD stream is still open.
+// Desktop direct attribution requires independent evidence of no interception.
 struct WebsiteRouteLocator {
     std::function<huxerui::Task<std::optional<WebsiteRouteBaseline>>()> begin;
     std::function<huxerui::Task<std::string>(WebsiteRouteBaseline, std::string finalUrl)> observe;
-    std::function<huxerui::Task<WebsiteRouteResolution>(
-        std::optional<WebsiteRouteBaseline>, std::string observedLeaf,
-        std::string host, std::chrono::milliseconds budget)> locate;
+    std::function<huxerui::Task<bool>()> isDirect;
 };
 huxerui::Task<WebsiteTestResult> ProbeWebsiteNetwork(WebsiteHttpExchange exchange, std::string url,
                                                      WebsiteRouteLocator locator = {});
@@ -174,66 +104,16 @@ std::string WebsiteRouteLeaf(std::string_view connectionsBody,
 
 // UI-thread application service: each site owns its own request and result, at
 // most three asynchronous HTTP requests run at once, no page lifetime or timer.
-// Stable IDs and request generations keep removals/edits from retargeting results.
+// Stable site IDs and request generations prevent stale results after retry.
 struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
     using Probe = std::function<huxerui::Task<WebsiteTestResult>(std::string)>;
     static constexpr std::size_t kMaxConcurrentProbes = 3;
-    huxerui::State<std::vector<WebsiteTestSite>> sites{DefaultWebsiteTests()};
-    huxerui::State<huxerui::TextEditingValue> customUrl{huxerui::TextEditingValue{}};
-    huxerui::State<huxerui::TextEditingValue> customName{huxerui::TextEditingValue{}};
+    huxerui::State<std::vector<WebsiteTestSite>> sites{FixedWebsiteTests()};
     huxerui::TaskScope tasks;
     Probe probe;
     std::deque<std::size_t> pending;
     struct Request { std::uint64_t generation; huxerui::TaskHandle task, timeout; };
     std::unordered_map<std::size_t, Request> running;
-
-    // The effective name is mandatory; an empty input is filled from the host.
-    bool Add(std::string url, std::string name = {}) {
-        if (sites.Get().size() >= 24) return false;
-        const auto normalized = NormalizeWebsiteUrl(std::move(url));
-        if (!normalized) return false;
-        auto rows = sites.Get();
-        if (Duplicate(rows, *normalized, std::nullopt)) return false;
-        TrimWebsiteInput(name);
-        if (name.empty()) name = WebsiteNameFromUrl(*normalized);
-        rows.push_back({std::move(name), *normalized, {}, nextId++});
-        sites = std::move(rows);
-        customUrl = huxerui::TextEditingValue{};
-        customName = huxerui::TextEditingValue{};
-        return true;
-    }
-
-    bool Update(std::size_t id, std::string url, std::string name = {}) {
-        const auto normalized = NormalizeWebsiteUrl(std::move(url));
-        if (!normalized) return false;
-        auto rows = sites.Get();
-        const auto row = Find(rows, id);
-        if (row == rows.end() || Duplicate(rows, *normalized, id)) return false;
-        TrimWebsiteInput(name);
-        if (name.empty()) name = WebsiteNameFromUrl(*normalized);
-        if (row->url != *normalized) {
-            Stop(id);
-            row->url = *normalized;
-            row->result = {};
-        }
-        row->name = std::move(name);
-        sites = std::move(rows);
-        customUrl = huxerui::TextEditingValue{};
-        customName = huxerui::TextEditingValue{};
-        Pump();
-        return true;
-    }
-
-    bool Remove(std::size_t id) {
-        auto rows = sites.Get();
-        const auto row = Find(rows, id);
-        if (row == rows.end()) return false;
-        Stop(id);
-        rows.erase(row);
-        sites = std::move(rows);
-        Pump();
-        return true;
-    }
 
     // True while any site is queued or running. Callers use it for aggregate
     // actions only; individual sites decide their own availability.
@@ -290,76 +170,10 @@ struct WebsiteTestModel : std::enable_shared_from_this<WebsiteTestModel> {
         Pump();
     }
 
-    // UI-thread cache and single-flight deduplication for verified exits:
-    // runtime identity + leaf outbound (or pure direct) -> country.
-    static constexpr auto kEgressCacheTtl = std::chrono::minutes{5};
-    class EgressFlightGuard {
-    public:
-        EgressFlightGuard() = default;
-        EgressFlightGuard(std::weak_ptr<WebsiteTestModel> owner, std::string key)
-            : owner_(std::move(owner)), key_(std::move(key)) {
-            if (!key_.empty()) {
-                if (const auto model = owner_.lock()) model->egressInFlight_.insert(key_);
-            }
-        }
-        ~EgressFlightGuard() { Release(); }
-        EgressFlightGuard(EgressFlightGuard&& other) noexcept
-            : owner_(std::move(other.owner_)), key_(std::move(other.key_)) {
-            other.owner_.reset();
-            other.key_.clear();
-        }
-        EgressFlightGuard& operator=(EgressFlightGuard&& other) noexcept {
-            if (this != &other) {
-                Release();
-                owner_ = std::move(other.owner_);
-                key_ = std::move(other.key_);
-                other.owner_.reset();
-                other.key_.clear();
-            }
-            return *this;
-        }
-        EgressFlightGuard(const EgressFlightGuard&) = delete;
-        EgressFlightGuard& operator=(const EgressFlightGuard&) = delete;
-    private:
-        void Release() {
-            if (key_.empty()) return;
-            if (const auto model = owner_.lock()) model->egressInFlight_.erase(key_);
-            owner_.reset();
-            key_.clear();
-        }
-        std::weak_ptr<WebsiteTestModel> owner_;
-        std::string key_;
-    };
-    [[nodiscard]] bool IsEgressInFlight(const std::string& key) const {
-        return egressInFlight_.contains(key);
-    }
-    [[nodiscard]] EgressFlightGuard AcquireEgressFlight(std::string key) {
-        return EgressFlightGuard(weak_from_this(), std::move(key));
-    }
-    [[nodiscard]] std::optional<std::string> CachedEgress(const std::string& key) const {
-        const auto found = egressCache.find(key);
-        if (found == egressCache.end() ||
-            std::chrono::steady_clock::now() - found->second.second > kEgressCacheTtl) return std::nullopt;
-        return found->second.first;
-    }
-    void StoreEgress(const std::string& key, std::string country) {
-        if (egressCache.size() >= 64) egressCache.clear();
-        egressCache[key] = {std::move(country), std::chrono::steady_clock::now()};
-    }
-
 private:
-    std::unordered_map<std::string, std::pair<std::string, std::chrono::steady_clock::time_point>> egressCache;
-    std::unordered_set<std::string> egressInFlight_;
-    std::size_t nextId = sites.Get().size();
     std::uint64_t nextGeneration = 0;
     static std::vector<WebsiteTestSite>::iterator Find(std::vector<WebsiteTestSite>& rows, std::size_t id) {
         return std::find_if(rows.begin(), rows.end(), [id](const auto& row) { return row.id == id; });
-    }
-    static bool Duplicate(const std::vector<WebsiteTestSite>& rows, const std::string& url,
-        std::optional<std::size_t> except) {
-        return std::any_of(rows.begin(), rows.end(), [&](const auto& row) {
-            return row.id != except && NormalizeWebsiteUrl(row.url) == url;
-        });
     }
     void Stop(std::size_t id) {
         std::erase(pending, id);
@@ -387,26 +201,23 @@ private:
                 try { result = co_await probeForSite(url); }
                 catch (const std::exception& error) { result = {WebsiteTestPhase::Failed, 0, error.what()}; }
                 catch (...) { result = {WebsiteTestPhase::Failed}; }
-                self->Complete(id, generation, url, std::move(result), false);
+                self->Complete(id, generation, std::move(result), false);
             })};
-            running.at(id).timeout = tasks.Launch([self, id, generation, url]() -> huxerui::Task<void> {
+            running.at(id).timeout = tasks.Launch([self, id, generation]() -> huxerui::Task<void> {
                 co_await huxerui::Delay(clashflux::website::kTimeout);
-                self->Complete(id, generation, url,
+                self->Complete(id, generation,
                     {WebsiteTestPhase::Failed, 0, clashflux::website::kTimeoutError}, true);
             });
         }
     }
-    void Complete(std::size_t id, std::uint64_t generation, const std::string& url,
-                  WebsiteTestResult result, bool timedOut) {
+    void Complete(std::size_t id, std::uint64_t generation, WebsiteTestResult result, bool timedOut) {
         const auto entry = running.find(id);
         if (entry == running.end() || entry->second.generation != generation) return;
         const auto request = entry->second;
         running.erase(entry);
         auto current = sites.Get();
         const auto target = Find(current, id);
-        if (target != current.end() && target->url == url) {
-            result.completedAt = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
+        if (target != current.end()) {
             target->result = std::move(result);
             sites = std::move(current);
         }

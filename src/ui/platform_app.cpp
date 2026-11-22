@@ -428,11 +428,10 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             ? settingsModel->view.Get() : SettingsView{};
         const bool english = settings.ready ? settings.language == "en"
             : runtimeServices && runtimeServices->startupLanguage == "en";
-        const CoreView view = control->model->view.Get();
-        const bool coreRunning = view.core.state == core::CoreState::Running;
-        const std::string mode = view.Mode();
-        const std::string key = std::format("{}:{}:{}:{}:{}:{}:{}:{}:{}:{}", running, proxyEnabled,
-            tunEnabled, busy, english, coreRunning, view.systemProxyActive, view.TunActive(), view.ProxyActive(), mode);
+        const bool proxyActive = control->ProxyActive();
+        const std::string mode = control->model->view.Get().Mode();
+        const std::string key = std::format("{}:{}:{}:{}:{}:{}:{}", running, proxyEnabled,
+            tunEnabled, busy, english, proxyActive, mode);
         if (key == presentationKey) return;
         std::vector<huxerui::MenuEntry> entries;
         const auto self = shared_from_this();
@@ -444,11 +443,11 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
             : TrayModeLabels{"出站模式", {"规则", "全局", "直连"}};
         entries.push_back(OutboundModeMenu(modeLabels, mode, !busy));
         entries.push_back(huxerui::MenuItem(
-            control->ProxyActive() ? (english ? "Disconnect" : "断开连接")
+            proxyActive ? (english ? "Disconnect" : "断开连接")
                                    : (english ? "Connect" : "连接代理"), [self] {
                 if (self->control) self->MenuControl().Run({
                     .action = self->control->ProxyActive() ? CoreAction::Disconnect : CoreAction::Connect});
-            }).Checked(control->ProxyActive()).Enabled(!busy));
+            }).Checked(proxyActive).Enabled(!busy));
         entries.push_back(huxerui::MenuItem(
             running ? (english ? "Stop core" : "停止内核")
                     : (english ? "Start core" : "启动内核"), [self] {
@@ -468,10 +467,7 @@ struct DesktopTrayRuntime : std::enable_shared_from_this<DesktopTrayRuntime> {
         entries.push_back(huxerui::MenuSection{});
         entries.push_back(huxerui::MenuItem(english ? "Quit" : "退出",
                                             [self] { self->RequestExit(); }));
-        huxerui::ImageVariant icon = app::images::tray_default;
-        if (coreRunning && view.TunActive()) icon = app::images::tray_tun;
-        else if (coreRunning && view.systemProxyActive) icon = app::images::tray_system_proxy;
-        tray.Show(std::move(icon), huxerui::SystemTrayOptions{
+        tray.Show(app::images::tray_default, huxerui::SystemTrayOptions{
             .tooltip = "Clash-Flux", .menu = std::move(entries)});
         presentationKey = std::string{key};
     }

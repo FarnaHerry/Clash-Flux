@@ -27,6 +27,15 @@ inline constexpr float kThemeColorPreviewHeight = 48.0F;
 inline constexpr float kThemeColorSliderTrackRadiusFactor = 0.5F;
 inline constexpr float kThemeColorSliderThumbInsetFactor = 0.5F;
 
+inline void RunThemeModeReveal(const huxerui::SceneTransitionHandle& transition, double duration,
+    std::function<void()> mutation) {
+    // Ease in so the first visible frames show the click point before the circle fills the window.
+    const huxerui::TransitionSpec reveal{
+        huxerui::CircularRevealTransition{},
+        huxerui::TweenSpec{.duration = duration, .easing = huxerui::Easing::EaseInOut}};
+    transition.RunFromCurrentInteraction(reveal, std::move(mutation));
+}
+
 // HSB channel gradients are painted beneath the native Slider; the native component keeps input,
 // semantics, focus, and the selected-color thumb while its own theme-colored tracks are hidden.
 inline huxerui::SliderStyle HsbGradientSliderStyle(huxerui::SliderStyle style, huxerui::Color selected) {

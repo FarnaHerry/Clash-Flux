@@ -137,19 +137,19 @@
                                          previewTargetId != previewActiveId) {
                                          slot = std::move(slot).With(
                                              huxerui::Border(theme.colors.primary, kCardOutlineWidth),
-                                             huxerui::CornerRadius(kSelectableTileRadius));
+                                             huxerui::CornerRadius(kProfileCardRadius));
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));
-                                 }, ProfileCardRowSpacing(compact))
+                                 }, kProfileCardSpacing)
                                  .Columns(ProfileGridColumns(compact, group_by_type))
                                  .EstimatedRowExtent(ProfileCardHeight(compact))
-                                 .ColumnSpacing(kSectionCardSpacing)
+                                 .ColumnSpacing(kProfileCardSpacing)
                                  .With(huxerui::DropTarget::Accepts<ProfileDragPayload>())
                                  .On<huxerui::DropEvents<ProfileDragPayload>::Dropped>(
                                      [dropAtPointer](
                                          const ProfileDragPayload& payload, const huxerui::DropEvent& event) {
                                          dropAtPointer(payload.id, event.window_position);
-                                     }), {}, {}, {}, ScrollAreaInsets::Symmetric(ProfileCardRowSpacing(compact),
+                                     }), {}, {}, {}, ScrollAreaInsets::Symmetric(kProfileCardSpacing,
                                          compact ? kCompactFloatingNavigationInset : 0.0F))
                                  .With(huxerui::Grow(1.0F));
         typePages.push_back(huxerui::Column {grid}.With(
@@ -224,22 +224,20 @@
             .With(huxerui::Tooltip(Localized("新建订阅")))
             .OnClick(openCreate)
             .Key("profile-add-subscription");
-    huxerui::View profileSearchField = PillSearchField(
-        profileSearch, Localized("搜索订阅"), compact ? addAction : huxerui::View{});
-    // composable 的外层 Scope 也要声明 Grow，标题行才会把剩余宽度交给搜索胶囊。
-    if (compact) profileSearchField = std::move(profileSearchField).With(huxerui::Grow(1.0F));
-    huxerui::View pageActions;
-    if (!compact) pageActions = huxerui::Row{std::move(pageActions), std::move(addAction)};
+    const auto title = Localized("订阅");
+    huxerui::View searchToolbar = PageSearchToolbar(
+        profileSearch, searchExpanded, title, Localized("搜索订阅"), addAction);
+    huxerui::View listContent = !profilesModel->loaded.Get()
+        ? ProfileLoadingSkeleton(theme, compact, group_by_type, active)
+        : profiles.Empty()
+        ? EmptyState(Localized("还没有订阅。点击「新建订阅」导入。"), app::images::request)
+        : std::move(profileBody);
+    if (compact) {
+        listContent = huxerui::ProvideEnvironment(PageBodyInsets{kProfileCardSpacing}, listContent);
+    }
     huxerui::View profileListPage = PageScaffold(
-        Localized("订阅"),
-        std::move(pageActions),
-        !profilesModel->loaded.Get()
-            ? ProfileLoadingSkeleton(theme, compact, group_by_type, active)
-            : profiles.Empty()
-            ? EmptyState(Localized("还没有订阅。点击右上角「新建订阅」导入。"), app::images::request)
-            : std::move(profileBody),
-        compact, true, true,
-        std::nullopt, {}, std::move(profileSearchField));
+        title, {}, listContent, compact, true, true,
+        std::nullopt, {}, std::move(searchToolbar));
 
     // IndexedPages 要求每一页都是挂载节点；平台函数负责 Android 编辑页是否
     // 存在，ProfilesPage 只提交同一份表单状态。

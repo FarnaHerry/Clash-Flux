@@ -25,7 +25,7 @@ python3 scripts/generate-branding.py --check
 - 界面：`resources/images/clash_flux_logo_vector_{dark,light}_current.svg`，透明、多色 SVG，按 ThemeSpec 选择，不加 Tint。
 - 通用透明图及 Windows 安装器：`resources/images/clash_flux_logo.png`。
 - Linux / Windows / macOS 应用图标：`assets/icon.png`、`assets/icon.ico`、`platform/macos/AppIcon.icns`。
-- 托盘：`assets/tray/logo.svg` 与 `resources/images/tray_*.png`，保留默认 / TUN / 系统代理的状态色和 1x / 2x / 3x 尺寸。
+- 托盘：`assets/tray/logo.svg` 与 `resources/images/tray_default*.png`，统一使用固定配色，提供 1x / 2x / 3x 尺寸。
 - Android：透明 adaptive mascot 和五档白底 launcher 图标；快捷磁贴猫爪独立保留。
 - 现有 iOS AppIcon 资源同步更新；iOS 支持仍按项目 TODO 暂缓。
 

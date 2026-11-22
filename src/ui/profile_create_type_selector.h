@@ -50,7 +50,7 @@ inline huxerui::View ProfileCreateTypeSelector(
     const huxerui::Border outline{theme.colors.primary, style.selected_border.width};
     style.selected_background = huxerui::Color::Transparent();
     style.selected_border.color = huxerui::Color::Transparent();
-    style.selected_label = theme.colors.primary;
+    style.selected_label = theme.colors.on_surface;
     style.selected_indication = ResolveFluxIndication(theme);
     return huxerui::ProvideEnvironment(style, huxerui::SegmentedButton(std::move(types), selected.Get())
         .OnChanged([selected](std::size_t index) { selected = index; })
