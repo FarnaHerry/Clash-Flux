@@ -1282,10 +1282,11 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
             endif ()
             clashflux_deploy_huxerui_dll(test_core_api_lifetime)
             if (Python3_Interpreter_FOUND)
-                add_test(NAME core_api_lifetime COMMAND "${Python3_EXECUTABLE}"
+                add_test(NAME core_api_lifetime COMMAND "${Python3_EXECUTABLE}" -u
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_core_api_lifetime.py" "$<TARGET_FILE:test_core_api_lifetime>"
                     "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}")
-                set_tests_properties(core_api_lifetime PROPERTIES TIMEOUT 30)
+                # Six serial subprocesses each have a 20-second deadline.
+                set_tests_properties(core_api_lifetime PROPERTIES TIMEOUT 150)
             endif ()
             add_executable(test_persistence
                 tests/test_persistence.cpp

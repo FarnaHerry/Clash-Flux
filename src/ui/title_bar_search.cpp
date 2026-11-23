@@ -246,6 +246,8 @@ private:
     huxerui::ThemeDefinition inputTheme;
     inputTheme.Set(inputStyle);
     const auto closeLabel = Localized("退出搜索");
+    auto closeStyle = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+    closeStyle.icon_size = 16.0F;
     huxerui::View pill = huxerui::Row{
         huxerui::Row {}.With(huxerui::Frame{.width = kSearchIconSize}),
         huxerui::Theme(std::move(inputTheme), huxerui::TextField(value.Get())
@@ -255,10 +257,10 @@ private:
             .On<huxerui::ViewEvents::FocusChanged>([inputFocused](bool next) { inputFocused = next; })
             .With(focus, huxerui::Grow(1.0F))
             .Key("page-search-input")),
-        huxerui::IconButton(app::images::close, closeLabel)
+        huxerui::ProvideEnvironment(closeStyle, huxerui::IconButton(app::images::close, closeLabel)
             .OnClick(close)
             .With(huxerui::Frame{.width = 32.0F, .height = 32.0F}, huxerui::Tooltip(closeLabel))
-            .Key("page-search-close"),
+            .Key("page-search-close")),
     }.With(huxerui::Frame{.height = height},
            huxerui::Padding(huxerui::EdgeInsets{.right = 4.0F, .left = kSearchLeadingInset}),
            huxerui::Spacing(6.0F),
