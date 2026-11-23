@@ -9,6 +9,8 @@
 
 namespace clashflux::ui {
 
+inline constexpr huxerui::ViewportBreakpoints kAppViewportBreakpoints{.medium_width = 540.0F};
+
 inline void UsePrimaryPageNavigation(huxerui::NavigationController navigation,
     huxerui::State<std::size_t> selected) {
     huxerui::Lifecycle([navigation] {

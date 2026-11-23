@@ -175,14 +175,12 @@ WebsiteTestModel::Probe MakeWebsiteProbe(std::shared_ptr<AppHttpClient> http) {
     const auto probe = MakeWebsiteProbe(http);
     if (!active) return huxerui::View{};
 
-    const auto testLabel = anyActive ? Localized("测试中…") : Localized("全部测试");
-    const auto actions = WebsiteTestBatchAction(anyActive,
-        testLabel, [model, tasks, probe] {
-            if (model->AnyActive()) return;
-            std::vector<std::size_t> ids;
-            for (const auto& row : model->sites.Get()) ids.push_back(row.id);
-            model->Start(tasks, probe, std::move(ids));
-        });
+    const auto actions = WebsiteTestBatchAction(anyActive, [model, tasks, probe] {
+        if (model->AnyActive()) return;
+        std::vector<std::size_t> ids;
+        for (const auto& row : model->sites.Get()) ids.push_back(row.id);
+        model->Start(tasks, probe, std::move(ids));
+    });
     std::vector<huxerui::View> cards;
     for (const auto& row : rows)
         cards.push_back(WebsiteTestCard(row, [model, tasks, probe, id = row.id] {

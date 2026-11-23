@@ -179,8 +179,10 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
 }
 
 [[huxerui::composable]] huxerui::View ProfileLoadingSkeleton(
-    const huxerui::ThemeSpec& theme, bool compact, bool groupByType, bool active) {
+    const huxerui::ThemeSpec& theme, bool compact, bool groupByType,
+    huxerui::State<std::size_t> gridColumns, bool active) {
     const auto shimmer = UseSkeletonShimmer(theme, active);
+    const auto tasks = huxerui::UseTaskScope();
     const auto item = [theme, compact, shimmer](std::size_t index) -> huxerui::View {
         std::vector<huxerui::View> rows{
             huxerui::Row {
@@ -213,9 +215,9 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
             theme, ProfileCardHeight(compact), huxerui::EdgeInsets::Symmetric(10.0F, 8.0F), kProfileCardRadius)
             .Key("profile-loading-item-" + std::to_string(index));
     };
-    const auto grid = PageVirtualGrid(8, item, kProfileCardSpacing,
-        ScrollAreaInsets::Symmetric(kProfileCardSpacing, compact ? kCompactFloatingNavigationInset : 0.0F))
-        .Columns(ProfileGridColumns(compact, groupByType))
+    const auto grid = ApplyProfileGridColumns(PageVirtualGrid(8, item, kProfileCardSpacing,
+        ScrollAreaInsets::Symmetric(kProfileCardSpacing, compact ? kCompactFloatingNavigationInset : 0.0F)),
+        compact, groupByType, gridColumns, tasks)
         .EstimatedRowExtent(ProfileCardHeight(compact))
         .ColumnSpacing(kProfileCardSpacing)
         .With(huxerui::Grow(1.0F));

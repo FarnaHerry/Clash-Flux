@@ -23,9 +23,45 @@ constexpr float ProfileCardHeight(bool compact) {
     return compact ? kCompactProfileCardHeight : kWideProfileCardHeight;
 }
 
-inline huxerui::GridColumns ProfileGridColumns(bool compact, bool groupByType) {
-    return compact || !groupByType ? huxerui::GridColumns::Fixed(1)
-                                  : huxerui::GridColumns::Adaptive(kCardWidth);
+struct MeasureProfileGridColumns {
+    huxerui::State<std::size_t> columns;
+    huxerui::TaskScope tasks;
+
+    class Extension final : public huxerui::NodeExtension {
+    public:
+        Extension(huxerui::ViewNode&, const MeasureProfileGridColumns& spec)
+            : columns_(spec.columns), tasks_(spec.tasks) {}
+
+        void Update(huxerui::ViewNode&, const MeasureProfileGridColumns& spec) {
+            columns_ = spec.columns;
+            tasks_ = spec.tasks;
+        }
+
+        PaintInvalidation PrepareGeometry(huxerui::ViewNode& node, huxerui::TextMeasurer&) override {
+            constexpr float preferredWidth = 300.0F;
+            const float width = node.LayoutSize().width;
+            const auto count = std::clamp(
+                huxerui::GridColumns::Adaptive(preferredWidth).Resolve(width, kProfileCardSpacing),
+                std::size_t{2}, std::size_t{4});
+            if (width > 0.0F && columns_.Get() != count) {
+                // Apply the count after geometry preparation so the next layout sees stable tracks.
+                tasks_.Post([columns = columns_, count] { columns = count; });
+            }
+            return PaintInvalidation::None;
+        }
+
+    private:
+        huxerui::State<std::size_t> columns_;
+        huxerui::TaskScope tasks_;
+    };
+};
+
+inline huxerui::VirtualGrid ApplyProfileGridColumns(huxerui::VirtualGrid grid,
+    bool compact, bool groupByType, huxerui::State<std::size_t> columns, huxerui::TaskScope tasks) {
+    if (compact || !groupByType)
+        return std::move(grid).Columns(huxerui::GridColumns::Fixed(1));
+    return std::move(grid).Columns(huxerui::GridColumns::Fixed(columns.Get()))
+        .With(MeasureProfileGridColumns{columns, tasks});
 }
 
 inline std::string ProfileSubscriptionAddress(std::string_view url) {

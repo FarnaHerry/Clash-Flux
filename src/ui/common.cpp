@@ -622,27 +622,12 @@ bool SelectProxyLine(const std::string& group, const std::string& name) {
 
 bool StartProxyGroupTest(const std::string& group) {
 #if defined(__ANDROID__)
-    try {
-        // Android 的测速内核使用无 TUN 的 libbox 配置；如果当前没有已连接
-        // 的 VPN 服务，先只编译当前配置，再由 Java 启动 speed-test-only
-        // 服务。这样测速不会申请 VPN，也不会接管应用流量。
-        if (clashflux_android_vpn_state() != 2) {
-            auto& core = store::coreStore();
-            core.startCore(store::profilesStore().selectedYaml(), false, false,
-                           std::nullopt, true);
-            if (core.snapshot().state == core::CoreState::Failed) return false;
-        }
-        return TriggerProxyGroupTest(group);
-    } catch (...) {
-        return false;
-    }
+    return AndroidProxyUrlTest(group);
 #else
     // 桌面节点测速通过内核 delay API 完成。测速依赖内核但不需要接管流量，
     // 应用启动先保持无代理入站的待命内核；测速不开放代理端口或恢复接管。
-    if (store::coreStore().snapshot().state != core::CoreState::Running) {
-        return false;
-    }
-    return TriggerProxyGroupTest(group);
+    static_cast<void>(group);
+    return store::coreStore().snapshot().state == core::CoreState::Running;
 #endif
 }
 
@@ -899,7 +884,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                                    bool scrollToContentEdges) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const IslandTheme islands = ResolveIslandTheme(theme);
-    // 响应式：Compact(<600) 收窄一级岛内边距。
+    // 响应式：Compact 收窄一级岛内边距。
     const bool compact =
         huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto contentInsets = PageContentInsets(theme, compact,

@@ -14,7 +14,7 @@
 // 覆盖对方的选择。GLOBAL 组只在全局模式出现，规则列表不含它；Android
 // 等仅返回真实策略组的平台，则全局模式回落到第一个可选策略组。
 //
-// 节点网格：Compact(<600) 两列；桌面按窗口宽度排 1/2/3/4 列，轨道均分铺满
+// 节点网格：Compact 两列；桌面按窗口宽度排 1/2/3/4 列，轨道均分铺满
 // 页面宽度。嵌套面包屑固定在网格上方，不参与节点滚动。
 //
 // 分支语义：点组类型节点 = 选中该分支到当前组（selectProxy）并进入浏览；
@@ -287,7 +287,7 @@ void RunSingleProxyProbe(huxerui::TaskScope tasks, const std::shared_ptr<Proxies
 #if defined(__ANDROID__)
     const auto measure = [model, probe, valid](const std::string& target) {
         return MeasureNativeProxyDelay(target, probe, [](const std::string& node) {
-            return RunOnTaskThread([node] { return AndroidProxyUrlTest(node, false); });
+            return RunOnTaskThread([node] { return AndroidProxyUrlTest(node); });
         }, [model](const std::string& node) {
             return ReadProxyTestResult(*model, node);
         }, valid);
@@ -515,9 +515,8 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     std::string groupName,
     std::shared_ptr<ProxyTestModel> testModel,
     std::function<void(const std::string&)> triggerGroupTest) {
-    const bool testing = testModel->progress.Get().busy || testModel->preparing.Get();
     const auto start = [triggerGroupTest, groupName] { triggerGroupTest(groupName); };
-    return WithoutIconButtonOutlines(ProxySpeedButton(testing, testModel->singlePending.Get() == 0, start));
+    return WithoutIconButtonOutlines(ProxySpeedButton(*testModel, groupName, start));
 }
 
 } // namespace
@@ -568,11 +567,29 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                 if (!valid()) co_return;
                 const int generation = testModel->Begin();
                 if (!generation) co_return;
+                const bool native = ProxyTestUsesNativeGroup();
+                const auto pollProbe = [proxiesModel](const std::string& tag) {
+                    return ReadProxyTestResult(*proxiesModel, tag);
+                };
                 std::vector<ProxyProbeTarget> targets;
+                std::int64_t latestNativeTime = 0;
                 for (const auto& node : nodes) {
                     if (node.isGroup) continue;
                     const auto probe = testModel->Get(node.name, node.delay, node.timeout, node.urlTestTime);
-                    if (testModel->Start(probe, generation, node.urlTestTime)) targets.push_back({node.name, probe});
+                    const auto history = native ? NativeProxyHistory::Capture(*probe, pollProbe(node.name))
+                                                : NativeProxyHistory{};
+                    const auto baseline = native ? history.baselineTime : node.urlTestTime;
+                    if (testModel->Start(probe, generation, baseline)) {
+                        targets.push_back({node.name, probe, history});
+                        latestNativeTime = std::max(latestNativeTime, history.baselineTime);
+                    }
+                }
+                testModel->Broadcast(generation, groupName);
+                if (native) co_await WaitForNativeProxyTimestamp(latestNativeTime);
+                if (!testModel->Current(generation)) co_return;
+                if (!valid()) {
+                    testModel->End(generation);
+                    co_return;
                 }
                 bool ok = false;
                 try {
@@ -584,10 +601,6 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                     toast.Show(Localized("测速失败：内核未运行或启动失败"));
                     co_return;
                 }
-                const bool native = ProxyTestUsesNativeGroup();
-                const auto pollProbe = [proxiesModel](const std::string& tag) {
-                    return ReadProxyTestResult(*proxiesModel, tag);
-                };
                 if (native) {
                     LaunchNativeProxyProbeBatch(testTasks, testModel, std::move(targets), generation, valid,
                         pollProbe);
@@ -600,7 +613,6 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                         std::move(targets), generation, MeasureProxyGroupDelay, valid,
                         pollProbe);
                 }
-                testModel->Broadcast(generation, groupName);
                 co_await WaitForProxyTestBatch(testModel, generation, native);
             });
         };

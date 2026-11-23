@@ -65,7 +65,7 @@
             const std::int64_t closestId = geometry->Closest(ids, position);
             if (closestId != 0 && drop) drop(fromId, closestId);
         };
-        huxerui::View grid = ScrollArea(PageVirtualGrid(
+        huxerui::View grid = ScrollArea(ApplyProfileGridColumns(PageVirtualGrid(
                                  typeCount,
                                  [profiles, typeIndices = std::move(typeIndices), typeIds = std::move(typeIds),
                                   typeCount, compact, tasks, toast, http, reload,
@@ -140,8 +140,8 @@
                                              huxerui::CornerRadius(kProfileCardRadius));
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));
-                                 }, kProfileCardSpacing)
-                                 .Columns(ProfileGridColumns(compact, group_by_type))
+                                 }, kProfileCardSpacing),
+                                 compact, group_by_type, gridColumns, tasks)
                                  .EstimatedRowExtent(ProfileCardHeight(compact))
                                  .ColumnSpacing(kProfileCardSpacing)
                                  .With(huxerui::DropTarget::Accepts<ProfileDragPayload>())
@@ -228,7 +228,7 @@
     huxerui::View searchToolbar = PageSearchToolbar(
         profileSearch, searchExpanded, title, Localized("搜索订阅"), addAction);
     huxerui::View listContent = !profilesModel->loaded.Get()
-        ? ProfileLoadingSkeleton(theme, compact, group_by_type, active)
+        ? ProfileLoadingSkeleton(theme, compact, group_by_type, gridColumns, active)
         : profiles.Empty()
         ? EmptyState(Localized("还没有订阅。点击「新建订阅」导入。"), app::images::request)
         : std::move(profileBody);

@@ -10,6 +10,7 @@
 #include "ui/app_http_client.h"
 #include "ui/app_update_model.h"
 #include "ui/proxies_model.h"
+#include "ui/responsive_shell.h"
 #if defined(__ANDROID__)
 #include <huxerui/media_library.h>
 #include "ui/qr_photo_decoder.h"
@@ -32,6 +33,9 @@ const huxerui::Application application{
         },
 #if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
         .create_initial_window = false,
+#endif
+        .viewport_breakpoints = clashflux::ui::kAppViewportBreakpoints,
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
         // The tray owns application lifetime; closing the lightweight UI leaves
         // application services/tasks alive until the explicit Quit path.
         .quit_on_last_window_closed = false,

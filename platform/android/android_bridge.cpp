@@ -926,7 +926,7 @@ extern "C" bool clashflux_android_select_outbound(const char* group,
     return !failed && ok == JNI_TRUE;
 }
 
-bool clashflux::ui::AndroidProxyUrlTest(const std::string& tag, bool group) noexcept {
+bool clashflux::ui::AndroidProxyUrlTest(const std::string& tag) noexcept {
     if (tag.empty() || tag.size() > static_cast<std::size_t>(std::numeric_limits<jsize>::max())) return false;
 
     std::lock_guard lock(g_mutex);
@@ -936,7 +936,7 @@ bool clashflux::ui::AndroidProxyUrlTest(const std::string& tag, bool group) noex
         if (attached) g_vm->DetachCurrentThread();
         return false;
     }
-    const jmethodID method = environment->GetStaticMethodID(g_activity_class, "urlTest", "([BZ)Z");
+    const jmethodID method = environment->GetStaticMethodID(g_activity_class, "urlTest", "([B)Z");
     jboolean ok = JNI_FALSE;
     if (method != nullptr) {
         const auto size = static_cast<jsize>(tag.size());
@@ -945,8 +945,7 @@ bool clashflux::ui::AndroidProxyUrlTest(const std::string& tag, bool group) noex
         if (value != nullptr) {
             environment->SetByteArrayRegion(value, 0, size, reinterpret_cast<const jbyte*>(tag.data()));
             if (!environment->ExceptionCheck())
-                ok = environment->CallStaticBooleanMethod(g_activity_class, method, value,
-                    group ? JNI_TRUE : JNI_FALSE);
+                ok = environment->CallStaticBooleanMethod(g_activity_class, method, value);
             environment->DeleteLocalRef(value);
         }
     }

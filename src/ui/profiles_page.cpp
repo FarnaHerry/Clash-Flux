@@ -91,6 +91,7 @@ struct ProfileReorderSession {
         std::make_shared<ProfileReorderSession>());
     auto reorderTarget = huxerui::UseState<std::int64_t>(0);
     auto gridGeometry = huxerui::UseState(std::make_shared<ProfileGridGeometry>());
+    const auto gridColumns = huxerui::UseState<std::size_t>(2);
     auto pptpStates = huxerui::UseStateList<store::PptpState>();
     // 当前选中的类型分区标签（remote/local/pptp/…）；无效或为空时
     // 回落到第一个有订阅的类型。

@@ -4,14 +4,13 @@
 #include "ui.h"
 #include "app_resources.h"
 #include "proxy_node_tile.h"
+#include "proxy_speed_button.h"
 
 namespace clashflux::ui {
 
-inline huxerui::View WebsiteTestBatchAction(bool testing, huxerui::StringVariant label,
-                                           std::function<void()> start) {
-    return huxerui::IconButton(app::images::proxy_node_probe, label)
-        .With(huxerui::Enabled(!testing), huxerui::Tooltip(label), huxerui::Semantics{.busy = testing})
-        .OnClick(std::move(start));
+inline huxerui::View WebsiteTestBatchAction(bool testing, std::function<void()> start) {
+    const auto label = Localized("全部测试");
+    return SpeedTestButton(label, label, std::move(start), testing);
 }
 
 inline huxerui::View WebsiteTestCard(WebsiteTestSite site, std::function<void()> start) {

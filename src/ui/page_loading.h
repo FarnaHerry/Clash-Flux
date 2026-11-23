@@ -24,7 +24,7 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
 huxerui::View PageLoadingSkeleton(const huxerui::ThemeSpec& theme, bool list = false, bool active = true);
 huxerui::View ProxyLoadingSkeleton(const huxerui::ThemeSpec& theme);
 huxerui::View ProfileLoadingSkeleton(const huxerui::ThemeSpec& theme,
-    bool compact, bool groupByType, bool active = true);
+    bool compact, bool groupByType, huxerui::State<std::size_t> gridColumns, bool active = true);
 
 inline huxerui::View PageLoadingScaffold(huxerui::StringVariant title,
     const huxerui::ThemeSpec& theme, bool list = false) {

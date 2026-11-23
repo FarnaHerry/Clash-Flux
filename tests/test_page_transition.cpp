@@ -398,7 +398,14 @@ huxerui::View WebsiteFixtureRoot() {
             websiteFixture->Start(*websiteTasks, *websiteProbe, {id});
         }).Key("website-card-" + std::to_string(row.id)));
     return huxerui::Column {
-      huxerui::Button("Toggle website panel").OnClick([visible] { visible = !visible.Get(); }),
+      huxerui::Row {
+        huxerui::Button("Toggle website panel").OnClick([visible] { visible = !visible.Get(); }),
+        WebsiteTestBatchAction(websiteFixture->AnyActive(), [] {
+            std::vector<std::size_t> ids;
+            for (const auto& site : websiteFixture->sites.Get()) ids.push_back(site.id);
+            websiteFixture->Start(*websiteTasks, *websiteProbe, std::move(ids));
+        }),
+      }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
       visible.Get() ? WebsiteTestGrid(cards, compact, offset).Key("website-panel")
           : huxerui::View{huxerui::Text("Website panel hidden")},
     }.With(huxerui::Padding(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -465,6 +472,12 @@ void testWebsiteTests() {
             return ui.Find(UiSelector::Key("website-test-" + std::to_string(id)));
         };
         const auto idleBounds = testAction(0).One().bounds;
+        const auto batchAction = ui.Find(UiSelector::Key("speed-test-action"));
+        const auto batchLoading = ui.Find(UiSelector::Key("speed-test-loading"));
+        const auto batchSlot = ui.Find(UiSelector::Key("speed-test-button"));
+        const auto batchBounds = batchSlot.One().bounds;
+        const huxerui::Point batchCenter{batchBounds.x + batchBounds.width / 2,
+                                         batchBounds.y + batchBounds.height / 2};
         const auto websiteLayout = [&ui] {
             return std::array{
                 ui.Find(UiSelector::Key("website-card-0")).One().bounds,
@@ -482,6 +495,8 @@ void testWebsiteTests() {
         ui.Pump(std::chrono::milliseconds{1});
         check(shared->sites.Get()[0].result.phase == WebsiteTestPhase::Running && metrics->active == 1,
               "tapping one card starts only that card");
+        check(batchLoading.Exists() && !batchAction.Exists(),
+              "a single website test also shows the header loading circle");
         ui.Pump(std::chrono::milliseconds{112});
         check(testAction(0).Find(UiSelector::Key("node-probe-dots")).Exists(),
               "website tests share the fixed-slot proxy loading dots");
@@ -561,14 +576,25 @@ void testWebsiteTests() {
         ui.PumpAndSettle();
         const auto card = ui.Find(UiSelector::Key("website-panel")).One().bounds;
         check(card.width <= width && card.x >= 0, "production website card content fits narrow and expanded widths");
-        shared->Start(*websiteTasks, slow, {0, 1, 2, 3, 4, 5, 6, 7});
+        const auto startedBeforeBatch = metrics->started;
+        batchAction.Tap();
         ui.Pump(std::chrono::milliseconds{1});
         check(websiteLayout() == idleLayout, "retesting with queued sites preserves the grid");
+        const auto progress = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Role(
+            huxerui::SemanticRole::ProgressIndicator)).One();
+        check(!batchAction.Exists() && batchSlot.One().bounds == batchBounds &&
+              batchLoading.One().bounds == huxerui::Rect{batchCenter.x - 10.0F, batchCenter.y - 10.0F, 20.0F, 20.0F} &&
+              progress.busy == true && !progress.label.empty(),
+              "the batch action displays the shared accessible circle without moving the button slot");
+        ui.TapAt(batchCenter);
         ui.PumpAndSettle();
         const auto completed = shared->sites.Get();
-        check(!shared->AnyActive() && metrics->maximum == 3 && std::all_of(completed.begin(),
+        check(!shared->AnyActive() && metrics->maximum == 3 && metrics->started - startedBeforeBatch == 8 &&
+            std::all_of(completed.begin(),
             completed.begin() + 8, [](const auto& row) { return row.result.status == 403; }),
             "bounded website workers drain the complete preset batch");
+        check(batchAction.One().enabled && !batchLoading.Exists() && batchSlot.One().bounds == batchBounds,
+              "the header lightning reappears in place once every website test finishes");
         auto results = shared->sites.Get();
         results[0].result = {.phase = WebsiteTestPhase::Responded, .status = 200,
             .outbound = "US-Node", .latencyMs = 1015};
@@ -2548,21 +2574,23 @@ huxerui::View LoadingSkeletonRoot() {
         spec.colors = theme;
         spec.motion.reduced_motion = model->reduced.Get();
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        const auto gridColumns = huxerui::UseState<std::size_t>(2);
         const float side = compact && model->kind.Get() >= 3 ? clashflux::ui::kProfileCardSpacing : 4.0F;
-        return huxerui::FlatTheme(spec, clashflux::ui::PageBodyRegion(huxerui::Scope([model, compact] {
+        return huxerui::FlatTheme(spec, clashflux::ui::PageBodyRegion(huxerui::Scope([model, compact, gridColumns] {
             ++model->compositions;
             if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
             if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
             const auto& current = huxerui::UseTheme();
             if (model->kind.Get() >= 3) return clashflux::ui::ProfileLoadingSkeleton(current, compact,
-                model->kind.Get() == 3);
+                model->kind.Get() == 3, gridColumns);
             return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
                 : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
         }), side));
     });
 }
 const huxerui::Application kLoadingSkeletonApplication{LoadingSkeletonRoot,
-    {.show_debug_overlay = false, .application_hooks = {InstallLoadingSkeletonFixture}}};
+    {.viewport_breakpoints = clashflux::ui::kAppViewportBreakpoints, .show_debug_overlay = false,
+     .application_hooks = {InstallLoadingSkeletonFixture}}};
 
 void testSkeletonShimmer() {
     skeletonInitiallyReady = false;
@@ -2591,18 +2619,18 @@ void testSkeletonShimmer() {
     }
     for (int kind : {3, 4}) {
         model->kind = kind;
-        for (float width : {320.0F, 599.0F, 600.0F, 723.0F, 724.0F, 1076.0F, 1600.0F, 400.0F}) {
+        for (float width : {320.0F, 539.0F, 540.0F, 955.0F, 956.0F, 1267.0F, 1268.0F, 2000.0F, 540.0F, 400.0F}) {
             ui.SetWindowMetrics({.viewport = {width, 600.0F}});
-            ui.Pump(std::chrono::milliseconds(50));
+            for (int frame = 0; frame < 3; ++frame) ui.Pump(std::chrono::milliseconds(50));
             const auto first = ui.Find(UiSelector::Key("profile-loading-item-0")).One().bounds;
             const auto second = ui.Find(UiSelector::Key("profile-loading-item-1")).One().bounds;
-            const bool compact = width < 600.0F;
+            const bool compact = width < 540.0F;
             const auto skeleton = ui.Find(UiSelector::Key("profile-loading-skeleton")).One().bounds;
             check(std::abs(first.y - skeleton.y - 12.0F) < 0.01F,
                   "profile placeholders share the real cards' leading scrollable whitespace");
             const float side = compact ? 12.0F : 16.0F;
             const float columns = compact || kind == 4 ? 1.0F :
-                std::max(1.0F, std::floor((width - 2.0F * side + 12.0F) / 352.0F));
+                width < 956.0F ? 2.0F : width < 1268.0F ? 3.0F : 4.0F;
             const float expectedWidth = (width - 2.0F * side - (columns - 1.0F) * 12.0F) / columns;
             check(std::abs(first.height - (compact ? 104.0F : 152.0F)) < 0.5F &&
                   std::abs(first.width - expectedWidth) < 0.5F && std::abs(first.x - side) < 0.5F,
@@ -2760,14 +2788,18 @@ huxerui::View ResponsiveShellRoot() {
     })};
 }
 const huxerui::Application kResponsiveShellApplication{ResponsiveShellRoot,
-    {.window = {.content_mode = huxerui::WindowContentMode::EdgeToEdge}, .show_debug_overlay = false}};
+    {.window = {.content_mode = huxerui::WindowContentMode::EdgeToEdge},
+     .viewport_breakpoints = clashflux::ui::kAppViewportBreakpoints, .show_debug_overlay = false}};
 void testResponsiveDesktopShell() {
     huxerui::testing::UiTest ui(kResponsiveShellApplication, {.viewport = {1000.0F, 700.0F}});
     ui.PumpAndSettle();
     check(ui.Find(UiSelector::Text("SIDEBAR")).Exists() && !ui.Find(UiSelector::Text("BOTTOM")).Exists(),
           "桌面宽屏使用侧栏");
     ui.Find(UiSelector::Text("RETAINED-0")).Tap(); ui.PumpAndSettle();
-    for (float width : {599.0F, 320.0F}) {
+    ui.SetWindowMetrics({.viewport = {540.0F, 480.0F}}); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("SIDEBAR")).Exists() && !ui.Find(UiSelector::Text("BOTTOM")).Exists(),
+          "540pt uses the desktop layout");
+    for (float width : {539.0F, 320.0F}) {
         ui.SetWindowMetrics({.viewport = {width, 480.0F}}); ui.PumpAndSettle();
         check(!ui.Find(UiSelector::Text("SIDEBAR")).Exists() &&
               ui.Find(UiSelector::Text("BOTTOM")).Exists() && ui.Find(UiSelector::Text("CHROME")).Exists(),
@@ -5783,8 +5815,10 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
     for (int index = 0; index < count; ++index) {
         const auto tag = "node-" + std::to_string(index);
         const auto entry = model->Get(tag, 0, false, 0);
-        model->Start(entry, ticket, 0);
-        targets.push_back({tag, entry});
+        const auto history = native ? NativeProxyHistory::Capture(
+            *entry, std::pair{fixture->nativeDelay.Get(), fixture->nativeTime.Get()}) : NativeProxyHistory{};
+        model->Start(entry, ticket, history.baselineTime);
+        targets.push_back({tag, entry, history});
     }
     model->Broadcast(ticket, "fixture-group");
     if (native) {
@@ -5893,6 +5927,17 @@ void testProxyProbesSurvivePageRetirement() {
     fixture->nativeDelay = 42; fixture->nativeTime = std::int64_t{5}; settle(); toggle();
     check(ui.Find(UiSelector::Text("PROBE:42")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
           "native measurements finish independently of mounted cards");
+    ui.Find(UiSelector::Text("Native probe")).Tap(); ui.Pump();
+    fixture->nativeTime = std::int64_t{4}; settle();
+    check(ui.Find(UiSelector::Text("PROBE-TESTING")).Exists(),
+          "an older snapshot cannot settle a native group retry");
+    fixture->nativeTime = std::int64_t{6}; settle();
+    check(ui.Find(UiSelector::Text("PROBE:42")).Exists(),
+          "a newer timestamp settles a native group retry at identical latency");
+    ui.Find(UiSelector::Text("Native probe")).Tap(); ui.Pump();
+    fixture->nativeTime = std::int64_t{0}; fixture->nativeDelay = 0; settle();
+    check(ui.Find(UiSelector::Text("PROBE-TIMEOUT")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
+          "libbox history removal settles a failed native group retry immediately");
 }
 
 
@@ -5961,7 +6006,7 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
 huxerui::View SingleProbeFixtureRoot() { return huxerui::FlatTheme{SingleProbeFixtureContent()}; }
 const huxerui::Application kSingleProbeFixtureApplication{SingleProbeFixtureRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallProxyProbeFixture}}};
-void testProxySpeedShutter() {
+void testProxySpeedLoading() {
     using namespace std::chrono_literals;
     struct Fixture {
         clashflux::ui::ProxyTestModel tests;
@@ -5969,6 +6014,7 @@ void testProxySpeedShutter() {
         huxerui::State<bool> inToolbar{false};
         huxerui::State<bool> searchExpanded{false};
         huxerui::State<huxerui::TextEditingValue> search{huxerui::TextEditingValue{}};
+        huxerui::State<std::string> group{std::string{"fixture-group"}};
         int clicks = 0;
     };
     std::shared_ptr<Fixture> fixture;
@@ -5977,12 +6023,11 @@ void testProxySpeedShutter() {
             const auto state = huxerui::UseService<Fixture>();
             auto theme = huxerui::MaterialLightThemeSpec();
             theme.motion.reduced_motion = state->reducedMotion.Get();
-            const auto button = clashflux::ui::ProxySpeedButton(
-                state->tests.progress.Get().busy || state->tests.preparing.Get(),
-                state->tests.singlePending.Get() == 0, [state] {
-                  ++state->clicks;
-                  state->tests.Begin();
-                });
+            const auto button = clashflux::ui::ProxySpeedButton(state->tests, state->group.Get(), [state] {
+                ++state->clicks;
+                const int ticket = state->tests.Begin();
+                if (ticket) state->tests.Broadcast(ticket, state->group.Get());
+            });
             if (!state->inToolbar.Get()) return huxerui::MaterialTheme{theme, button};
             auto toolbar = clashflux::ui::PageSearchToolbar(state->search, state->searchExpanded,
                 "Proxies", "Search nodes", button);
@@ -6000,19 +6045,14 @@ void testProxySpeedShutter() {
     huxerui::testing::UiTest ui(app, {.viewport = {160.0F, 160.0F}, .resource_provider = AppResources()});
     ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
     ui.Pump();
-    const auto action = ui.Find(UiSelector::Key("proxy-speed-action"));
-    const auto slot = ui.Find(UiSelector::Key("proxy-speed-button"));
+    const auto action = ui.Find(UiSelector::Key("speed-test-action"));
+    const auto loading = ui.Find(UiSelector::Key("speed-test-loading"));
+    const auto slot = ui.Find(UiSelector::Key("speed-test-button"));
     const auto bounds = slot.One().bounds;
     const huxerui::Point center{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
     const auto finishTest = [&] {
         fixture->tests.End(fixture->tests.progress.Get().generation);
         ui.Pump();
-    };
-    const auto aperture = [&] {
-        const auto snapshot = ui.CaptureSnapshot().ToString();
-        static const std::regex clip{R"(push-clip\s*\{\s*bounds\s*\{[^}]*\}\s*corner_radius=([\d.]+))"};
-        std::smatch match;
-        return std::regex_search(snapshot, match, clip) ? std::stof(match[1]) : 0.0F;
     };
     const auto hasBackdrop = [&] {
         const auto snapshot = ui.CaptureSnapshot().ToString();
@@ -6022,38 +6062,45 @@ void testProxySpeedShutter() {
     };
     check(!hasBackdrop(), "the idle group test icon has no backplate or shadow");
 
+    fixture->tests.preparing = true; ui.Pump();
+    check(loading.Exists() && !action.Exists(), "waiting for the core shows the busy indicator");
+    fixture->tests.preparing = false; ui.Pump();
     action.Tap(); ui.Pump();
-    const float startingRadius = aperture();
-    ui.Pump(260ms);
-    const float midClosingRadius = aperture();
-    check(fixture->clicks == 1 && !action.Exists() &&
-              std::abs(startingRadius - clashflux::ui::kProxySpeedButtonSize * 0.75F) < 0.1F &&
-              midClosingRadius > 0.0F && midClosingRadius < startingRadius && !hasBackdrop(),
-          "group test closes a centered circle over the icon without restoring its backplate");
-    ui.Pump(270ms);
-    const auto hidden = ui.CaptureSnapshot();
-    ui.TapAt(center); ui.Pump(700ms);
-    check(fixture->clicks == 1 && !action.Exists() && aperture() == 0.0F && hidden == ui.CaptureSnapshot(),
-          "the speed button stays invisible and inactive while the group test runs");
+    const auto circle = loading.One().bounds;
+    const auto progress = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Role(
+        huxerui::SemanticRole::ProgressIndicator)).One();
+    check(fixture->clicks == 1 && !action.Exists() && progress.busy == true && !progress.label.empty() &&
+              circle == huxerui::Rect{center.x - 10.0F, center.y - 10.0F, 20.0F, 20.0F} &&
+              slot.One().bounds == bounds && !hasBackdrop(),
+          "group test immediately displays an accessible, centered 20pt circle in the button slot");
+    const auto firstFrame = ui.CaptureSnapshot();
+    ui.TapAt(center); ui.Pump(240ms);
+    check(fixture->clicks == 1 && !action.Exists() && firstFrame != ui.CaptureSnapshot(),
+          "the circle animates without allowing another group test");
 
-    finishTest(); ui.Pump(260ms);
-    check(!action.Exists() && std::abs(aperture() - midClosingRadius) < 0.1F && slot.One().bounds == bounds,
-          "the shutter opens with the same circular geometry played backwards in the same slot");
-    ui.Pump(270ms); ui.Pump();
-    check(action.Exists() && aperture() == 0.0F, "reverse shutter restores the real button on completion");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background); ui.Pump();
+    const auto background = ui.CaptureSnapshot();
+    ui.Pump(240ms);
+    check(loading.Exists() && background == ui.CaptureSnapshot(), "the background circle stops animating");
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.Pump();
+    const auto foreground = ui.CaptureSnapshot();
+    ui.Pump(240ms);
+    check(foreground != ui.CaptureSnapshot(), "the circle animates again after returning to the foreground");
+    fixture->group = std::string{"another-group"}; ui.Pump();
+    check(!loading.Exists() && !action.One().enabled && slot.One().bounds == bounds,
+          "another group keeps the lightning icon disabled while the current batch runs");
+    fixture->group = std::string{"fixture-group"}; ui.Pump();
+    check(loading.Exists(), "returning to the group being measured restores its busy indicator");
 
-    action.Tap(); ui.Pump(); ui.Pump(260ms);
-    const float interruptedRadius = aperture();
     finishTest();
-    check(std::abs(aperture() - interruptedRadius) < 0.1F, "fast measurement completion reverses without a jump");
-    ui.Pump(520ms); ui.Pump();
-    check(action.Exists(), "the button can be used again after a short measurement");
-
+    check(action.One().enabled && !loading.Exists() && slot.One().bounds == bounds,
+          "completion immediately restores the lightning icon in its original slot");
     fixture->reducedMotion = true; ui.Pump();
     action.Tap(); ui.Pump();
-    check(!action.Exists() && aperture() == 0.0F, "reduced motion skips the shutter close");
-    finishTest(); ui.Pump();
-    check(action.Exists() && aperture() == 0.0F, "reduced motion restores the button immediately");
+    const auto reduced = ui.CaptureSnapshot();
+    ui.Pump(240ms);
+    check(loading.Exists() && reduced == ui.CaptureSnapshot(), "reduced motion keeps a static busy indicator");
+    finishTest();
 
     fixture->inToolbar = true;
     const auto toggle = ui.Find(UiSelector::Key("page-search-toggle"));
@@ -6072,7 +6119,7 @@ void testProxySpeedShutter() {
         toggle.Tap(); ui.Pump();
         input.ReplaceText("Tokyo"); ui.Pump();
         check(fixture->search.Get().text == "Tokyo" && slot.One().bounds == slotBounds &&
-              body.One().bounds == contentBounds && !pill.Find(UiSelector::Key("proxy-speed-action")).Exists(),
+              body.One().bounds == contentBounds && !pill.Find(UiSelector::Key("speed-test-action")).Exists(),
               "the group test is outside the field and stays in its original slot");
         check(action.One().enabled == (width >= 600.0F),
               "expanded compact search disables group testing and wide search keeps it available");
@@ -6082,7 +6129,8 @@ void testProxySpeedShutter() {
             fixture->tests.singlePending = 0; ui.Pump();
             const int before = fixture->clicks;
             action.Tap(); ui.Pump();
-            check(fixture->clicks == before + 1 && !action.Exists() && slot.One().bounds == slotBounds &&
+            check(fixture->clicks == before + 1 && loading.Exists() && !action.Exists() &&
+                  slot.One().bounds == slotBounds &&
                   fixture->search.Get().text == "Tokyo" && body.One().bounds == contentBounds,
                   "wide group testing preserves the query, button slot, and content below");
             finishTest();
@@ -9944,6 +9992,9 @@ int main(int argc, char** argv) {
         std::printf("profile-cards %s\n", failures == 0 ? "passed" : "failed");
         return failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--responsive-shell") {
+        testResponsiveDesktopShell(); return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--subscription-ua") {
         testSubscriptionUserAgentOrder(); return failures == 0 ? 0 : 1;
     }
@@ -9990,8 +10041,11 @@ int main(int argc, char** argv) {
         std::printf("page-search %s\n", failures == 0 ? "passed" : "failed");
         return failures == 0 ? 0 : 1;
     }
-    if (argc == 2 && std::string_view(argv[1]) == "--proxy-speed-shutter") {
-        testProxySpeedShutter(); return failures == 0 ? 0 : 1;
+    if (argc == 2 && std::string_view(argv[1]) == "--proxy-speed-loading") {
+        testProxySpeedLoading(); return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--proxy-probe-lifetime") {
+        testProxyProbesSurvivePageRetirement(); return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--rules-cache") {
         testSharedRulesCache(); return failures == 0 ? 0 : 1;
@@ -10346,9 +10400,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
         ++failures;
     }
-    try { testProxySpeedShutter(); }
+    try { testProxySpeedLoading(); }
     catch (const std::exception& error) {
-        std::fprintf(stderr, "FAIL: proxy speed shutter: %s\n", error.what());
+        std::fprintf(stderr, "FAIL: proxy speed loading: %s\n", error.what());
         ++failures;
     }
     try { testSingleProxyProbeCard(); testNativeSingleProxyProbeCard(); }

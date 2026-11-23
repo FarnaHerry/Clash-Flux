@@ -137,33 +137,52 @@ bool LaunchSingleProxyProbe(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestM
     return true;
 }
 
-template<class Start, class Poll, class Valid>
-huxerui::Task<int> MeasureNativeProxyDelay(std::string tag, std::shared_ptr<ProxyProbe> probe,
-    Start start, Poll poll, Valid valid) {
-    using namespace std::chrono;
+struct NativeProxyHistory {
+    std::int64_t baselineTime = 0;
+    bool hadHistory = false;
 
-    const auto previous = poll(tag);
-    const auto baseline = std::max(probe->baselineTime.Get(), previous ? previous->second : 0);
+    static NativeProxyHistory Capture(const ProxyProbe& probe,
+        const std::optional<std::pair<int, std::int64_t>>& previous) {
+        const auto time = previous ? previous->second : 0;
+        return {std::max(probe.baselineTime.Get(), time), time > 0};
+    }
+
+    std::optional<int> Resolve(ProxyProbe& probe,
+        const std::optional<std::pair<int, std::int64_t>>& result) const {
+        if (!result) return std::nullopt;
+        if (result->second > baselineTime) {
+            probe.baselineTime = result->second;
+            return result->first;
+        }
+        // libbox removes an existing history record when the probe fails.
+        if (hadHistory && result->second == 0) return 0;
+        return std::nullopt;
+    }
+};
+
+inline huxerui::Task<void> WaitForNativeProxyTimestamp(std::int64_t baselineTime) {
+    using namespace std::chrono;
     const auto now = system_clock::now();
     const auto second = floor<seconds>(now);
     // libbox timestamps have one-second resolution. A quick retry needs a
     // different timestamp even if it measures the same latency.
-    if (baseline == second.time_since_epoch().count())
+    if (baselineTime == second.time_since_epoch().count())
         co_await huxerui::Delay(second + seconds{1} - now);
+}
 
+inline constexpr auto kNativeProxyPollInterval = std::chrono::milliseconds{250};
+inline constexpr int kNativeProxyPollAttempts = 120;
+
+template<class Start, class Poll, class Valid>
+huxerui::Task<int> MeasureNativeProxyDelay(std::string tag, std::shared_ptr<ProxyProbe> probe,
+    Start start, Poll poll, Valid valid) {
+    const auto history = NativeProxyHistory::Capture(*probe, poll(tag));
+    co_await WaitForNativeProxyTimestamp(history.baselineTime);
     if (!valid() || !(co_await start(tag))) co_return 0;
-    constexpr auto interval = milliseconds{250};
-    for (auto elapsed = milliseconds{0}; elapsed < seconds{30}; elapsed += interval) {
+    for (int attempt = 0; attempt < kNativeProxyPollAttempts; ++attempt) {
+        co_await huxerui::Delay(kNativeProxyPollInterval);
         if (!valid()) co_return 0;
-        const auto result = poll(tag);
-        if (result && result->second > baseline) {
-            probe->baselineTime = result->second;
-            co_return result->first;
-        }
-        // A failed libbox probe removes any previous history for this node.
-        if (result && result->second == 0 && previous && previous->second > 0)
-            co_return 0;
-        co_await huxerui::Delay(interval);
+        if (const auto result = history.Resolve(*probe, poll(tag))) co_return *result;
     }
     co_return 0;
 }
@@ -171,6 +190,7 @@ huxerui::Task<int> MeasureNativeProxyDelay(std::string tag, std::shared_ptr<Prox
 struct ProxyProbeTarget {
     std::string tag;
     std::shared_ptr<ProxyProbe> probe;
+    NativeProxyHistory nativeHistory{};
 };
 
 // One kernel-side group test supplies delays for every target. This replaces
@@ -224,18 +244,15 @@ template<class Valid, class Poll>
 void LaunchNativeProxyProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestModel> model,
     std::vector<ProxyProbeTarget> targets, int ticket, Valid valid, Poll poll) {
     tasks.Launch([model, targets = std::move(targets), ticket, valid, poll]() -> huxerui::Task<void> {
-        for (int attempt = 0; attempt < 120; ++attempt) {
-            co_await huxerui::Delay(std::chrono::duration<double>{0.25});
+        for (int attempt = 0; attempt < kNativeProxyPollAttempts; ++attempt) {
+            co_await huxerui::Delay(kNativeProxyPollInterval);
             if (!valid()) { model->End(ticket); co_return; }
             if (!model->Current(ticket) || model->pending.Get() == 0) co_return;
             for (const auto& target : targets) {
                 const auto& probe = target.probe;
-                if (!probe->value.Get().testing) continue;
-                const auto result = poll(target.tag);
-                if (result && result->second > 0 && result->second != probe->baselineTime.Get()) {
-                    model->Complete(probe, ticket, result->first);
-                    probe->baselineTime = result->second;
-                }
+                if (probe->generation.Get() != ticket || !probe->value.Get().testing) continue;
+                if (const auto result = target.nativeHistory.Resolve(*probe, poll(target.tag)))
+                    model->Complete(probe, ticket, *result);
             }
         }
         model->End(ticket);

@@ -8,11 +8,10 @@ interface IClashRuntime {
     Bundle logsAfter(long sequence);
     boolean acknowledgeTunReset();
     boolean selectOutbound(String group, String name);
-    boolean urlTest(String group);
+    boolean urlTest(String tag);
     boolean setClashMode(String mode);
     boolean refreshProxyGroups();
     boolean closeConnection(String id);
     boolean closeAllConnections();
     boolean stopRuntime();
-    boolean urlTestNode(String tag);
 }

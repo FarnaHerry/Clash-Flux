@@ -1,5 +1,17 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-23 网站批量测速加载动画
+
+- 基于 Clash-Flux `3cf753e` 工作区和 HuxerUI `c154e52`。网站测试页头与代理页分组测速共用加载圆圈。320pt 和 960pt 回归覆盖单测与批量测速的忙态、按钮原位切换、重复点击及完成恢复。
+- Windows `cmake --build build --target clash-flux test_page_transition`、`./run.ps1 --version`（v0.3.128）、`git diff --check`、CTest `ui_resources` 及 `--website-tests`、`--proxy-speed-loading` 专项通过。Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。本轮未运行完整 `page_transition`、原生窗口或真机检查。
+
+## 2026-11-23 分组测速反馈与订阅卡片断点
+
+- 基于 Clash-Flux `3cf753e` 和本次工作区补丁，HuxerUI `c154e52`。分组测速在原位显示加载圆圈，完成后恢复闪电。Android 单测和组测复用 libbox 命令及历史判定，覆盖过期快照、相同延迟重测和已有记录被清除。
+- Compact 阈值为 540pt。非 Compact 桌面订阅网格从两列起，在正文可用宽度达到 924pt 和 1236pt 时切换为三列和四列。骨架与真实网格共用列数，手机和 Compact 保持单列。
+- Windows 主目标和 `test_page_transition` 经 HuxerUI codegen 构建通过。`./run.ps1 --version` 输出 v0.3.128，`git diff --check`、`ui_resources` 以及断点、订阅卡片、测速加载、测速生命周期、原生单测和页面搜索专项通过。完整 `page_transition` 达到 300 秒上限。
+- Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。本轮验证范围为宿主回归及 Debug 构建，原生窗口和 ARM64 真机测速待验证。
+
 ## 2026-11-23 Android 窄屏代理节点测速
 
 - 基于 Clash-Flux `0f3b7c0` 和本次工作区补丁，HuxerUI `c154e52`、sing-box `1.14.4`。未测节点显示小闪电，延迟和超时文字可触发单节点测速。Android 后台按运行 tag 调用 libbox，并从共享快照确认结果。JNI 往返保留 UTF-8 节点名。

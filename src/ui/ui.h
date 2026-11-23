@@ -175,10 +175,7 @@ extern "C" bool clashflux_android_close_connection(const char*) noexcept;
 extern "C" bool clashflux_android_close_all_connections() noexcept;
 extern "C" bool clashflux_android_select_outbound(const char* group,
                                                     const char* name) noexcept;
-bool AndroidProxyUrlTest(const std::string& tag, bool group) noexcept;
-inline bool TriggerProxyGroupTest(const std::string& group) noexcept {
-    return AndroidProxyUrlTest(group, true);
-}
+bool AndroidProxyUrlTest(const std::string& tag) noexcept;
 inline constexpr bool ProxyTestUsesNativeGroup() noexcept { return true; }
 #else
 inline void AndroidStartVpn() noexcept {}
@@ -192,7 +189,6 @@ inline AndroidVpnRuntime ReadAndroidVpnRuntime() noexcept { return {}; }
 inline const char* clashflux_android_connections() noexcept { return ""; }
 inline bool clashflux_android_close_connection(const char*) noexcept { return false; }
 inline bool clashflux_android_close_all_connections() noexcept { return false; }
-inline bool TriggerProxyGroupTest(const std::string&) noexcept { return true; }
 inline constexpr bool ProxyTestUsesNativeGroup() noexcept { return false; }
 #endif
 

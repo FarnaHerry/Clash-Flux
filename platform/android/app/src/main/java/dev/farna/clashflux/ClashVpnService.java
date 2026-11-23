@@ -59,13 +59,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     static final String EXTRA_SPEED_TEST_ONLY = "speed_test_only";
     static final String EXTRA_CORE_ONLY = "core_only";
     private static final Object LIBBOX_SETUP_LOCK = new Object();
-    private static final Object URL_TEST_LOCK = new Object();
-    private static final AtomicBoolean URL_TEST_RUNNING = new AtomicBoolean();
-    private static final Executor URL_TEST_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "clashflux-url-test");
-        thread.setDaemon(true);
-        return thread;
-    });
     private static final ScheduledExecutorService NETWORK_EXECUTOR =
             Executors.newSingleThreadScheduledExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "clashflux-network-recovery");
@@ -149,7 +142,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
     private static volatile long runtimeDownloadTotal;
     private static volatile int runtimeConnections;
     private static volatile String outboundGroupsJson = "{\"proxies\":{}}";
-    private static volatile String pendingUrlTestGroup;
     private static volatile String connectionsJson =
             "{\"uploadTotal\":0,\"downloadTotal\":0,\"connections\":[]}";
     private static volatile long uploadTotal;
@@ -518,14 +510,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
                 publishVpnState(2, "sing-box 已附着 TUN；socket protect 已启用");
                 updateForegroundNotification("sing-box VPN 隧道运行中");
                 MainActivity.appLog("sing-box 已成功附着 Android TUN", false);
-            }
-            String queuedGroup;
-            synchronized (URL_TEST_LOCK) {
-                queuedGroup = pendingUrlTestGroup;
-                pendingUrlTestGroup = null;
-            }
-            if (queuedGroup != null && !queuedGroup.isEmpty()) {
-                queueUrlTest(queuedGroup);
             }
         } catch (Throwable e) {
             if (startRequested) fail("sing-box 启动失败: " + e.getMessage());
@@ -1494,7 +1478,6 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         if (service == null) return false;
         synchronized (service.stopLock) {
             service.stopRequested.set(true);
-            synchronized (URL_TEST_LOCK) { pendingUrlTestGroup = null; }
             if (!service.coreOnly && !service.speedTestOnly) {
                 service.markTunPreferenceResetPending();
             }
@@ -1551,90 +1534,17 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         }
     }
 
-    public static boolean urlTest(String group) {
-        if (group == null || group.isEmpty()) return false;
-        synchronized (URL_TEST_LOCK) {
-            pendingUrlTestGroup = group;
-        }
-        ClashVpnService service = current;
-        if (service == null || (!service.started && !service.starting)) {
-            // The speed-only service uses a no-TUN config. It does not request
-            // VPN consent and does not capture application traffic.
-            MainActivity.startSpeedTestService();
-            return true;
-        }
-        if (!service.started) {
-            // A normal VPN service is still starting; startDataPlane() drains
-            // the pending request once its command server is ready.
-            return true;
-        }
-        synchronized (URL_TEST_LOCK) {
-            pendingUrlTestGroup = null;
-        }
-        service.queueUrlTest(group);
-        return true;
-    }
-
-    static boolean urlTestNode(String tag) {
+    static boolean urlTest(String tag) {
         ClashVpnService service = current;
         if (service == null || !service.started || service.stopRequested.get() || tag == null || tag.isEmpty())
             return false;
         try {
+            // libbox resolves the tag and uses the configured URL for URLTest groups.
             service.controlClient().urlTest(tag);
             return true;
         } catch (Exception error) {
             Log.w(TAG, "Unable to test outbound " + tag, error);
             return false;
-        }
-    }
-
-    private void queueUrlTest(String group) {
-        if (!URL_TEST_RUNNING.compareAndSet(false, true)) {
-            MainActivity.appLog("测速已在进行中，合并重复请求", false);
-            return;
-        }
-        URL_TEST_EXECUTOR.execute(() -> {
-            try {
-                runUrlTestWhenReady(group);
-            } finally {
-                URL_TEST_RUNNING.set(false);
-            }
-        });
-    }
-
-    private void runUrlTestWhenReady(String group) {
-        Exception lastError = null;
-        for (int attempt = 0; attempt < 80; ++attempt) {
-            if (!startRequested || stopRequested.get()) return;
-            try {
-                CommandClient activeClient = controlClient();
-                JSONObject root = new JSONObject(outboundGroupsJson);
-                JSONObject proxies = root.optJSONObject("proxies");
-                JSONObject target = proxies == null ? null : proxies.optJSONObject(group);
-                JSONArray all = target == null ? null : target.optJSONArray("all");
-                if (all == null || all.length() == 0) {
-                    throw new IllegalStateException("出站组尚未同步");
-                }
-                MainActivity.appLog("开始测速：" + group + "（" + all.length()
-                        + " 个成员，使用组配置的 URLTest 地址）", false);
-                // libbox tests the group through the group's own URLTest URL
-                // and timeout. Calling each member separately would silently
-                // fall back to sing-box's per-outbound default URL.
-                activeClient.urlTest(group);
-                return;
-            } catch (Exception error) {
-                lastError = error;
-                try {
-                    Thread.sleep(200);
-                } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-        }
-        if (lastError != null) {
-            Log.w(TAG, "Unable to test outbound group " + group, lastError);
-            MainActivity.appLog("测速启动失败：" + lastError.getMessage(), true);
         }
     }
 
