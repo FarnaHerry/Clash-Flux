@@ -985,10 +985,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     huxerui::View titleView = title;
     auto backAction = onBack;
     huxerui::View backButton;
-    if (!hideBack) backButton =
-        huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
-            .With(huxerui::Tooltip(Localized("返回上一页")))
-            .OnClick(onBack);
+    if (!hideBack) backButton = PageBackButton(onBack);
     if (kPageTitlesInWindow && !compact) {
         auto contentInsets = PageContentInsets(theme, false, 0.0F);
         if (contentSpacing) contentInsets.top = *contentSpacing;

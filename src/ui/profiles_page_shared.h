@@ -113,7 +113,6 @@ void OpenProfileEditInfo(std::int64_t id, bool compact,
                          const ProfileEditLoader& load_edit_info,
                          const ProfileEditDialog& show_edit_info,
                          huxerui::State<std::int64_t> edit_page_id);
-std::string truncateOneLine(const std::string& value, std::size_t maxCodePoints);
 huxerui::View QrsSequenceView(
     std::shared_ptr<const std::vector<std::string>> frames,
     huxerui::qrcode::Symbol first, FluxToastHandle toast);
@@ -158,7 +157,6 @@ using profile_detail::makePptpConfig;
 using profile_detail::pptpStateText;
 using profile_detail::RefreshProfileForPlatform;
 using profile_detail::ResponsiveProfilePageIndex;
-using profile_detail::truncateOneLine;
 
 huxerui::View ProfileOptionsForm(
     huxerui::State<huxerui::TextEditingValue> desc,

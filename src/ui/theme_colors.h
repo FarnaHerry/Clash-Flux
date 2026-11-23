@@ -478,6 +478,19 @@ inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& the
     return style;
 }
 
+inline huxerui::ProgressBarStyle ResolveFluxProgressBarStyle(const huxerui::ThemeSpec& theme) {
+    huxerui::ProgressBarStyle style;
+    style.height = 5.0F;
+    style.track_color = theme.colors.secondary_container;
+    style.indicator_color = theme.colors.primary;
+    style.corner_radius = style.height / 2.0F;
+    style.track_gap = 0.0F;
+    style.stop_indicator_size = 0.0F;
+    style.indeterminate_motion = huxerui::ProgressBarIndeterminateMotion::Segmented;
+    style.animation_duration = theme.motion.reduced_motion ? 0.0 : 1.75;
+    return style;
+}
+
 inline huxerui::Color SemanticSuccessColor(const huxerui::ThemeSpec& theme) {
     return IsDarkTheme(theme) ? huxerui::Color::Rgb(108, 202, 145)
                               : huxerui::Color::Rgb(47, 128, 86);

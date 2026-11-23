@@ -1055,6 +1055,7 @@ huxerui::View DiagnosticsFixtureRoot() {
                                         : clashflux::ui::FluxLightColors();
     auto definition = huxerui::MaterialThemeDefinition(spec);
     definition.Set(clashflux::ui::ResolveFluxButtonStyle(spec));
+    definition.Set(clashflux::ui::ResolveFluxProgressBarStyle(spec));
     return huxerui::Theme(definition, DiagnosticsFixture());
 }
 const huxerui::Application kDiagnosticsApplication{DiagnosticsFixtureRoot};
@@ -1073,6 +1074,10 @@ void testDiagnosticsContent() {
         ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).Tap(); ui.Pump(kStep);
         check(diagnosticsStarts == 1, "开始诊断回调可用");
         check(ui.Find(UiSelector::Text(zh ? "正在收集诊断证据…" : "Collecting diagnostic evidence…")).Exists(), "诊断过程中加载资源安全并展示状态");
+        const auto progress = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Role(
+            huxerui::SemanticRole::ProgressIndicator)).One();
+        check(std::abs(progress.bounds.height - 5.0F) < 0.5F && progress.busy == true,
+              "diagnostics uses the 5pt app progress bar with indeterminate semantics");
         // 框架对禁用控件的 Tap 直接抛错，用 enabled 断言防重复入口。
         check(!ui.Find(UiSelector::Text(zh ? "开始诊断" : "Run diagnostics")).One().enabled,
               "运行中禁用重复诊断");
@@ -2599,9 +2604,12 @@ void testSkeletonShimmer() {
             const float columns = compact || kind == 4 ? 1.0F :
                 std::max(1.0F, std::floor((width - 2.0F * side + 12.0F) / 352.0F));
             const float expectedWidth = (width - 2.0F * side - (columns - 1.0F) * 12.0F) / columns;
-            check(std::abs(first.height - (compact ? 108.0F : 180.0F)) < 0.5F &&
+            check(std::abs(first.height - (compact ? 104.0F : 152.0F)) < 0.5F &&
                   std::abs(first.width - expectedWidth) < 0.5F && std::abs(first.x - side) < 0.5F,
                   "profile loading cards match real card height, adaptive tracks and section insets");
+            const auto quota = ui.Find(UiSelector::Key("profile-loading-item-0"))
+                .Find(UiSelector::Key("profile-loading-quota-bar")).One().bounds;
+            check(std::abs(quota.height - 4.0F) < 0.5F, "quota placeholders reserve the same 4pt as real bars");
             check(columns > 1.0F ? std::abs(second.y - first.y) < 0.5F &&
                       std::abs(second.x - first.x - first.width - 12.0F) < 0.5F
                   : std::abs(second.y - first.y - first.height - 12.0F) < 0.5F,
@@ -2890,7 +2898,7 @@ huxerui::View CompactProfileCardsRoot() {
                             huxerui::Tooltip("More subscription actions"),
                             huxerui::Semantics{.role = huxerui::SemanticRole::Button})
                       .OnClick([menuCount] { menuCount = menuCount.Get() + 1; }).Key("profile-more"),
-                  CompactProfileTrafficContent(traffic, expiry,
+                  ProfileCardTrafficContent(traffic, expiry,
                       ProfileTrafficProgress(traffic.empty() ? 0 : 12, traffic.empty() ? 0 : 100), colors.muted),
                   false, {}, index % 2 == 0 ? "Updated 5 minutes ago" : "Not fetched");
               return SelectableTile(body, index == 0, "Subscription " + suffix, [] {},
@@ -2934,7 +2942,6 @@ void testCompactProfileCards() {
             const auto updated = card.Find(UiSelector::Key("profile-compact-updated")).One().bounds;
             const auto status = card.Find(UiSelector::Key("profile-compact-status")).One().bounds;
             const auto more = card.Find(UiSelector::Key("profile-more")).One().bounds;
-            const auto info = card.Find(UiSelector::Key("profile-traffic-label")).One().bounds;
             const auto bar = card.Find(UiSelector::Key("profile-traffic-bar")).One().bounds;
             check(name.x + name.width <= status.x && status.x + status.width <= more.x &&
                   more.x + more.width <= bounds.x + bounds.width,
@@ -2944,13 +2951,23 @@ void testCompactProfileCards() {
                   updated.x + updated.width <= bounds.x + bounds.width,
                   "relative update time stays below the progress bar at the card's left edge");
             check(bar.y + bar.height <= bounds.y + bounds.height &&
-                  std::abs(bar.height - 3.0F) < 0.5F,
-                  "the traffic bar stays inside the compact card");
-            if (infoY) check(std::abs(info.y - bounds.y - *infoY) < 0.5F &&
-                            std::abs(bar.y - bounds.y - *barY) < 0.5F,
-                            "empty metadata preserves identical text and progress positions");
-            infoY = info.y - bounds.y;
-            barY = bar.y - bounds.y;
+                  std::abs(bar.height - 4.0F) < 0.5F,
+                  "the 4pt traffic bar stays inside the compact card");
+            const auto traffic = card.Find(UiSelector::Key("profile-traffic-label"));
+            const auto expiry = card.Find(UiSelector::Key("profile-expiry-label"));
+            if (index == 3) {
+                check(traffic.Count() == 0 && expiry.Count() == 0 && barY &&
+                      std::abs(bar.y - bounds.y - *barY + 20.0F) < 0.5F,
+                      "the quota bar moves up when neither traffic nor expiry is available");
+            } else {
+                const auto info = traffic.One().bounds;
+                check(expiry.Count() == 1 && (!infoY ||
+                      (std::abs(info.y - bounds.y - *infoY) < 0.5F &&
+                       std::abs(bar.y - bounds.y - *barY) < 0.5F)),
+                      "an available value keeps its slot when the other value is missing");
+                infoY = info.y - bounds.y;
+                barY = bar.y - bounds.y;
+            }
         }
     }
     check(ui.CaptureSnapshot().ToString().contains("corner_radius=12.000000\n"),
@@ -3203,14 +3220,15 @@ void testSearchFocusOutline() {
     }
 }
 
-huxerui::View SearchToolbarFixture(bool secondary) {
-    return huxerui::MaterialTheme{huxerui::Scope([secondary] {
+huxerui::View SearchToolbarFixture(bool secondary, bool active = true) {
+    return huxerui::MaterialTheme{huxerui::Scope([secondary, active]() -> huxerui::View {
         using namespace clashflux::ui;
         const auto& theme = huxerui::UseTheme();
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
-        const auto query = huxerui::UseState(huxerui::TextEditingValue{});
-        const auto expanded = huxerui::UseState(false);
+        const auto [query, expanded] = UsePageSearch(active);
         const auto additions = huxerui::UseState(0);
+        const auto returns = huxerui::UseState(0);
+        if (!active) return huxerui::Row {};
         auto toolbar = PageSearchToolbar(query, expanded, "Subscriptions", "Search subscriptions",
             huxerui::Row{
                 huxerui::IconButton(app::images::add, "Add")
@@ -3220,18 +3238,25 @@ huxerui::View SearchToolbarFixture(bool secondary) {
             }.With(huxerui::Spacing(4.0F)));
         huxerui::View back;
         if (secondary) {
-            back = huxerui::IconButton(app::images::arrow_back, "Back").Key("search-back");
+            back = PageBackButton([returns] { ++returns; });
         }
-        huxerui::View header = compact
-            ? SearchPageHeader(theme, back, toolbar)
-            : huxerui::View{huxerui::Row{DesktopPageTitleContent(
+        huxerui::View header;
+        if (compact) {
+            header = SearchPageHeader(theme, back, toolbar);
+        } else {
+            huxerui::View titleBar = DesktopPageTitleContent(
                 huxerui::Text("Subscriptions").With(huxerui::Frame{.width = 180.0F}),
-                {}, std::move(toolbar))}.With(huxerui::Frame{.height = kPageHeaderHeight})};
+                {}, toolbar);
+            const std::vector<huxerui::View> children = secondary
+                ? std::vector<huxerui::View>{back, titleBar} : std::vector<huxerui::View>{titleBar};
+            header = huxerui::Row(children).With(huxerui::Frame{.height = kPageHeaderHeight});
+        }
         return huxerui::Column{
             std::move(header),
             huxerui::Column{
                 huxerui::Text("QUERY:" + query.Get().text),
                 huxerui::Text("ADDITIONS:" + std::to_string(additions.Get())),
+                secondary ? huxerui::View{huxerui::Text("RETURNS:" + std::to_string(returns.Get()))} : huxerui::View{},
             }.With(huxerui::Grow(1.0F)).Key("search-content"),
         }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 0.0F)),
                huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -3243,13 +3268,65 @@ const huxerui::Application kSearchToolbarApplication{SearchToolbarRoot, {.show_d
 const huxerui::Application kSecondarySearchToolbarApplication{SecondarySearchToolbarRoot,
     {.show_debug_overlay = false}};
 
+huxerui::View SearchToolbarNavigationRoot() {
+    return huxerui::MaterialTheme{huxerui::Scope([] {
+        const auto selected = huxerui::UseState<std::size_t>(0);
+        const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+        return huxerui::Column {
+          huxerui::Row {
+            huxerui::Button("Subscriptions").OnClick([selected] { selected = 0; }).Key("search-page"),
+            huxerui::Button("Settings").OnClick([selected] { selected = 1; }).Key("other-page"),
+          },
+          clashflux::ui::DesktopPageSwitcher(
+              {SearchToolbarFixture(false, selected.Get() == 0), huxerui::Text("Settings page")},
+              selected, compact, huxerui::UseTheme()),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    })};
+}
+const huxerui::Application kSearchToolbarNavigationApplication{SearchToolbarNavigationRoot,
+    {.show_debug_overlay = false}};
+
+void testPageSearchNavigation() {
+    using namespace std::chrono_literals;
+    for (const float width : {390.0F, 960.0F}) {
+        huxerui::testing::UiTest ui(kSearchToolbarNavigationApplication, {.viewport = {width, 740.0F},
+            .resource_provider = AppResources()});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        ui.PumpAndSettle();
+        const auto toggle = ui.Find(UiSelector::Key("page-search-toggle"));
+        const auto input = ui.Find(UiSelector::Key("page-search-input"));
+        const auto searchPage = ui.Find(UiSelector::Key("search-page"));
+        const auto otherPage = ui.Find(UiSelector::Key("other-page"));
+        ui.Find(UiSelector::Key("search-add")).Tap(); ui.Pump();
+        toggle.Tap(); ui.Pump(); ui.Pump(240ms); ui.Pump(kStep);
+        input.Tap();
+        input.ReplaceText("narrow query"); ui.Pump();
+        check(input.One().focused && ui.Find(UiSelector::Text("QUERY:narrow query")).Exists(),
+              "the active page has a focused search and a nonempty query before navigating away");
+        otherPage.Tap(); ui.Pump(400ms);
+        searchPage.Tap(); ui.Pump(400ms);
+        check(toggle.Exists() && !input.Exists() && ui.Find(UiSelector::Text("QUERY:")).Exists() &&
+              ui.Find(UiSelector::Text("ADDITIONS:1")).Exists(),
+              "returning to the mounted page clears search while retaining other local state");
+
+        toggle.Tap(); ui.Pump();
+        check(input.Exists() && !input.One().focused, "search reveal is waiting to focus its input");
+        otherPage.Tap(); ui.Pump();
+        searchPage.Tap(); ui.Pump(400ms);
+        check(toggle.Exists() && !input.Exists() && searchPage.One().focused,
+              "leaving during search reveal cancels its focus request when returning quickly");
+    }
+}
+
 void testSearchToolbarIconHover() {
     using namespace std::chrono_literals;
     static const std::regex circle{
         R"(rect\s+\{\s+bounds\s+\{\s+x=([\d.-]+)\s+y=([\d.-]+)\s+width=28\.000000\s+height=28\.000000\s+\}\s+brush\s+\{\s+kind="solid"\s+color\s+\{[^}]*\}\s+\}\s+corner_radius=14\.000000)"};
 
     for (const float width : {390.0F, 960.0F}) {
-        huxerui::testing::UiTest ui(kSearchToolbarApplication, {.viewport = {width, 640.0F},
+        const bool compact = width == 390.0F;
+        huxerui::testing::UiTest ui(compact ? kSecondarySearchToolbarApplication : kSearchToolbarApplication,
+            {.viewport = {width, 640.0F},
             .resource_provider = AppResources()});
         ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
         ui.Pump();
@@ -3274,6 +3351,7 @@ void testSearchToolbarIconHover() {
                   "search toolbar hover draws a centered circle without resizing the hit target");
         };
 
+        if (compact) checkHover("page-back");
         checkHover("search-add");
         checkHover("search-more");
         checkHover("page-search-toggle");
@@ -3413,18 +3491,47 @@ void testPageSearchToolbar() {
 
     huxerui::testing::UiTest secondary(kSecondarySearchToolbarApplication, {.viewport = {320.0F, 640.0F},
         .resource_provider = AppResources()});
+    secondary.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
     secondary.Pump();
-    const auto back = secondary.Find(UiSelector::Key("search-back"));
+    const auto back = secondary.Find(UiSelector::Key("page-back"));
+    const auto backSemantics = secondary.FindSemantics(huxerui::testing::UiSemanticSelector::Label("Back"));
     const auto backBounds = back.One().bounds;
-    const auto secondaryTitle = secondary.Find(UiSelector::Key("page-title")).One().bounds;
-    check(secondaryTitle.x >= backBounds.x + backBounds.width,
-          "compact secondary pages place the title after the back button");
-    secondary.Find(UiSelector::Key("page-search-toggle")).Tap(); secondary.Pump();
-    const auto secondaryPill = secondary.Find(UiSelector::Key("pill-search-field")).One().bounds;
-    check(back.One().enabled && back.One().bounds == backBounds &&
-          secondaryPill.x >= backBounds.x + backBounds.width &&
-          std::abs(secondaryPill.x + secondaryPill.width - 312.0F) < 0.5F,
-          "expanded compact search fills the row beside the unchanged back button");
+    const auto secondaryTitle = secondary.Find(UiSelector::Key("page-title"));
+    const auto secondaryHeader = secondary.Find(UiSelector::Key("page-header")).One().bounds;
+    const auto secondaryBody = secondary.Find(UiSelector::Key("search-content")).One().bounds;
+    const auto secondaryToggle = secondary.Find(UiSelector::Key("page-search-toggle"));
+    const auto secondaryInput = secondary.Find(UiSelector::Key("page-search-input"));
+    secondary.PressKey(huxerui::Key::Tab); secondary.Pump();
+    check(back.One().focused && backSemantics.Exists() &&
+          secondaryTitle.One().bounds.x >= backBounds.x + backBounds.width,
+          "compact secondary header starts with the Back button, then the title");
+    secondaryToggle.Tap(); secondary.Pump(); secondary.Pump(240ms); secondary.Pump(kStep);
+    const auto secondarySurface = paintedSearchSurface(secondary);
+    check(secondarySurface && *secondarySurface == secondaryHeader &&
+          !back.Exists() && !backSemantics.Exists() &&
+          secondaryInput.One().bounds.x < backBounds.x + backBounds.width &&
+          secondary.Find(UiSelector::Key("search-content")).One().bounds == secondaryBody,
+          "the painted capsule spans the compact header and reuses the covered Back area");
+    const huxerui::Point backCenter{backBounds.x + backBounds.width / 2.0F, backBounds.y + backBounds.height / 2.0F};
+    secondary.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 1, .position = backCenter,
+        .device_kind = huxerui::PointerDeviceKind::Mouse});
+    secondary.Pump(); secondary.Pump(600ms);
+    check(!secondary.Find(UiSelector::Text("Back")).Exists(), "the covered Back area has no tooltip");
+    secondary.TapAt(backCenter);
+    secondary.Pump();
+    check(secondary.Find(UiSelector::Text("RETURNS:0")).Exists(), "the capsule blocks the covered Back button");
+    secondaryInput.Tap(); secondaryInput.ReplaceText("demo"); secondary.Pump();
+    secondary.SetWindowMetrics({.viewport = {960.0F, 640.0F}}); secondary.Pump(240ms); secondary.Pump(kStep);
+    check(back.One().enabled && secondary.Find(UiSelector::Text("QUERY:demo")).Exists(),
+          "resizing the secondary page preserves Back and the active query");
+    secondary.SetWindowMetrics({.viewport = {320.0F, 640.0F}}); secondary.Pump(240ms); secondary.Pump(kStep);
+    secondary.Find(UiSelector::Key("page-search-close")).Tap(); secondary.Pump(180ms); secondary.Pump(kStep);
+    check(secondaryToggle.Exists() && !secondaryInput.Exists() && back.One().bounds == backBounds &&
+          back.One().enabled && backSemantics.Exists() &&
+          secondary.Find(UiSelector::Text("QUERY:")).Exists(),
+          "closing secondary search restores the header and clears the query after a resize");
+    back.Tap(); secondary.Pump();
+    check(secondary.Find(UiSelector::Text("RETURNS:1")).Exists(), "closing the search restores Back interaction");
 }
 
 // 回归复现：带 UsePopup 锚点的动作视图在响应式断点切换（标题栏结构性替换）
@@ -8492,7 +8599,8 @@ huxerui::View SettingsRowsRoot() {
 }
 const huxerui::Application kSettingsRowsApplication{SettingsRowsRoot, {.show_debug_overlay = false}};
 
-bool hasSettingsRowLayer(huxerui::testing::UiTest& ui, huxerui::Rect bounds, float opacity) {
+bool hasSettingsRowLayer(huxerui::testing::UiTest& ui, huxerui::Rect bounds, float opacity,
+                         std::optional<float> cornerRadius = {}) {
     std::istringstream input(ui.CaptureSnapshot().ToString());
     std::string line; std::getline(input, line); std::getline(input, line);
     const auto snapshot = readCatPaintNode(input, line);
@@ -8503,7 +8611,8 @@ bool hasSettingsRowLayer(huxerui::testing::UiTest& ui, huxerui::Rect bounds, flo
             const auto* color = brush ? brush->Find("color") : nullptr;
             if (rect && color && std::abs(rect->Number("width") - bounds.width) < 0.1F &&
                 std::abs(rect->Number("height") - bounds.height) < 0.1F &&
-                std::abs(color->Number("alpha") - opacity) < 0.001F) return true;
+                std::abs(color->Number("alpha") - opacity) < 0.001F &&
+                (!cornerRadius || std::abs(node.Number("corner_radius") - *cornerRadius) < 0.1F)) return true;
         }
         return std::ranges::any_of(node.children, [&](const auto& child) { return self(self, child); });
     };
@@ -8644,42 +8753,54 @@ void testModeChoiceFeedback() {
             huxerui::testing::UiTest ui(kModeChoiceApplication, {.viewport = {320.0F, 300.0F}});
             ui.PumpAndSettle();
             check(modeThemeMatches, "checked controls follow the accent while ordinary owning feedback stays neutral");
+            using huxerui::testing::UiSemanticSelector;
+            const auto choice = [&](const char* label) {
+                return ui.FindSemantics(UiSemanticSelector::AllOf(UiSemanticSelector::Label(label),
+                    UiSemanticSelector::Role(huxerui::SemanticRole::RadioButton)));
+            };
+            const auto group = ui.Find(UiSelector::Key("mode-options"));
+            const auto first = ui.Find(UiSelector::Key("home-mode-0")).One().bounds;
             const auto bounds = ui.Find(UiSelector::Key("home-mode-1")).One().bounds;
+            const auto last = ui.Find(UiSelector::Key("home-mode-2")).One().bounds;
+            const auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+            const float gap = theme.spacing.extra_small;
+            check(!group.Find(UiSelector::Type<huxerui::RadioButton>()).Exists() &&
+                  first.width == group.One().bounds.width && bounds.width == first.width && last.width == first.width &&
+                  std::abs(bounds.y - first.y - first.height - gap) < 0.1F &&
+                  std::abs(last.y - bounds.y - bounds.height - gap) < 0.1F &&
+                  hasSettingsRowLayer(ui, first, 1.0F, theme.shapes.small),
+                  "mode choices use separate rounded rows without radio glyphs");
+            check(choice("Rule").One().checked == huxerui::SemanticCheckedState::Checked &&
+                  choice("Global").One().checked == huxerui::SemanticCheckedState::Unchecked,
+                  "the visual rows expose the controlled single-choice state to accessibility");
+            ui.TapAt({bounds.x + bounds.width / 2.0F, bounds.y - gap / 2.0F}, {.device_kind = device});
+            ui.TapAt({bounds.x + 0.5F, bounds.y + 0.5F}, {.device_kind = device});
+            ui.PumpAndSettle();
+            check(modeChoiceFixture->changes == 0, "the gap and area outside a rounded corner are not clickable");
             huxerui::PointerEvent event{.type = huxerui::PointerEventType::Down, .pointer_id = 91,
                 .position = {bounds.x + bounds.width - 4.0F, bounds.y + bounds.height * 0.5F},
                 .device_kind = device, .changed_button = huxerui::PointerButton::Primary,
                 .pressed_buttons = huxerui::PointerButton::Primary};
             ui.SendPointer(event); ui.Pump(); ui.Pump(std::chrono::milliseconds(100));
-            std::istringstream input(ui.CaptureSnapshot().ToString());
-            std::string line; std::getline(input, line); std::getline(input, line);
-            const auto snapshot = readCatPaintNode(input, line);
-            bool circle = false, wide = false;
-            const auto scan = [&](auto&& self, const CatPaintNode& node) -> void {
-                if (node.name == "circle" && node.Number("radius") >= 14.0F && node.Number("radius") <= 24.0F)
-                    circle = true;
-                if (node.name == "rect") {
-                    const auto* b = node.Find("bounds");
-                    const auto* brush = node.Find("brush");
-                    const auto* color = brush ? brush->Find("color") : nullptr;
-                    if (b && color && b->Number("width") > 70.0F && color->Number("alpha") > 0.0F &&
-                        color->Number("alpha") < 0.3F) wide = true;
-                }
-                for (const auto& child : node.children) self(self, child);
-            };
-            scan(scan, snapshot);
-            if (!circle || wide) std::ofstream("mode-feedback-failure.snapshot") << ui.CaptureSnapshot().ToString();
-            check(circle && !wide, "clicking the radio label keeps feedback around the control rather than across the row");
+            check(hasSettingsRowLayer(ui, bounds, kInteractionPressOpacity), "press feedback fills the mode row");
             event.type = huxerui::PointerEventType::Up;
             event.pressed_buttons = huxerui::PointerButton::None;
             ui.SendPointer(event); ui.PumpAndSettle();
-            check(modeChoiceFixture->selected.Get() == 1U && modeChoiceFixture->changes == 1,
-                "the whole radio row remains clickable and selects once");
+            check(modeChoiceFixture->selected.Get() == 1U && modeChoiceFixture->changes == 1 &&
+                  choice("Rule").One().checked == huxerui::SemanticCheckedState::Unchecked &&
+                  choice("Global").One().checked == huxerui::SemanticCheckedState::Checked,
+                  "tapping the right edge activates the whole row and moves the checked state once");
+            choice("Global").PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}});
+            check(modeChoiceFixture->changes == 1, "activating the checked mode does not repeat the command");
+            choice("Direct").PerformSemanticAction({huxerui::SemanticActionKind::Focus, {}});
+            ui.PressKey(huxerui::Key::Space); ui.PumpAndSettle();
+            check(modeChoiceFixture->selected.Get() == 2U && modeChoiceFixture->changes == 2,
+                  "keyboard activation selects the focused mode row");
             modeChoiceFixture->enabled = false; ui.PumpAndSettle();
-            const auto disabled = ui.Find(UiSelector::Key("home-mode-2")).One().bounds;
-            ui.TapAt({disabled.x + 40.0F, disabled.y + disabled.height * 0.5F}, {.device_kind = device});
+            ui.TapAt({bounds.x + 40.0F, bounds.y + bounds.height * 0.5F}, {.device_kind = device});
             ui.PumpAndSettle();
-            check(modeChoiceFixture->selected.Get() == 1U && modeChoiceFixture->changes == 1,
-                "busy mode controls reject a new selection");
+            check(modeChoiceFixture->selected.Get() == 2U && modeChoiceFixture->changes == 2 &&
+                  !choice("Global").One().enabled, "disabled mode rows reject a new selection");
         }
     }
 }
@@ -9791,6 +9912,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--page-search") {
         try {
             testPageSearchToolbar();
+            testPageSearchNavigation();
             testSearchToolbarIconHover();
             testSearchFocusOutline();
         } catch (const std::exception& error) {
@@ -10118,6 +10240,7 @@ int main(int argc, char** argv) {
     testSearchFocusOutline();
     testSectionTabBodyInsets();
     testPageSearchToolbar();
+    testPageSearchNavigation();
     testSearchToolbarIconHover();
     testResponsiveAnchorMount();
     testCompactPageBottom();

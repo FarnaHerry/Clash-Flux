@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "app_resources.h"
 #include "ui.h"
 #include "scroll_area.h"
 
@@ -79,6 +80,16 @@ inline huxerui::View PageTitleText(const huxerui::ThemeSpec& theme,
         theme.colors.on_surface}).Key("page-title");
 }
 
+inline huxerui::View PageBackButton(std::function<void()> onBack) {
+    return huxerui::Scope([onBack = std::move(onBack)] {
+        const auto label = Localized("返回上一页");
+        auto style = huxerui::UseEnvironment<huxerui::IconButtonStyle>();
+        style.corner_radius = style.state_layer_size / 2.0F;
+        return huxerui::ProvideEnvironment(style, huxerui::IconButton(app::images::arrow_back, label)
+            .With(huxerui::Tooltip(label)).OnClick(onBack).Key("page-back"));
+    });
+}
+
 inline huxerui::View PageHeaderLayout(const huxerui::ThemeSpec& theme,
     huxerui::View title, huxerui::View actions, bool stackedActions) {
     if (!title) {
@@ -123,11 +134,23 @@ inline huxerui::View DesktopPageTitleContent(huxerui::View title, huxerui::View 
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
+struct CompactSearchHeaderLeading {
+    std::shared_ptr<const huxerui::View> content;
+    static CompactSearchHeaderLeading Default() { return {}; }
+    bool operator==(const CompactSearchHeaderLeading&) const = default;
+};
+
 inline huxerui::View SearchPageHeader(const huxerui::ThemeSpec& theme,
     huxerui::View leading, huxerui::View toolbar) {
+    toolbar = std::move(toolbar).With(huxerui::Grow(1.0F)).Key("page-header-search");
     std::vector<huxerui::View> children;
-    if (leading) children.push_back(std::move(leading));
-    children.push_back(std::move(toolbar).With(huxerui::Grow(1.0F)).Key("page-header-search"));
+    if (leading && huxerui::UseViewportClass() == huxerui::ViewportClass::Compact) {
+        toolbar = huxerui::ProvideEnvironment(
+            CompactSearchHeaderLeading{std::make_shared<const huxerui::View>(std::move(leading))}, toolbar);
+    } else if (leading) {
+        children.push_back(leading);
+    }
+    children.push_back(toolbar);
     return huxerui::Row(std::move(children)).With(huxerui::Frame{.height = kPageHeaderHeight},
            huxerui::Spacing(theme.spacing.small),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))

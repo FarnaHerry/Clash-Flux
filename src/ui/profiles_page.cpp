@@ -95,8 +95,7 @@ struct ProfileReorderSession {
     // 当前选中的类型分区标签（remote/local/pptp/…）；无效或为空时
     // 回落到第一个有订阅的类型。
     auto activeType = huxerui::UseState<std::string>("");
-    auto profileSearch = huxerui::UseState(huxerui::TextEditingValue{});
-    auto searchExpanded = huxerui::UseState(false);
+    const auto [profileSearch, searchExpanded] = UsePageSearch(active);
     auto sectionMotion = UseSectionTabMotion();
     // ---- 新建订阅弹窗 ----
     auto newName = huxerui::UseState(huxerui::TextEditingValue{""});

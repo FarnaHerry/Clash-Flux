@@ -1,5 +1,46 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-22 订阅卡片紧凑排布
+
+- 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。宽屏卡片从 180pt 收到 152pt，Compact 从 108pt 收到 104pt。省去空描述与整行缺失的流量、到期信息，实际卡片、拖动预览与骨架共用相应尺寸。
+- Linux 主目标和 `test_page_transition` 构建、`./run.sh --version`（v0.3.127）、`git diff --check`、`test_page_transition --profile-cards`、CTest `page_transition` 和 `ui_resources` 通过。隔离原生窗口在 390pt 和 960pt 核对了完整及缺失字段的卡片、PPTP 卡片和宽屏拖动预览。
+- Android `./gradlew :app:assembleDebug --max-workers=3` 通过。Android 实机与 Windows PPTP 单会话提示的实际显示尚待验证。
+
+## 2026-11-22 应用进度条加厚
+
+- 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。应用主题的通用横向轨道从 4pt 增至 5pt，首页和订阅卡片的配额条与订阅加载占位共用 4pt 高度。
+- Linux 主目标和 `test_page_transition` 构建、`./run.sh --version`（v0.3.127）、`git diff --check`、`--profile-cards` 和 CTest `page_transition` / `ui_resources` 通过。回归检查诊断进度条、订阅卡片及占位尺寸。Linux 原生隔离夹具调用生产样式和配额控件，在 1× 缩放下测得 5px 和 4px。
+- Android `./gradlew :app:assembleDebug --max-workers=3` 通过，实机显示尚待验证。
+
+## 2026-11-22 网站测试入口图标简化
+
+- 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。宽屏侧栏和窄屏「更多」共用圆角窗口与短波形图标。
+- Linux 主目标构建、`./run.sh --version`（v0.3.127）、`git diff --check`、`test_page_transition --website-tests` 和 CTest `page_transition` / `ui_resources` 通过。隔离原生窗口核对了 390pt 设置入口及 960pt 侧栏的实际显示。Android `./gradlew :app:assembleDebug --max-workers=3` 通过，实机显示尚待验证。
+
+## 2026-11-22 首页出站模式独立圆角选项
+
+- 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。规则、全局、直连纵向排列，每项独立绘制圆角底色并裁切反馈和命中范围，当前项使用强调色文字。
+- Linux 的主目标和 `test_page_transition` 构建、`./run.sh --version`（v0.3.127）、`git diff --check`、`--accent-roles`、`--home-grid` 和 CTest `page_transition` / `ui_resources` 通过。回归覆盖行间距、圆角外点击、整行反馈和单选切换。390pt 隔离原生窗口核对了各项独立圆角、悬停形状和行尾切换。
+- Android `./gradlew :app:assembleDebug --max-workers=3` 通过。Android 实机交互尚待验证。
+
+## 2026-11-22 首页出站模式整行选择
+
+- 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。规则、全局和直连各占一行，整行接收点击并绘制反馈，当前项使用主题底色标记。回归覆盖深浅主题、鼠标和触摸行尾点击、键盘激活、无障碍单选状态及禁用态。
+- Linux Debug 的主目标和 `test_page_transition` 构建、`./run.sh --version`（v0.3.127）、`git diff --check`、`test_page_transition --accent-roles`、`--home-grid` 和 CTest `page_transition` / `ui_resources` 通过。隔离原生窗口在 390pt 验证了行尾切换，放宽到 960pt 后仍显示同一选中项。
+- Android `./gradlew :app:assembleDebug --max-workers=3` 通过，生成 arm64-v8a Debug APK。Android 实机交互尚待验证。
+
+## 2026-11-22 窄屏二级页全宽搜索与圆形返回反馈
+
+- 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。页头返回按钮使用圆形状态层。Compact 连接和日志页展开搜索时，胶囊使用含返回槽位在内的整行宽度，收起搜索后恢复返回按钮。
+- Linux Debug 的主目标和 `test_page_transition` 构建、`./run.sh --version`（v0.3.127）、`git diff --check`、`test_page_transition --page-search`、`--proxy-speed-shutter` 和 CTest `page_transition` / `ui_resources` 通过。搜索回归覆盖 320pt 二级页的实际绘制宽度、圆形悬停、覆盖后点击及提示失效、宽窄往返和收起恢复。
+- Linux 原生 390pt 隔离窗口核对日志、连接搜索的全宽展示及日志页圆形悬停、输入、覆盖原返回区域和收起后返回。Android `./gradlew :app:assembleDebug --max-workers=3` 通过，生成 arm64-v8a Debug APK。Android 实机交互尚待验证。
+
+## 2026-11-22 切页重置搜索状态
+
+- 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。离开订阅、代理、连接或日志的一级页面时清空搜索词并收起胶囊。回归使用生产工具栏和 Pager，在 390pt 和 960pt 下验证输入后切页、展开动画中快速切回，以及其它页面状态保留。
+- Linux Debug 下 `cmake --build build --target clash-flux test_page_transition --parallel 5`、`./run.sh --version`（v0.3.127）、`git diff --check`、`test_page_transition --page-search`、`--proxy-speed-shutter` 和 CTest `page_transition` / `ui_resources` 通过。隔离的 Linux 原生 390pt 窗口验证了订阅页输入搜索词、切到首页和返回后恢复放大镜。
+- Android `./gradlew :app:assembleDebug --max-workers=4` 通过，生成 arm64-v8a Debug APK。系统软键盘行为尚待 Android 真机验证。
+
 ## 2026-11-22 桌面一级侧栏黑白反馈
 
 - 基于 Clash-Flux `0bdaa6e` 工作区与 HuxerUI `b88c4d1f`。桌面宽屏一级侧栏的图标、选中底板和交互反馈在浅色模式用黑色，深色模式用白色，以透明度区分状态。键盘焦点的颜色覆盖作用于侧栏。

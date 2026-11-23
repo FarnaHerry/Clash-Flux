@@ -302,8 +302,7 @@ void OpenConnectionDetail(std::shared_ptr<SectionPickerLayers> layers, bool wide
     auto totalDown = huxerui::UseState<std::int64_t>(0);
     auto streamOpen = huxerui::UseState(false);
     auto loaded = huxerui::UseState(false);
-    auto searchValue = huxerui::UseState(huxerui::TextEditingValue{""});
-    auto searchExpanded = huxerui::UseState(false);
+    const auto [searchValue, searchExpanded] = UsePageSearch(active);
     const auto scroll = huxerui::UseScrollController();
 
     huxerui::Lifecycle(
@@ -685,9 +684,7 @@ huxerui::XYChartData ConnectionChartData(
         .With(huxerui::Enabled(!ended.Get()))
         .OnClick(confirmClose);
     if (windowTitle) {
-        huxerui::View back = huxerui::IconButton(
-            app::images::arrow_back, Localized("返回上一页"))
-            .OnClick(onBack);
+        huxerui::View back = PageBackButton(onBack);
         return PageScaffold(Localized("连接详情"), closeAction, body,
                             true, false, true, std::nullopt, back)
             .On<huxerui::ViewEvents::BackRequested>(onBack);

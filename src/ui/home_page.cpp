@@ -481,8 +481,7 @@ huxerui::XYChartData BuildTrafficChartData(
         std::move(chart), ResolveIslandTheme(theme).island_padding);
 }
 
-// 出站模式：纵向单选列表（规则/全局/直连），排布参考 FlClash；单选圈、配色
-// 与圆角沿用主题。点击乐观更新，失败做目标值校验后回落。
+// 出站模式：规则、全局、直连各占一行。点击乐观更新，失败做目标值校验后回落。
 [[huxerui::composable]] huxerui::View HomeModeCard() {
     const auto control = UseCoreControl();
     const std::size_t selected = HomeModeIndex(control.Mode());

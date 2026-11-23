@@ -56,14 +56,17 @@
 - 设置页所有分组标题位于卡片外，与卡片内第一列图标的左边缘对齐。`SettingsSectionCard` 统一外部标题、标题间距和零内边距卡片，内容通过 `SettingsRowInsets` 下发水平留白、10pt 行内垂直留白与 48pt 最小行高；首行贴顶、末行贴底，无组级上下空白带，由整组卡片裁切四角。单项组四角同样裁切，圆角外点击不命中。主题、语言、入站端口、运行诊断及「更多」整行入口承接全宽点击和 Indication；开关、单选、下拉框、复制及维护按钮保留各自控件的操作语义。共享 SettingRow/SettingSwitchRow 在表单中的默认 Insets 为零，不改变订阅表单几何。
 
 - Toast 统一使用窗口级 `toast_stack.h` / `UseFluxToast()`，在 Notification 层复用当前 `ToastStyle`；同时最多 3 条，底部居中纵向排列、间距 8pt。第 4 条淘汰最早一条，保留旧条目的位置直到退场完成再补入新条目；突发消息只保留最新 3 条目标，不积累旧提示。每条可点击、触摸或键盘激活关闭，无全屏遮罩或焦点陷阱，空白区域可操作原页面。计时由窗口任务域从实际入列时开始，到期/主动关闭走同一退场路径：下移 8pt、缩到 98%、200ms EaseIn 淡出，完成后才卸载；reduced motion 直接定位。窗口级订阅错误/更新失败与页面消息共用同一个栈；关窗清除定时器和待显示条目，旧句柄不能向重建窗口投递。通过公开 LayerController、主题和 Transition 组合实现应用的有界可交互通知策略，不修改框架。
-- MD3 反馈颜色在强调色写入后调用 `ApplyFluxInteractionTheme` 重建；`theme_colors.h` 的 `ResolveFluxIndication` 和 `kInteraction*Opacity` 统一拥有颜色与透明度（hover 8%，focus/press/ripple 12%）。普通反馈从 on_surface 派生，实心主按钮用 on_primary 维持对比；图标按钮、Chip、Tabs 的拥有型 Indication 经 `FluxInteractionStyles` 统一替换，保留 Material 几何。单选、复选、开关的选中颜色继续由 Material 从当前主题 tokens 生成。首页规则/全局/直连使用 `HomeModeChoices` 的框架 RadioButton，与语言单选同一交互；整行可点击，反馈集中在 32pt 圆形状态层，控件本体 18pt，不再手绘整行 hover/press。
+- MD3 反馈颜色在强调色写入后调用 `ApplyFluxInteractionTheme` 重建；`theme_colors.h` 的 `ResolveFluxIndication` 和 `kInteraction*Opacity` 统一拥有颜色与透明度（hover 8%，focus/press/ripple 12%）。普通反馈从 on_surface 派生，实心主按钮用 on_primary 维持对比；图标按钮、Chip、Tabs 的拥有型 Indication 经 `FluxInteractionStyles` 统一替换，保留 Material 几何。单选、复选、开关的选中颜色继续由 Material 从当前主题 tokens 生成。
 
 - 订阅、代理、连接和日志共用 `PageSearchToolbar`。搜索收起时显示放大镜，操作按钮紧随其后。
   工具栏图标按钮和输入框内的叉号共用居中的 28pt 圆形状态层，沿用主题反馈色和原有点击范围。
   Compact 左侧显示页名，放大镜和操作按钮整体右对齐。展开搜索时占满可用工具栏宽度，
-  页名和操作按钮淡出并从无障碍树隐藏，操作按钮退出点击与键盘交互，返回入口保留。
+  页名和操作按钮淡出并从无障碍树隐藏，操作按钮退出点击与键盘交互。
+  Compact 二级页展开搜索时收起返回按钮，胶囊铺过返回按钮所在区域。收起搜索后恢复返回按钮。
+  页头返回按钮复用圆形状态层，命中范围由图标按钮样式提供。
   Medium/Expanded 的放大镜位于右上角动作组最左端，向左展开至多 360pt，右侧动作位置和交互保持不变。
   点击输入框内的叉号或按 Esc 清除筛选并恢复放大镜。输入自动聚焦，跨宽窄切换保留展开状态和搜索词。
+  切换一级页面时清空搜索词并收起胶囊。返回原页时显示放大镜，再次打开搜索才聚焦输入框。
   工具栏高度固定，Compact 搜索高 48pt。展开 180ms，收起 140ms，Compact 页名与动作在展开前 80ms 淡出、收起后 80ms 淡入。
   放大镜与胶囊共用工具栏的保留绘制，展开从按钮中心起步，两侧以相同速度延伸至各自的最终边缘。
   宽屏右侧止于操作按钮前；放大镜滑到输入框内的前端，后 80ms 淡入原尺寸的输入内容和叉号。
@@ -341,6 +344,7 @@ CodeEditor 通过 `EditorOptions::settings.scrollbar.mode` 采用窄屏 never / 
 
 ## 首页卡片
 
+- `HomeModeChoices` 将规则、全局、直连排成三个独立的圆角矩形。每项复用 `SettingsActionRow` 的整行命中和交互反馈，并使用 `theme.shapes.small` 圆角。行间距取 `theme.spacing.extra_small`。普通项用 `surface_container_high` 底色，当前项用 `secondary_container` 底色和 `primary` 文字保留清晰的单选状态。
 - 下载和上传卡并排显示，各自用对应的向下或向上箭头、实时速率和独立标度的历史曲线。速率未就绪或为零时显示 `0B/s`。各方向的历史中有正值时绘制曲线，空历史或全零历史的绘图区留空。流量统计卡的累计量与占比缺省为 `0B` 和 `0%`。
 - 首页和连接详情的速率图共用 Lib-Charts 的单调插值与圆角描边。曲线经过采样点，相邻采样之间的数值保持在两点的范围内，提示和语义读数使用原始采样值。
 - **独立布局 · 首页上传和下载图表**。`HomeTrafficCardLayout` 将曲线绘制范围扩展到卡片左右边缘和底边，补偿隐藏坐标轴后的 Lib-Charts 绘图区留白。曲线显示或隐藏时，图标、标题和速率文字沿用原内边距与位置。整卡仍由 `HomeCardSurface` 裁切圆角并提供悬停和翻面。
@@ -523,9 +527,13 @@ Compact 胶囊导航共用 `CompactNavigationDock` 悬浮于页面内容之上�
 
 ## 圆角阶梯与密集卡片
 
-订阅卡片在 Compact 使用 `profile_card_layout.h` 的 `kCompactProfileCardHeight`（108pt），宽屏卡片高度 180pt。宽窄屏卡间距统一为 12pt，Compact 正文左右各使用同一份 12pt 间距。订阅卡片、拖动预览和放置描边共用 12pt 圆角。宽屏地址行只显示域名或 IP 及显式端口（IPv6 保留方括号），省略协议、用户信息、路径、查询参数和片段，卡片与拖动预览共用格式化；异常地址与空描述统一保留空白占位槽（`FittedSingleLineLabel("")` / `PlaceholderText`，带 `value-placeholder` 语义，不显示「—」），原始订阅地址保持原样用于编辑/下载。实际卡片、VirtualGrid 行高估算与拖动预览共用 `ProfileCardHeight`；预览宽度取来源槽位。窄屏保留名称、进度条下方左对齐的最后更新相对时间（如「更新于 5分钟前」「更新于 2小时前」，缺失显示「未拉取」）、简写参与状态、更多菜单、流量/到期文字与 3pt 进度条，隐藏链接、刷新按钮、描述和自动更新频率；更新入口仍在共用菜单，忙态用小型指示器表达。宽窄卡片的更新时间均在进度条下方左对齐，独占底部 16pt 槽位，拖动预览和骨架同步；宽屏保留参与状态，移除自动更新间隔提示，自动更新设置与调度照常生效。流量和到期文字各占固定槽位，缺失留空，无流量总额时进度条按宽屏逻辑满格。名称按分配宽度省略并保留完整语义/提示，空文字不创建 Tooltip。PPTP 同高，保留服务器、连接状态与开关；路由在编辑表单查看。宽窄切换保留平台能力、菜单、拖放与虚拟滚动。
+订阅卡片在 Compact 高 104pt，宽屏高 152pt。实际卡片、拖动预览、骨架和 VirtualGrid 行高估算共用 `ProfileCardHeight`，预览宽度取来源槽位。卡间距、Compact 正文左右留白、卡片和放置描边圆角均为 12pt。卡片内边距为横向 10pt、纵向 8pt，相邻内容行间距为 4pt。
 
-订阅首份快照未就绪时使用 `ProfileLoadingSkeleton`，与实际列表共用 `ProfileGridColumns`、`ProfileCardHeight`、间距及圆角。桌面宽屏以 340pt 最小列宽自适应，Compact 及手机保持单列。骨架按实际卡片的 10pt/8pt 内边距组织标题、流量和进度条，Compact 保留悬浮导航尾部避让；加载与就绪状态沿用同一搜索标题和页面骨架，不显示临时空状态。
+宽屏显示名称、刷新、地址、可选描述、参与状态、配额和更新时间。地址只显示域名或 IP 及显式端口（IPv6 保留方括号），省略协议、用户信息、路径、查询参数和片段，原始订阅地址继续用于编辑和下载。无法解析的地址使用带 `value-placeholder` 语义的空白槽。空描述不增加一行，状态与配额相邻排布。PPTP 保留服务器、路由摘要、连接状态与开关，Windows 展示单会话提示。
+
+Compact 显示名称、简写参与状态、更多菜单、配额和更新时间。更多菜单提供更新，忙态用小型指示器表达。宽窄屏都在 4pt 进度条下方左对齐显示最后更新相对时间（如「更新于 5分钟前」，缺失时显示「未拉取」）或资源准备状态。流量、到期各占一侧，均缺失时省去整行，无流量总额时进度条满格。过长的单行标签按分配宽度省略，完整文本可通过提示查看。宽窄切换保留平台能力、菜单、拖放和虚拟滚动。
+
+订阅首份快照未就绪时使用 `ProfileLoadingSkeleton`，复用真实网格的 `ProfileGridColumns`、行高、行间距及圆角。桌面宽屏以 340pt 最小列宽自适应，Compact 及手机保持单列。骨架按可用字段齐全时的行高组织标题、文字和配额条，Compact 保留悬浮导航尾部避让。加载与就绪状态沿用同一搜索标题和页面骨架。
 
 订阅响应头 `subscription-userinfo` 明确包含空的 `expire=`、`expire=0` 或 `expire=-1` 时，使用现有有符号 `expire_at` 列的 -1 表示长期有效；宽窄卡片及拖动预览在到期槽显示「长期有效」。正数仍显示到期日期；缺失或畸形值保持 0（未知），不推断永久有效。旧记录在下一次成功刷新时识别，保留现有数据、文件和 SQLite schema，不把历史 0 批量改成长期有效。
 
@@ -590,6 +598,7 @@ msg id 排序）。**新增或修改界面文案必须同步这三张表**：漏
 页面从 `UseTheme()` 读取角色色；阴影统一通过 `ThemeShadowColor(theme, opacity)`
 读取当前主题 scrim 色相，删除按钮文字用 `OnErrorColor(theme)`，危险按钮继承当前 ButtonStyle。
 Logo 容器底色使用 surface，不再固定白色。页面代码不再直接写 RGB/白色/黑色。
+通用横向进度条使用 5pt 轨道和半轨道高度的圆角。首页及订阅卡片共用 4pt 配额条，加载占位使用同一高度。
 
 分享二维码使用 Lib-QRCode 视图的固定白底黑码，以保持深浅主题下的扫描对比度。
 分享弹窗采用模块对齐的紧凑尺寸，去除额外画布/卡片留白并保留四模块静区，见[二维码分享布局](qr-scanning.md#使用与生命周期)。

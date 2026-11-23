@@ -11,13 +11,16 @@
 namespace clashflux::ui {
 
 inline constexpr float kCardWidth = 340.0F;
-inline constexpr float kCardHeight = 180.0F;
-inline constexpr float kCompactProfileCardHeight = 108.0F;
+inline constexpr float kWideProfileCardHeight = 152.0F;
+inline constexpr float kCompactProfileCardHeight = 104.0F;
+inline constexpr float kWideProfileCardHeadingHeight = 28.0F;
+inline constexpr float kProfileCardTextRowHeight = 16.0F;
 inline constexpr float kProfileCardRadius = 12.0F;
 inline constexpr float kProfileCardSpacing = 12.0F;
+inline constexpr float kProfileQuotaBarHeight = 4.0F;
 
 constexpr float ProfileCardHeight(bool compact) {
-    return compact ? kCompactProfileCardHeight : kCardHeight;
+    return compact ? kCompactProfileCardHeight : kWideProfileCardHeight;
 }
 
 inline huxerui::GridColumns ProfileGridColumns(bool compact, bool groupByType) {
@@ -46,27 +49,47 @@ inline huxerui::View ProfileQuotaBar(float fraction) {
     return huxerui::Scope([fraction] {
         const auto& colors = huxerui::UseTheme().colors;
         auto style = huxerui::UseEnvironment<huxerui::ProgressBarStyle>();
+        style.height = kProfileQuotaBarHeight;
         style.indicator_color = colors.secondary;
         style.track_color = colors.secondary_container;
-        return huxerui::ProvideEnvironment(style,
-            huxerui::ProgressBar(fraction).With(huxerui::Frame{.height = 3.0F}));
+        return huxerui::ProvideEnvironment(style, huxerui::ProgressBar(fraction));
     });
 }
 
-// Empty labels keep their slots. Unknown quota retains the wide card's full bar.
-inline huxerui::View CompactProfileTrafficContent(std::string traffic, std::string expiry,
+inline huxerui::View ProfileCardRows(std::vector<huxerui::View> rows) {
+    return huxerui::Column(std::move(rows)).With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+inline huxerui::View ProfileCardTrafficContent(std::string traffic, std::string expiry,
     float progress, huxerui::Color muted) {
+    huxerui::View bar = ProfileQuotaBar(progress).Key("profile-traffic-bar");
+    if (traffic.empty() && expiry.empty()) return bar;
+
+    // When one value is present, keep it on its own side of the row.
     const huxerui::TextStyle caption{huxerui::Font::System(font_size::kCaption), muted};
     return huxerui::Column {
       huxerui::Row {
         FittedSingleLineLabel(traffic, caption).With(huxerui::Grow(1.0F)).Key("profile-traffic-label"),
         FittedSingleLineLabel(expiry, caption, huxerui::TextAlign::Trailing)
             .With(huxerui::Grow(1.0F)).Key("profile-expiry-label"),
-      }.With(huxerui::Frame{.height = 20.0F}, huxerui::Spacing(6.0F),
+      }.With(huxerui::Frame{.height = kProfileCardTextRowHeight}, huxerui::Spacing(6.0F),
              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
-      ProfileQuotaBar(progress).Key("profile-traffic-bar"),
+      bar,
     }.With(huxerui::Spacing(4.0F), huxerui::Grow(0.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+}
+
+inline huxerui::View WideProfileCardHeading(std::string name, huxerui::Color foreground,
+    huxerui::View drag, huxerui::View refresh) {
+    return huxerui::Row {
+      drag,
+      FittedSingleLineLabel(name, huxerui::TextStyle{
+          huxerui::Font::System(font_size::kBody).WithWeight(huxerui::FontWeight::SemiBold), foreground})
+          .With(huxerui::Grow(1.0F)),
+      refresh,
+    }.With(huxerui::Frame{.height = kWideProfileCardHeadingHeight}, huxerui::Spacing(6.0F),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
 inline huxerui::View CompactProfileCardContent(std::string name, std::string status,
@@ -89,9 +112,8 @@ inline huxerui::View CompactProfileCardContent(std::string name, std::string sta
     };
     if (!updated.empty()) rows.push_back(FittedSingleLineLabel(updated, huxerui::TextStyle{
         huxerui::Font::System(font_size::kCaption), colors.muted})
-        .With(huxerui::Frame{.height = 16.0F}).Key("profile-compact-updated"));
-    return huxerui::Column(rows).With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        .With(huxerui::Frame{.height = kProfileCardTextRowHeight}).Key("profile-compact-updated"));
+    return ProfileCardRows(std::move(rows));
 }
 
 } // namespace clashflux::ui

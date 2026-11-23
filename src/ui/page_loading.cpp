@@ -186,29 +186,30 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
             huxerui::Row {
               SkeletonBlock(shimmer, 140.0F, 16.0F).With(huxerui::Grow(1.0F)),
               SkeletonBlock(shimmer, 20.0F, 20.0F),
-            }.With(huxerui::Frame{.height = CompactProfileCardHeadingHeight(false)},
+            }.With(huxerui::Frame{.height = compact
+                ? CompactProfileCardHeadingHeight(false) : kWideProfileCardHeadingHeight},
                 huxerui::Spacing(12.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         };
         if (!compact) {
-            rows.push_back(SkeletonBlock(shimmer, 180.0F, 12.0F));
-            rows.push_back(SkeletonBlock(shimmer, 112.0F, 12.0F));
-            rows.push_back(huxerui::Spacer());
+            for (float width : {180.0F, 112.0F, 64.0F})
+                rows.push_back(huxerui::Row {
+                  SkeletonBlock(shimmer, width, 12.0F),
+                }.With(huxerui::Frame{.height = kProfileCardTextRowHeight},
+                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
         }
         rows.push_back(huxerui::Row {
           SkeletonBlock(shimmer, 112.0F, 12.0F).With(huxerui::Grow(1.0F)),
           SkeletonBlock(shimmer, 72.0F, 12.0F),
-        }.With(huxerui::Frame{.height = 20.0F}, huxerui::Spacing(6.0F),
+        }.With(huxerui::Frame{.height = kProfileCardTextRowHeight}, huxerui::Spacing(6.0F),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
         rows.push_back(huxerui::Row {
-          SkeletonBlock(shimmer, 0.0F, 3.0F).With(huxerui::Grow(1.0F)),
-        });
+          SkeletonBlock(shimmer, 0.0F, kProfileQuotaBarHeight).With(huxerui::Grow(1.0F)),
+        }.Key("profile-loading-quota-bar"));
         rows.push_back(huxerui::Row {
           SkeletonBlock(shimmer, 96.0F, 11.0F),
-        }.With(huxerui::Frame{.height = 16.0F},
+        }.With(huxerui::Frame{.height = kProfileCardTextRowHeight},
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
-        return SkeletonCard(huxerui::Column(rows).With(
-            huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
-            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        return SkeletonCard(ProfileCardRows(std::move(rows)),
             theme, ProfileCardHeight(compact), huxerui::EdgeInsets::Symmetric(10.0F, 8.0F), kProfileCardRadius)
             .Key("profile-loading-item-" + std::to_string(index));
     };

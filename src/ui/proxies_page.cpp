@@ -510,8 +510,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     auto loaded = huxerui::UseState(proxiesModel->snapshot.Get().loaded);
     auto mode = huxerui::UseState<std::string>("rule");
     auto degradedGroups = huxerui::UseState<std::set<std::string>>({});
-    auto proxySearch = huxerui::UseState(huxerui::TextEditingValue{});
-    auto searchExpanded = huxerui::UseState(false);
+    const auto [proxySearch, searchExpanded] = UsePageSearch(active);
     auto sectionMotion = UseSectionTabMotion();
     const auto testTasks = huxerui::UseApplicationTaskScope();
     const auto testModel = proxiesModel->tests;

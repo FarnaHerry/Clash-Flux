@@ -80,22 +80,6 @@ void OpenProfileEditInfo(std::int64_t id, bool compact,
     show_edit_info(id);
 }
 
-// 单行截断（UTF-8 代码点安全）：超限截断加省略号。Text 默认按词换行且无
-// 省略号能力，长 URL/名称会把卡片撑高——网格里统一截断保证卡片等高。
-std::string truncateOneLine(const std::string& s, std::size_t maxCodePoints) {
-    std::size_t count = 0;
-    std::size_t i = 0;
-    while (i < s.size()) {
-        if (count == maxCodePoints) return s.substr(0, i) + "…";
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        const std::size_t len =
-            c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
-        i += std::min(len, s.size() - i);
-        ++count;
-    }
-    return s;
-}
-
 [[huxerui::composable]] huxerui::View QrsSequenceView(
     std::shared_ptr<const std::vector<std::string>> frames,
     huxerui::qrcode::Symbol first, FluxToastHandle toast) {

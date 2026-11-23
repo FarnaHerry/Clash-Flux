@@ -106,8 +106,7 @@ struct LogFeedBuffer {
     const auto feed = huxerui::UseState(std::make_shared<LogFeedBuffer>()).Get();
     auto revision = huxerui::UseState<std::uint64_t>(0);
     auto filter = huxerui::UseState<std::size_t>(0);
-    auto logSearch = huxerui::UseState(huxerui::TextEditingValue{});
-    auto searchExpanded = huxerui::UseState(false);
+    const auto [logSearch, searchExpanded] = UsePageSearch(active);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     auto textWidthPx = huxerui::UseState<int>(0);
     auto postedWidthPx = huxerui::UseState(std::make_shared<int>(0)).Get();

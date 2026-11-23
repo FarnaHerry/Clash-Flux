@@ -272,19 +272,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     menus.item_indication = selectIndication;
     definition.Set(menus);
 
-    // 进度条样式：去掉 Material 3 自带的末端停止点（stop_indicator_size = 4pt）
-    // 与轨道间隔（track_gap = 4pt），恢复连续平滑的线性进度条呈现。
-    huxerui::ProgressBarStyle progressBar;
-    progressBar.track_color = spec.colors.secondary_container;
-    progressBar.indicator_color = spec.colors.primary;
-    progressBar.corner_radius = 2.0F;
-    progressBar.track_gap = 0.0F;
-    progressBar.stop_indicator_size = 0.0F;
-    progressBar.indeterminate_motion =
-        huxerui::ProgressBarIndeterminateMotion::Segmented;
-    progressBar.indeterminate_fraction = 0.35F;
-    progressBar.animation_duration = spec.motion.reduced_motion ? 0.0 : 1.75;
-    definition.Set(progressBar);
+    definition.Set(ResolveFluxProgressBarStyle(spec));
 
     // 桌面侧栏沿用 NavigationPane 的布局和交互样式。
     huxerui::NavigationBarStyle navigationBar =

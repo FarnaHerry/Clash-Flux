@@ -528,6 +528,12 @@ huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     bool scrollToContentEdges = true,
                                     std::optional<float> contentSpacing = std::nullopt,
                                     huxerui::View searchToolbar = {});
+struct PageSearchState {
+    huxerui::State<huxerui::TextEditingValue> value;
+    huxerui::State<bool> expanded;
+};
+
+PageSearchState UsePageSearch(bool active);
 huxerui::View PageSearchToolbar(huxerui::State<huxerui::TextEditingValue> value,
                                 huxerui::State<bool> expanded,
                                 huxerui::StringVariant title,

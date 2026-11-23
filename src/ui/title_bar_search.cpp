@@ -276,6 +276,20 @@ private:
 
 } // namespace
 
+PageSearchState UsePageSearch(bool active) {
+    const auto value = huxerui::UseState(huxerui::TextEditingValue{});
+    const auto expanded = huxerui::UseState(false);
+    // The Pager keeps the page scope mounted while its toolbar is removed.
+    huxerui::Lifecycle([active, value, expanded] {
+        if (!active) {
+            value = huxerui::TextEditingValue{};
+            expanded = false;
+        }
+        return [] {};
+    }, active);
+    return {value, expanded};
+}
+
 [[huxerui::composable]] huxerui::View PageSearchToolbar(
     huxerui::State<huxerui::TextEditingValue> value, huxerui::State<bool> expanded,
     huxerui::StringVariant title, huxerui::StringVariant placeholder, huxerui::View actions) {
@@ -287,6 +301,7 @@ private:
     huxerui::ThemeDefinition toolbarTheme;
     toolbarTheme.Set(icons);
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+    const auto& leading = huxerui::UseEnvironment<CompactSearchHeaderLeading>().content;
     const bool desktopTitle = kPageTitlesInWindow && !compact;
     const bool open = expanded.Get();
     const bool animated = !theme.motion.reduced_motion &&
@@ -337,6 +352,8 @@ private:
     }
 
     const bool hideHeaderItems = compact && open;
+    const float hiddenLeadingWidth = hideHeaderItems && leading
+        ? std::max(icons.icon_size, icons.minimum_interactive_size) + theme.spacing.small : 0.0F;
     const auto headerMotion = animated && compact
         ? huxerui::AnimationSpec{huxerui::TweenSpec{kHeaderFadeSeconds, huxerui::Easing::Linear}}
         : huxerui::AnimationSpec{huxerui::SnapSpec{}};
@@ -351,8 +368,11 @@ private:
     const auto editorOpacity = huxerui::Opacity(huxerui::AnimateTo(open ? 1.0F : 0.0F, editorMotion,
         huxerui::AnimationPlayback{.delay = editorDelay}));
     huxerui::View toolbar = SearchToolbarLayout {
-      huxerui::Row {compact ? PageTitleText(theme, title) : huxerui::View{}}
-          .With(headerOpacity, visibility)
+      huxerui::Row {
+        leading && !hideHeaderItems ? *leading : huxerui::View{},
+        compact ? PageTitleText(theme, title) : huxerui::View{},
+      }.With(huxerui::Spacing(theme.spacing.small), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+             huxerui::Padding(huxerui::EdgeInsets{.left = hiddenLeadingWidth}), headerOpacity, visibility)
           .Key("page-search-title"),
       huxerui::Row {button}.With(huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))

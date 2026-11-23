@@ -258,7 +258,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         const auto action = FormHeaderAction(app::images::save, Localized(editing ? "保存" : "添加"), save,
             hex.has_value() && model->view.Get().ready);
         if (kPageTitlesInWindow && huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) {
-            const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页")).OnClick(close);
+            const auto back = PageBackButton(close);
             return PageScaffold(title, action, body, true, false, true, std::nullopt, back)
                 .On<huxerui::ViewEvents::BackRequested>(close);
         }
@@ -413,8 +413,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     }.With(huxerui::Spacing(theme.spacing.medium),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
     if (windowTitle) {
-        huxerui::View back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
-            .OnClick(onBack);
+        huxerui::View back = PageBackButton(onBack);
         return PageScaffold(Localized("主题"), huxerui::View{}, content,
                             true, false, true, std::nullopt, back)
             .On<huxerui::ViewEvents::BackRequested>(onBack);
@@ -660,7 +659,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto target = huxerui::UseState(huxerui::TextEditingValue{});
     const auto body = RuntimeDiagnosticsBody(target, onBack, true);
     if (kPageTitlesInWindow && huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) {
-        const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页")).OnClick(onBack);
+        const auto back = PageBackButton(onBack);
         return PageScaffold(Localized("运行诊断"), {}, body, true, false, true, std::nullopt, back)
             .On<huxerui::ViewEvents::BackRequested>(onBack);
     }
@@ -854,8 +853,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start)), scroll).Key("about-scroll");
     if (kPageTitlesInWindow &&
         huxerui::UseViewportClass() != huxerui::ViewportClass::Compact) {
-        const auto back = huxerui::IconButton(app::images::arrow_back, Localized("返回上一页"))
-            .OnClick(onBack);
+        const auto back = PageBackButton(onBack);
         return PageScaffold(Localized("关于"), {}, body, true, false, true,
             std::nullopt, back, {}, true, {}, true)
             .On<huxerui::ViewEvents::BackRequested>(onBack);
