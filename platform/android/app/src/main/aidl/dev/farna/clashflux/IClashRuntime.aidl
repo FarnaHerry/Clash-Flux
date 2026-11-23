@@ -14,4 +14,5 @@ interface IClashRuntime {
     boolean closeConnection(String id);
     boolean closeAllConnections();
     boolean stopRuntime();
+    boolean urlTestNode(String tag);
 }

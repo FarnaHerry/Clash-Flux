@@ -175,9 +175,9 @@ extern "C" bool clashflux_android_close_connection(const char*) noexcept;
 extern "C" bool clashflux_android_close_all_connections() noexcept;
 extern "C" bool clashflux_android_select_outbound(const char* group,
                                                     const char* name) noexcept;
-extern "C" bool clashflux_android_url_test(const char* group) noexcept;
+bool AndroidProxyUrlTest(const std::string& tag, bool group) noexcept;
 inline bool TriggerProxyGroupTest(const std::string& group) noexcept {
-    return clashflux_android_url_test(group.c_str());
+    return AndroidProxyUrlTest(group, true);
 }
 inline constexpr bool ProxyTestUsesNativeGroup() noexcept { return true; }
 #else

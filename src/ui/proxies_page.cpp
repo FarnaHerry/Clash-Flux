@@ -272,16 +272,38 @@ auto BindProxyTest(const std::shared_ptr<CoreModel>& coreModel, ProxyTestModel& 
     };
 }
 
-huxerui::Task<int> MeasureProxyDelay(const std::string& tag) {
-    co_return co_await RunOnTaskThread([tag] {
-        // Empty URL lets sing-box use its own default test URL (HTTPS
-        // www.gstatic.com/generate_204), matching CommandClient.urlTest and
-        // /proxies/{name}/delay without an explicit url parameter.
-        const auto result = store::coreStore().api().proxyDelay(tag, "", kProxyDelayTimeoutMs);
-        if (!result.ok) return 0;
-        const auto delay = wire::DecodeDelay(result.body);
-        return delay ? delay.value : 0;
-    });
+std::optional<std::pair<int, std::int64_t>> ReadProxyTestResult(
+    const ProxiesModel& model, const std::string& tag) {
+    const auto& snapshot = model.snapshot.Get();
+    if (snapshot.source != ProxiesSource::Live || !snapshot.proxies) return std::nullopt;
+    const auto node = snapshot.proxies->entries.find(tag);
+    if (node == snapshot.proxies->entries.end()) return std::nullopt;
+    return std::pair{node->second.delay, node->second.testTime};
+}
+
+template<class Valid>
+void RunSingleProxyProbe(huxerui::TaskScope tasks, const std::shared_ptr<ProxiesModel>& model,
+    const std::string& tag, const std::shared_ptr<ProxyProbe>& probe, Valid valid) {
+#if defined(__ANDROID__)
+    const auto measure = [model, probe, valid](const std::string& target) {
+        return MeasureNativeProxyDelay(target, probe, [](const std::string& node) {
+            return RunOnTaskThread([node] { return AndroidProxyUrlTest(node, false); });
+        }, [model](const std::string& node) {
+            return ReadProxyTestResult(*model, node);
+        }, valid);
+    };
+#else
+    const auto measure = [](const std::string& target) {
+        return RunOnTaskThread([target] {
+            // Let sing-box choose its default URL, as it does on Android.
+            const auto result = store::coreStore().api().proxyDelay(target, "", kProxyDelayTimeoutMs);
+            if (!result.ok) return 0;
+            const auto delay = wire::DecodeDelay(result.body);
+            return delay ? delay.value : 0;
+        });
+    };
+#endif
+    LaunchSingleProxyProbe(tasks, model->tests, tag, probe, measure, valid);
 }
 
 huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::string& group) {
@@ -317,15 +339,16 @@ struct ProxySyncCache {
     const ProxyNode& node, std::string groupName, std::string groupNow, float dotsWidth,
     huxerui::State<SelectionIntent> selectionIntent, bool selectable,
     huxerui::TaskScope appTasks, CoreControl control, FluxToastHandle toast,
-    std::shared_ptr<ProxyTestModel> tests, std::function<void()> onActivate) {
+    std::shared_ptr<ProxiesModel> proxiesModel, std::function<void()> onActivate) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const SelectionIntent pending = selectionIntent.Get();
     const bool selected = node.name == (pending.group == groupName ? pending.node : groupNow);
+    const auto& tests = proxiesModel->tests;
     static_cast<void>(tests->generation.Get()); // Rebind after a runtime-plan change.
     const auto entry = tests->Get(node.name, node.delay, node.timeout, node.urlTestTime);
     const auto probe = entry->value;
     huxerui::Lifecycle([entry, nodeDelay = node.delay, nodeTestTime = node.urlTestTime] {
-        if (!entry->value.Get().testing && nodeTestTime > 0 && nodeTestTime != entry->baselineTime.Get()) {
+        if (!entry->value.Get().testing && nodeTestTime > entry->baselineTime.Get()) {
             entry->value = ProbeState{nodeDelay > 0 ? nodeDelay : 0, nodeDelay <= 0, false};
             entry->baselineTime = nodeTestTime;
         }
@@ -348,14 +371,15 @@ struct ProxySyncCache {
             .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
     }
-    const auto startProbe = [appTasks, control, tests, tag = node.name, delay = node.delay,
+    const auto startProbe = [appTasks, control, proxiesModel, tag = node.name, delay = node.delay,
                              timeout = node.timeout, testTime = node.urlTestTime, toast] {
-        RunProxyTestWhenReady(control, tests, toast,
-                [appTasks, model = control.model, tests, tag, delay, timeout, testTime]() -> huxerui::Task<void> {
+        RunProxyTestWhenReady(control, proxiesModel->tests, toast,
+                [appTasks, model = control.model, proxiesModel, tag, delay, timeout, testTime]() -> huxerui::Task<void> {
+            const auto& tests = proxiesModel->tests;
             const auto valid = BindProxyTest(model, *tests);
             if (!valid()) co_return;
             const auto probe = tests->Get(tag, delay, timeout, testTime);
-            LaunchSingleProxyProbe(appTasks, tests, tag, probe, MeasureProxyDelay, valid);
+            RunSingleProxyProbe(appTasks, proxiesModel, tag, probe, valid);
             co_return;
         });
     };
@@ -369,7 +393,7 @@ struct ProxySyncCache {
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), detailColor}),
         delayView, dotsWidth, selected, node.displayName, std::move(onActivate),
         selectable ? SelectableTileInteraction::Selectable : SelectableTileInteraction::ReadOnly,
-        !node.isGroup && !ProxyTestUsesNativeGroup(), !node.isGroup && currentProbe.testing, startProbe);
+        !node.isGroup, !node.isGroup && currentProbe.testing, startProbe);
 }
 
 // 节点点击动作：**所有成员都只是"选中当前线路"**。成员本身是策略组时（订阅里
@@ -561,13 +585,8 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                     co_return;
                 }
                 const bool native = ProxyTestUsesNativeGroup();
-                const auto pollProbe = [proxiesModel](const std::string& tag)
-                    -> std::optional<std::pair<int, std::int64_t>> {
-                    const auto snapshot = proxiesModel->snapshot.Get().proxies;
-                    if (!snapshot) return std::nullopt;
-                    const auto node = snapshot->entries.find(tag);
-                    if (node == snapshot->entries.end()) return std::nullopt;
-                    return std::pair{node->second.delay, node->second.testTime};
+                const auto pollProbe = [proxiesModel](const std::string& tag) {
+                    return ReadProxyTestResult(*proxiesModel, tag);
                 };
                 if (native) {
                     LaunchNativeProxyProbeBatch(testTasks, testModel, std::move(targets), generation, valid,
@@ -745,7 +764,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
         huxerui::View grid = ScrollArea(PageVirtualGrid(
                                  nodeCount,
                                  [groupSnapshot, visibleNodes = std::move(visibleNodes),
-                                  tasks, testTasks, control, toast, testModel,
+                                  tasks, testTasks, control, toast,
                                   onSelectFailure, onSelectReadOnly,
                                   nodeCount, proxiesModel, dotsWidth,
                                   selectionIntent](std::size_t index)
@@ -760,7 +779,7 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                                      return NodeCard(
                                                 node, groupSnapshot->name, groupSnapshot->now, dotsWidth,
                                                 selectionIntent, groupSnapshot->selectable,
-                                                testTasks, control, toast, testModel,
+                                                testTasks, control, toast, proxiesModel,
                                                 NodeSelectAction(
                                                     selectionIntent, tasks,
                                                     proxiesModel,

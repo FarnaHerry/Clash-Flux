@@ -47,6 +47,10 @@ public final class RuntimeControlService extends Service {
             return ClashVpnService.urlTest(group);
         }
 
+        @Override public boolean urlTestNode(String tag) {
+            return ClashVpnService.urlTestNode(tag);
+        }
+
         @Override public boolean setClashMode(String mode) {
             return ClashVpnService.setClashMode(mode);
         }

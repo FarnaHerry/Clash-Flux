@@ -561,9 +561,11 @@ public final class MainActivity extends HuxerUIActivity {
         }
     }
 
-    public static boolean urlTest(String group) {
+    public static boolean urlTest(byte[] encodedTag, boolean group) {
         IClashRuntime service = runtimeControl;
-        try { return service != null && service.urlTest(group); }
+        if (service == null) return false;
+        String tag = new String(encodedTag, StandardCharsets.UTF_8);
+        try { return group ? service.urlTest(tag) : service.urlTestNode(tag); }
         catch (RemoteException | RuntimeException error) {
             Log.w(TAG, "Unable to start outbound URL test across runtime IPC", error);
             return false;
@@ -579,14 +581,14 @@ public final class MainActivity extends HuxerUIActivity {
         }
     }
 
-    public static String proxyGroups() {
+    public static byte[] proxyGroups() {
         IClashRuntime service = runtimeControl;
         try { if (service != null) service.refreshProxyGroups(); }
         catch (RemoteException | RuntimeException error) {
             Log.w(TAG, "Unable to refresh outbound groups across runtime IPC", error);
         }
-        return RuntimeSnapshotStore.read(applicationContext, "outbound-groups.json",
-                "{\"proxies\":{}}");
+        byte[] snapshot = RuntimeSnapshotStore.readBytes(applicationContext, "outbound-groups.json");
+        return snapshot == null ? "{\"proxies\":{}}".getBytes(StandardCharsets.UTF_8) : snapshot;
     }
 
     public static String connectionsSnapshot() {

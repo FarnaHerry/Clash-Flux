@@ -632,7 +632,7 @@ bool StartProxyGroupTest(const std::string& group) {
                            std::nullopt, true);
             if (core.snapshot().state == core::CoreState::Failed) return false;
         }
-        return clashflux_android_url_test(group.c_str());
+        return TriggerProxyGroupTest(group);
     } catch (...) {
         return false;
     }

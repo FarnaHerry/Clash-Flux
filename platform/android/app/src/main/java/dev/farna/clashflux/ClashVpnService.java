@@ -1575,6 +1575,19 @@ public final class ClashVpnService extends VpnService implements PlatformInterfa
         return true;
     }
 
+    static boolean urlTestNode(String tag) {
+        ClashVpnService service = current;
+        if (service == null || !service.started || service.stopRequested.get() || tag == null || tag.isEmpty())
+            return false;
+        try {
+            service.controlClient().urlTest(tag);
+            return true;
+        } catch (Exception error) {
+            Log.w(TAG, "Unable to test outbound " + tag, error);
+            return false;
+        }
+    }
+
     private void queueUrlTest(String group) {
         if (!URL_TEST_RUNNING.compareAndSet(false, true)) {
             MainActivity.appLog("测速已在进行中，合并重复请求", false);

@@ -1,5 +1,11 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-23 Android 窄屏代理节点测速
+
+- 基于 Clash-Flux `0f3b7c0` 和本次工作区补丁，HuxerUI `c154e52`、sing-box `1.14.4`。未测节点显示小闪电，延迟和超时文字可触发单节点测速。Android 后台按运行 tag 调用 libbox，并从共享快照确认结果。JNI 往返保留 UTF-8 节点名。
+- Windows 主目标和 `test_page_transition` 经 HuxerUI codegen 构建通过。`--native-proxy-node-card`、`--proxy-node-card`、`ui_resources`、版本检查（v0.3.127）与 `git diff --check` 通过。完整 `page_transition` 到达 720 秒上限。
+- Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。在约 411dp 的隔离模拟器使用合成快照核对了带 emoji 的节点名、空心闪电、延迟文字以及两处点按的内核就绪提示。该 x86_64 模拟器运行 ARM64 libbox 时触发 SIGILL，端到端测速和真机验证待补。
+
 ## 2026-11-22 订阅卡片紧凑排布
 
 - 基于 Clash-Flux `35cc86f` 工作区与 HuxerUI `89359f43`。宽屏卡片从 180pt 收到 152pt，Compact 从 108pt 收到 104pt。省去空描述与整行缺失的流量、到期信息，实际卡片、拖动预览与骨架共用相应尺寸。

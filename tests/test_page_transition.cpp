@@ -5746,6 +5746,8 @@ struct ProxyProbeFixture {
     huxerui::State<int> selected{0};
     std::vector<std::string> singleTags;
     bool singleFail = false;
+    bool nativeSingle = false;
+    std::map<std::string, std::pair<int, std::int64_t>> nativeSingleResults;
 };
 std::shared_ptr<ProxyProbeFixture> proxyProbeFixture;
 void CheckProxyTestAfterStandby(const std::shared_ptr<clashflux::ui::ProxyTestModel>& model) {
@@ -5896,6 +5898,23 @@ void testProxyProbesSurvivePageRetirement() {
 
 void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
     huxerui::TaskScope tasks, const std::string& tag, std::shared_ptr<clashflux::ui::ProxyProbe> probe) {
+    if (fixture->nativeSingle) {
+        const auto valid = [fixture, context = fixture->model->context] { return fixture->model->context == context; };
+        clashflux::ui::LaunchSingleProxyProbe(tasks, fixture->model, tag, probe,
+            [fixture, probe, valid](const std::string& target) {
+                return clashflux::ui::MeasureNativeProxyDelay(target, probe,
+                    [fixture](const std::string& node) -> huxerui::Task<bool> {
+                        fixture->singleTags.push_back(node);
+                        co_return !fixture->singleFail;
+                    },
+                    [fixture](const std::string& node) -> std::optional<std::pair<int, std::int64_t>> {
+                        const auto result = fixture->nativeSingleResults.find(node);
+                        if (result == fixture->nativeSingleResults.end()) return std::nullopt;
+                        return result->second;
+                    }, valid);
+            }, valid);
+        return;
+    }
     huxerui::State<bool> release{false};
     if (clashflux::ui::LaunchSingleProxyProbe(tasks, fixture->model, tag, probe,
         [fixture, release, fail = fixture->singleFail](const std::string& target) -> huxerui::Task<int> {
@@ -6072,6 +6091,47 @@ void testProxySpeedShutter() {
         check(action.One().enabled && toggle.Exists() && fixture->search.Get().text.empty(),
               "closing search clears the filter and restores group testing");
     }
+}
+
+void testNativeSingleProxyProbeCard() {
+    huxerui::testing::UiTest ui(kSingleProbeFixtureApplication, {.viewport = {390.0F, 700.0F},
+        .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.PumpAndSettle();
+    const auto fixture = proxyProbeFixture;
+    fixture->nativeSingle = true;
+    fixture->model->ObserveContext(true, 1);
+    fixture->nativeSingleResults["single-b"] = {234, 7};
+    const auto untested = ui.Find(UiSelector::Key("single-a"));
+    const auto measured = ui.Find(UiSelector::Key("single-b"));
+    const auto advance = [&] {
+        for (int step = 0; step < 3; ++step) ui.Pump(std::chrono::milliseconds(300));
+    };
+    check(untested.Find(UiSelector::Key("node-probe-action")).Find(UiSelector::Type<huxerui::Image>()).Exists(),
+          "an untested node exposes the probe icon in a narrow touch viewport");
+    measured.Find(UiSelector::Text("234")).Tap(); ui.Pump();
+    check(fixture->singleTags == std::vector<std::string>{"single-b"} &&
+              fixture->selected.Get() == 0 && measured.Find(UiSelector::Key("node-probe-dots")).Exists(),
+          "tapping cached latency starts only that native node and leaves selection alone");
+    fixture->nativeSingleResults["single-a"] = {120, 8};
+    advance();
+    check(fixture->model->singlePending.Get() == 1,
+          "old latency and another node's new history do not settle the native request");
+    fixture->nativeSingleResults["single-b"] = {234, 8};
+    advance();
+    check(measured.Find(UiSelector::Text("234")).Exists() && fixture->model->singlePending.Get() == 0,
+          "a new timestamp completes the native request even at identical latency");
+    measured.Find(UiSelector::Text("234")).Tap(); ui.Pump();
+    fixture->nativeSingleResults["single-b"] = {0, 0};
+    advance();
+    check(measured.Find(UiSelector::Text("TIMEOUT")).Exists() && fixture->model->singlePending.Get() == 0,
+          "libbox history removal completes a failed retry");
+    measured.Find(UiSelector::Text("TIMEOUT")).Tap(); ui.Pump();
+    fixture->nativeSingleResults["single-b"] = {81, 9};
+    advance();
+    check(measured.Find(UiSelector::Text("81")).Exists() && fixture->singleTags.size() == 3 &&
+              fixture->selected.Get() == 0,
+          "the timeout label can retry the same node on touch");
 }
 
 void testSingleProxyProbeCard() {
@@ -9909,6 +9969,14 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-node-card") {
         testSingleProxyProbeCard(); return failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--native-proxy-node-card") {
+        try { testNativeSingleProxyProbeCard(); }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "FAIL: native single proxy probe: %s\n", error.what());
+            return 1;
+        }
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--page-search") {
         try {
             testPageSearchToolbar();
@@ -10283,7 +10351,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: proxy speed shutter: %s\n", error.what());
         ++failures;
     }
-    try { testSingleProxyProbeCard(); }
+    try { testSingleProxyProbeCard(); testNativeSingleProxyProbeCard(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: single proxy probe: %s\n", error.what());
         ++failures;

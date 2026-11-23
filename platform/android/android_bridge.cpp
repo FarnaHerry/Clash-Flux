@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -734,19 +735,21 @@ extern "C" const char* clashflux_android_proxy_groups() noexcept {
         return result.c_str();
     }
     const jmethodID method = environment->GetStaticMethodID(
-        g_activity_class, "proxyGroups", "()Ljava/lang/String;");
+        g_activity_class, "proxyGroups", "()[B");
     if (method != nullptr) {
-        auto* value = static_cast<jstring>(
+        auto* value = static_cast<jbyteArray>(
             environment->CallStaticObjectMethod(g_activity_class, method));
         if (!environment->ExceptionCheck() && value != nullptr) {
-            if (const char* chars = environment->GetStringUTFChars(value, nullptr)) {
-                result = chars;
-                environment->ReleaseStringUTFChars(value, chars);
-            }
+            const jsize size = environment->GetArrayLength(value);
+            result.resize(size);
+            if (size != 0)
+                environment->GetByteArrayRegion(value, 0, size, reinterpret_cast<jbyte*>(result.data()));
             environment->DeleteLocalRef(value);
-        } else if (environment->ExceptionCheck()) {
-            environment->ExceptionClear();
         }
+    }
+    if (environment->ExceptionCheck()) {
+        environment->ExceptionClear();
+        result.clear();
     }
     if (attached) g_vm->DetachCurrentThread();
     return result.c_str();
@@ -923,8 +926,8 @@ extern "C" bool clashflux_android_select_outbound(const char* group,
     return !failed && ok == JNI_TRUE;
 }
 
-extern "C" bool clashflux_android_url_test(const char* group) noexcept {
-    if (group == nullptr || *group == '\0') return false;
+bool clashflux::ui::AndroidProxyUrlTest(const std::string& tag, bool group) noexcept {
+    if (tag.empty() || tag.size() > static_cast<std::size_t>(std::numeric_limits<jsize>::max())) return false;
 
     std::lock_guard lock(g_mutex);
     bool attached = false;
@@ -933,20 +936,20 @@ extern "C" bool clashflux_android_url_test(const char* group) noexcept {
         if (attached) g_vm->DetachCurrentThread();
         return false;
     }
-    const jmethodID method = environment->GetStaticMethodID(
-        g_activity_class, "urlTest", "(Ljava/lang/String;)Z");
-    if (method == nullptr) {
-        if (attached) g_vm->DetachCurrentThread();
-        return false;
+    const jmethodID method = environment->GetStaticMethodID(g_activity_class, "urlTest", "([BZ)Z");
+    jboolean ok = JNI_FALSE;
+    if (method != nullptr) {
+        const auto size = static_cast<jsize>(tag.size());
+        // JNI modified UTF-8 does not match outbound tags containing emoji.
+        jbyteArray value = environment->NewByteArray(size);
+        if (value != nullptr) {
+            environment->SetByteArrayRegion(value, 0, size, reinterpret_cast<const jbyte*>(tag.data()));
+            if (!environment->ExceptionCheck())
+                ok = environment->CallStaticBooleanMethod(g_activity_class, method, value,
+                    group ? JNI_TRUE : JNI_FALSE);
+            environment->DeleteLocalRef(value);
+        }
     }
-    jstring groupValue = environment->NewStringUTF(group);
-    if (groupValue == nullptr) {
-        if (attached) g_vm->DetachCurrentThread();
-        return false;
-    }
-    const jboolean ok = environment->CallStaticBooleanMethod(
-        g_activity_class, method, groupValue);
-    environment->DeleteLocalRef(groupValue);
     const bool failed = environment->ExceptionCheck();
     if (failed) environment->ExceptionClear();
     if (attached) g_vm->DetachCurrentThread();

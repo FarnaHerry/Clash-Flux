@@ -63,19 +63,24 @@ final class RuntimeSnapshotStore {
     }
 
     static String read(Context context, String name, String fallback) {
-        if (context == null) return fallback;
+        byte[] bytes = readBytes(context, name);
+        return bytes == null ? fallback : new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    static byte[] readBytes(Context context, String name) {
+        if (context == null) return null;
         File file = new File(new File(context.getFilesDir(), "clash-flux/android-runtime"), name);
-        if (!file.isFile()) return fallback;
+        if (!file.isFile()) return null;
         try (FileInputStream input = new FileInputStream(file);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             for (int count = input.read(buffer); count >= 0; count = input.read(buffer)) {
                 if (count > 0) output.write(buffer, 0, count);
             }
-            return output.toString(StandardCharsets.UTF_8.name());
+            return output.toByteArray();
         } catch (Exception error) {
             Log.w(TAG, "Unable to read runtime snapshot " + name, error);
-            return fallback;
+            return null;
         }
     }
 }

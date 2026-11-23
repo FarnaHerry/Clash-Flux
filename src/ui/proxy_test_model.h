@@ -137,6 +137,37 @@ bool LaunchSingleProxyProbe(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestM
     return true;
 }
 
+template<class Start, class Poll, class Valid>
+huxerui::Task<int> MeasureNativeProxyDelay(std::string tag, std::shared_ptr<ProxyProbe> probe,
+    Start start, Poll poll, Valid valid) {
+    using namespace std::chrono;
+
+    const auto previous = poll(tag);
+    const auto baseline = std::max(probe->baselineTime.Get(), previous ? previous->second : 0);
+    const auto now = system_clock::now();
+    const auto second = floor<seconds>(now);
+    // libbox timestamps have one-second resolution. A quick retry needs a
+    // different timestamp even if it measures the same latency.
+    if (baseline == second.time_since_epoch().count())
+        co_await huxerui::Delay(second + seconds{1} - now);
+
+    if (!valid() || !(co_await start(tag))) co_return 0;
+    constexpr auto interval = milliseconds{250};
+    for (auto elapsed = milliseconds{0}; elapsed < seconds{30}; elapsed += interval) {
+        if (!valid()) co_return 0;
+        const auto result = poll(tag);
+        if (result && result->second > baseline) {
+            probe->baselineTime = result->second;
+            co_return result->first;
+        }
+        // A failed libbox probe removes any previous history for this node.
+        if (result && result->second == 0 && previous && previous->second > 0)
+            co_return 0;
+        co_await huxerui::Delay(interval);
+    }
+    co_return 0;
+}
+
 struct ProxyProbeTarget {
     std::string tag;
     std::shared_ptr<ProxyProbe> probe;
