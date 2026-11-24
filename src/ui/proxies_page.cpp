@@ -1,4 +1,4 @@
-// proxies_page.cpp — 代理页：分组标签栏 + 选中分组的节点卡网格。出站模式
+// proxies_page.cpp — 代理页：横滑标签或纵向分组，共用节点卡和代理状态。出站模式
 // （规则/全局/直连）的切换入口只在首页「出站模式」卡片；本页只跟随内核当前
 // 模式渲染对应内容，不重复提供切换按钮。
 //
@@ -22,7 +22,7 @@
 // 只存用户走出的链，渲染期经 resolvePath 对最新 groups 校验裁剪，订阅刷新
 // 导致组消失时自动回落，无需泵写状态。
 //
-// 延迟测试：搜索右侧的闪电测试当前分组。
+// 延迟测试：横滑顶栏测试当前分组，分组视图顶栏测试当前模式下的所有分组。
 //
 // 数据流：只读 ProxiesModel 的 State（AppRoot 驱动的唯一来源），原文变化时才
 // 到任务线程解析，只同步有变化的组。测速 / 切节点
@@ -53,6 +53,7 @@
 #include "empty_state.h"
 #include "search_text.h"
 #include "task_bridge.h"
+#include "proxy_group_layout.h"
 #include "proxy_node_tile.h"
 #include "proxy_speed_button.h"
 
@@ -209,12 +210,6 @@ std::string BuildNodeDetail(const ProxyNode& node) {
     return type;
 }
 
-// 节点卡自适应列的最小宽度：值越小同宽窗口下卡片越窄（列数更多）。
-// 196 是"满屏 7 列"的阈值：1560 逻辑宽的满屏窗口去掉侧栏与岛内边距后约
-// 1428 逻辑 px，1428 / (196 + 8) ≈ 7.0 → 7 列（每张约 197 px）；更宽的窗口
-// 列数继续增加，更窄时逐级回落（卡片文本截断省略，窄列不溢出）。
-constexpr float kProxyNodeWidth = 196.0F;
-
 // 虚拟网格的固定缓存高度。宽屏列数多时，框架默认的 0.5 视口高度会让每个
 // 滚动帧反复回收/重建边界卡片（15 列 × 96 帧约 7.3 万次工厂调用，见
 // docs/evidence/2026-11-16-proxy-grid-scroll.md）；200pt 保留约 3 行预热，
@@ -224,41 +219,39 @@ constexpr float kProxyGridCacheExtent = 200.0F;
 // sing-box constant.TCPTimeout；单节点和组测速都使用内核同一上限。
 constexpr int kProxyDelayTimeoutMs = 15000;
 
-void RunProxyTestWhenReady(CoreControl control, std::shared_ptr<ProxyTestModel> tests,
-                           FluxToastHandle toast, std::function<huxerui::Task<void>()> measure) {
-#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
-    if (control.model->view.Get().core.state == core::CoreState::Running)
-        control.tasks.Launch(std::move(measure));
-    else toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
+huxerui::Task<bool> WaitForProxyTestCore(CoreControl control, std::shared_ptr<ProxyTestModel> tests,
+    FluxToastHandle toast) {
+    if (control.model->closing) co_return false;
+    if (!control.Busy() && control.model->view.Get().core.state == core::CoreState::Running) co_return true;
+#if defined(CLASHFLUX_IOS)
+    toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
+    co_return false;
 #else
-    if (control.model->closing || tests->preparing.Get()) return;
-    if (!control.Busy() && control.model->view.Get().core.state == core::CoreState::Running) {
-        control.tasks.Launch(std::move(measure));
-        return;
+    auto readiness = tests->readiness;
+    if (!readiness) {
+        readiness = tests->readiness = std::make_shared<std::optional<bool>>();
+        const auto finish = [tests, readiness](bool ready) {
+            *readiness = ready;
+            tests->readiness.reset();
+        };
+        control.tasks.Launch([control, toast, finish]() -> huxerui::Task<void> {
+            while (!control.model->closing && control.Busy()) {
+                co_await huxerui::Delay(std::chrono::milliseconds{100});
+            }
+            if (control.model->closing) {
+                finish(false);
+            } else if (control.model->view.Get().core.state == core::CoreState::Running) {
+                finish(true);
+            } else if (!control.Run({.action = CoreAction::Start, .origin = CoreCommandOrigin::ProxyTest}, finish)) {
+                finish(false);
+                toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
+            }
+        });
     }
-    tests->preparing = true;
-    control.tasks.Launch([control, tests, toast, measure = std::move(measure)]() -> huxerui::Task<void> {
-        while (!control.model->closing &&
-               (control.model->operations.Busy() || control.model->serviceChecking.Get()))
-            co_await huxerui::Delay(std::chrono::duration<double>{0.1});
-        if (control.model->closing) {
-            tests->preparing = false;
-            co_return;
-        }
-        if (control.model->view.Get().core.state == core::CoreState::Running) {
-            tests->preparing = false;
-            co_await measure();
-            co_return;
-        }
-        if (!control.Run({.action = CoreAction::Start, .origin = CoreCommandOrigin::ProxyTest},
-                [tests, tasks = control.tasks, measure = std::move(measure)](bool ready) mutable {
-                    tests->preparing = false;
-                    if (ready) tasks.Launch(std::move(measure));
-                })) {
-            tests->preparing = false;
-            toast.Show(Localized("测速需要内核就绪，请检查内核服务"));
-        }
-    });
+    while (!readiness->has_value() && !control.model->closing) {
+        co_await huxerui::Delay(std::chrono::milliseconds{100});
+    }
+    co_return !control.model->closing && readiness->value_or(false);
 #endif
 }
 
@@ -283,16 +276,26 @@ std::optional<std::pair<int, std::int64_t>> ReadProxyTestResult(
 
 template<class Valid>
 void RunSingleProxyProbe(huxerui::TaskScope tasks, const std::shared_ptr<ProxiesModel>& model,
-    const std::string& tag, const std::shared_ptr<ProxyProbe>& probe, Valid valid) {
+    const std::string& tag, const std::shared_ptr<ProxyProbe>& probe, Valid valid,
+    const FluxToastHandle& toast) {
 #if defined(__ANDROID__)
-    const auto measure = [model, probe, valid](const std::string& target) {
-        return MeasureNativeProxyDelay(target, probe, [](const std::string& node) {
-            return RunOnTaskThread([node] { return AndroidProxyUrlTest(node); });
-        }, [model](const std::string& node) {
-            return ReadProxyTestResult(*model, node);
-        }, valid);
+    const auto measure = [model, probe, valid, toast](const std::string& target) -> huxerui::Task<std::optional<int>> {
+        std::optional<int> result;
+        try {
+            result = co_await MeasureNativeProxyDelay(target, probe, [model](const std::string& node)
+            -> huxerui::Task<bool> {
+                const bool accepted = co_await RunOnTaskThread([node] { return AndroidProxyUrlTest(node); });
+                if (accepted) model->RequestRefresh();
+                co_return accepted;
+            }, [model](const std::string& node) {
+                return ReadProxyTestResult(*model, node);
+            }, valid);
+        } catch (...) {}
+        if (!result && valid()) toast.Show(Localized("测速失败：内核未运行或启动失败"));
+        co_return result;
     };
 #else
+    static_cast<void>(toast);
     const auto measure = [](const std::string& target) {
         return RunOnTaskThread([target] {
             // Let sing-box choose its default URL, as it does on Android.
@@ -318,6 +321,82 @@ huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::stri
     });
 }
 
+huxerui::Task<void> RunGroupProxyProbe(huxerui::TaskScope tasks, CoreControl control,
+    std::shared_ptr<ProxiesModel> model, huxerui::StateList<ProxyGroup> groups, std::string name,
+    std::shared_ptr<ProxyGroupTest> batch, int ticket, FluxToastHandle toast) {
+    if (!(co_await WaitForProxyTestCore(control, model->tests, toast))) {
+        batch->End(ticket, false);
+        co_return;
+    }
+
+    const auto valid = BindProxyTest(control.model, *model->tests);
+    if (!batch->Current(ticket)) co_return;
+    const auto* group = findGroup(groups, name);
+    if (!valid() || !group) {
+        batch->End(ticket, false);
+        co_return;
+    }
+    batch->bound = true;
+    std::vector<ProxyProbeTarget> targets;
+    for (const auto& node : group->nodes) {
+        if (!node.isGroup) {
+            targets.push_back({node.name, model->tests->Get(node.name, node.delay, node.timeout, node.urlTestTime)});
+        }
+    }
+
+    // The kernel history is keyed by node tag. A different batch can run
+    // concurrently as long as it does not measure any of the same nodes.
+    while (batch->Current(ticket) && valid() && std::ranges::any_of(targets, [](const auto& target) {
+        return target.probe->owner != 0;
+    })) {
+        co_await huxerui::Delay(std::chrono::milliseconds{100});
+    }
+    if (!batch->Current(ticket)) co_return;
+    if (!valid()) {
+        batch->End(ticket, false);
+        co_return;
+    }
+
+    const auto poll = [model](const std::string& tag) { return ReadProxyTestResult(*model, tag); };
+    const bool native = ProxyTestUsesNativeGroup();
+    std::int64_t latestNativeTime = 0;
+    std::vector<ProxyProbeTarget> measurements;
+    measurements.reserve(targets.size());
+    for (auto& target : targets) {
+        const auto previous = poll(target.tag);
+        auto baseline = previous ? previous->second : 0;
+        if (native) {
+            target.nativeHistory = NativeProxyHistory::Capture(*target.probe, previous);
+            baseline = target.nativeHistory.baselineTime;
+            latestNativeTime = std::max(latestNativeTime, baseline);
+        }
+        if (batch->Start(target.probe, ticket, baseline)) measurements.push_back(std::move(target));
+    }
+    if (native) co_await WaitForNativeProxyTimestamp(latestNativeTime);
+    if (!batch->Current(ticket)) co_return;
+    if (!valid()) {
+        batch->End(ticket, false);
+        co_return;
+    }
+
+    bool accepted = false;
+    try {
+        accepted = co_await RunOnTaskThread([name] { return StartProxyGroupTest(name); });
+    } catch (const std::exception&) {}
+    if (!batch->Current(ticket)) co_return;
+    if (!valid() || !accepted) {
+        batch->End(ticket, false);
+        if (valid()) toast.Show(Localized("测速失败：内核未运行或启动失败"));
+        co_return;
+    }
+    if (native) {
+        model->RequestRefresh();
+        LaunchNativeProxyProbeBatch(tasks, batch, std::move(measurements), ticket, valid, poll);
+    } else {
+        LaunchProxyGroupProbeBatch(tasks, batch, name, std::move(measurements), ticket, MeasureProxyGroupDelay, valid, poll);
+    }
+}
+
 // 页面级「乐观选中意图」：点击后渲染立刻读到目标节点。以前直接改 `groups`
 // （StateList）——那会让整张 VirtualGrid 失效并重排，大订阅下点一下卡一下；
 // 现在只写这个小 State，只有可见的卡片重组。模型快照追平后清掉意图。
@@ -339,7 +418,7 @@ struct ProxySyncCache {
     const ProxyNode& node, std::string groupName, std::string groupNow, float dotsWidth,
     huxerui::State<SelectionIntent> selectionIntent, bool selectable,
     huxerui::TaskScope appTasks, CoreControl control, FluxToastHandle toast,
-    std::shared_ptr<ProxiesModel> proxiesModel, std::function<void()> onActivate) {
+    std::shared_ptr<ProxiesModel> proxiesModel, std::function<void()> onActivate, bool insideGroup) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
     const SelectionIntent pending = selectionIntent.Get();
     const bool selected = node.name == (pending.group == groupName ? pending.node : groupNow);
@@ -371,16 +450,21 @@ struct ProxySyncCache {
             .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
     }
-    const auto startProbe = [appTasks, control, proxiesModel, tag = node.name, delay = node.delay,
+    const auto startProbe = [appTasks, control, proxiesModel, entry, tag = node.name, delay = node.delay,
                              timeout = node.timeout, testTime = node.urlTestTime, toast] {
-        RunProxyTestWhenReady(control, proxiesModel->tests, toast,
-                [appTasks, model = control.model, proxiesModel, tag, delay, timeout, testTime]() -> huxerui::Task<void> {
+        if (entry->value.Get().testing) return;
+        if (!proxiesModel->tests->singlePreparing.insert(tag).second) return;
+        appTasks.Launch([appTasks, control, proxiesModel, tag, delay, timeout, testTime, toast]() -> huxerui::Task<void> {
             const auto& tests = proxiesModel->tests;
-            const auto valid = BindProxyTest(model, *tests);
-            if (!valid()) co_return;
-            const auto probe = tests->Get(tag, delay, timeout, testTime);
-            RunSingleProxyProbe(appTasks, proxiesModel, tag, probe, valid);
-            co_return;
+            if (co_await WaitForProxyTestCore(control, tests, toast)) {
+                const auto valid = BindProxyTest(control.model, *tests);
+                const auto probe = tests->Get(tag, delay, timeout, testTime);
+                while (valid() && probe->owner != 0) {
+                    co_await huxerui::Delay(std::chrono::milliseconds{100});
+                }
+                if (valid()) RunSingleProxyProbe(appTasks, proxiesModel, tag, probe, valid, toast);
+            }
+            tests->singlePreparing.erase(tag);
         });
     };
     const huxerui::TextStyle titleStyle{huxerui::Font::System(font_size::kBodySmall), tile.fg};
@@ -393,7 +477,7 @@ struct ProxySyncCache {
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), detailColor}),
         delayView, dotsWidth, selected, node.displayName, std::move(onActivate),
         selectable ? SelectableTileInteraction::Selectable : SelectableTileInteraction::ReadOnly,
-        !node.isGroup, !node.isGroup && currentProbe.testing, startProbe);
+        !node.isGroup, !node.isGroup && currentProbe.testing, startProbe, insideGroup);
 }
 
 // 节点点击动作：**所有成员都只是"选中当前线路"**。成员本身是策略组时（订阅里
@@ -519,6 +603,187 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     return WithoutIconButtonOutlines(ProxySpeedButton(*testModel, groupName, start));
 }
 
+struct ProxyNodeActions {
+    huxerui::State<SelectionIntent> selection;
+    huxerui::TaskScope pageTasks;
+    huxerui::TaskScope testTasks;
+    CoreControl control;
+    FluxToastHandle toast;
+    std::shared_ptr<ProxiesModel> model;
+    float dotsWidth;
+    std::function<void()> onFailure;
+    std::function<void()> onReadOnly;
+
+    huxerui::View Card(const ProxyGroup& group, std::size_t index, bool insideGroup = false) const {
+        const ProxyNode& node = group.nodes[index];
+        return NodeCard(node, group.name, group.now, dotsWidth, selection, group.selectable,
+            testTasks, control, toast, model,
+            NodeSelectAction(selection, pageTasks, model, onFailure, onReadOnly, group, node), insideGroup)
+            .Key(group.name + "::" + node.name);
+    }
+};
+
+std::vector<std::size_t> MatchingProxyNodes(const ProxyGroup& group, std::string_view query) {
+    std::vector<std::size_t> matches;
+    matches.reserve(group.nodes.size());
+    for (std::size_t i = 0; i < group.nodes.size(); ++i) {
+        const auto& node = group.nodes[i];
+        if (query.empty() || SearchTextMatches(node.name, query) ||
+            SearchTextMatches(node.displayName, query) || SearchTextMatches(node.type, query) ||
+            SearchTextMatches(node.detail, query)) {
+            matches.push_back(i);
+        }
+    }
+    return matches;
+}
+
+huxerui::View ProxyGrid(huxerui::VirtualGrid grid, bool compact, ScrollAreaInsets insets,
+    const std::shared_ptr<PageScrollOffset>& offset) {
+    return ScrollArea(std::move(grid)
+        .Columns(compact ? huxerui::GridColumns::Fixed(2) : huxerui::GridColumns::Adaptive(kProxyNodeWidth))
+        // Estimate only. Content determines the actual height under font scaling.
+        .EstimatedRowExtent(52.0F)
+        .CacheExtent(kProxyGridCacheExtent)
+        .ColumnSpacing(kSectionCardSpacing)
+        .With(RememberPageScroll{offset}), {}, offset, {}, insets)
+        .With(huxerui::Grow(1.0F));
+}
+
+struct ProxyGroupSection {
+    std::string name;
+    std::string title;
+    std::string type;
+    std::string selectedTag;
+    std::string selectedNode;
+    std::size_t nodeCount;
+    bool expanded;
+    bool expandable;
+    bool degraded;
+    std::shared_ptr<const ProxyGroup> snapshot;
+    std::vector<std::size_t> matches;
+    std::vector<ProxyNode> overview;
+};
+
+huxerui::View ProxyGroupSectionHeader(const ProxyGroupSection& group,
+    huxerui::State<std::set<std::string>> expanded, std::shared_ptr<ProxyTestModel> testModel,
+    std::function<void(const std::string&)> triggerGroupTest) {
+    std::function<void()> toggle;
+    if (group.expandable) {
+        toggle = [expanded, name = group.name] {
+            expanded.Update([&name](std::set<std::string>& groups) {
+                if (groups.erase(name) == 0) groups.insert(name);
+            });
+        };
+    }
+    return ProxyGroupHeader(group.title, group.type, group.nodeCount, group.degraded, group.expanded,
+        group.selectedNode, ProxySpeedSearchAction(group.name, testModel, triggerGroupTest), std::move(toggle));
+}
+
+[[huxerui::composable]] huxerui::View ProxyGroupOverview(const ProxyGroupSection& group,
+    std::shared_ptr<ProxyTestModel> tests) {
+    const auto& theme = huxerui::UseTheme();
+    const auto islands = ResolveIslandTheme(theme);
+    static_cast<void>(tests->generation.Get());
+    auto testing = theme.colors.on_surface_variant;
+    testing.alpha *= 0.5F;
+    std::vector<huxerui::View> dots;
+    dots.reserve(group.overview.size());
+    for (const auto& node : group.overview) {
+        const auto entry = tests->Get(node.name, node.delay, node.timeout, node.urlTestTime);
+        const auto cached = entry->value.Get();
+        const auto probe = !cached.testing && node.urlTestTime > entry->baselineTime.Get()
+            ? ProbeState{node.delay, node.delay <= 0, false} : cached;
+        auto color = islands.overlay;
+        if (node.name == group.selectedTag) color = theme.colors.primary;
+        else if (probe.testing) color = testing;
+        else if (probe.timeout) color = theme.colors.error;
+        else if (probe.delay > 0) color = DelayLevelColor(theme, probe.delay, false);
+        dots.push_back(huxerui::Row{}.With(
+            huxerui::Frame{.width = 7.0F, .height = 7.0F},
+            huxerui::Background(color), huxerui::CornerRadius(3.5F)));
+    }
+    return huxerui::Flow(std::move(dots)).With(
+        huxerui::Spacing(4.0F),
+        huxerui::Padding(huxerui::EdgeInsets{
+            .right = kProxyGroupInset, .bottom = kProxyGroupInset, .left = kProxyGroupInset}),
+        huxerui::Semantics{.hidden = true})
+        .Key("proxy-group-overview-" + group.name);
+}
+
+huxerui::View GroupedProxyView(const std::vector<const ProxyGroup*>& groups, std::string_view query,
+    const std::set<std::string>& degraded, huxerui::State<std::set<std::string>> expanded,
+    const ProxyNodeActions& actions, const std::function<void(const std::string&)>& triggerGroupTest,
+    bool compact, ScrollAreaInsets insets, const std::shared_ptr<PageScrollOffset>& offset,
+    huxerui::State<std::size_t> columnCount, huxerui::TaskScope tasks) {
+    struct Item {
+        std::size_t section;
+        std::optional<std::size_t> rowStart;
+    };
+    const std::size_t columns = compact ? 2 : std::max<std::size_t>(1, columnCount.Get());
+    constexpr std::size_t overviewLimit = 20;
+    std::vector<ProxyGroupSection> sections;
+    sections.reserve(groups.size());
+    std::vector<Item> items;
+    const auto& openGroups = expanded.Get();
+    const bool searching = !query.empty();
+    for (const ProxyGroup* group : groups) {
+        const bool open = searching || openGroups.contains(group->name);
+        auto matches = open ? MatchingProxyNodes(*group, query) : std::vector<std::size_t>{};
+        if (searching && matches.empty()) continue;
+
+        const auto selected = std::ranges::find(group->nodes, group->now, &ProxyNode::name);
+        const std::size_t section = sections.size();
+        ProxyGroupSection display{group->name, group->displayName, group->type, group->now,
+            selected == group->nodes.end() ? group->now : selected->displayName,
+            searching ? matches.size() : group->nodes.size(),
+            open && !matches.empty(), !searching && !group->nodes.empty(), degraded.contains(group->name),
+            matches.empty() ? nullptr : std::make_shared<const ProxyGroup>(*group), std::move(matches), {}};
+        if (!open) {
+            const auto shown = std::min(overviewLimit, group->nodes.size());
+            const auto end = group->nodes.begin() + shown;
+            display.overview.assign(group->nodes.begin(), end);
+            if (selected != group->nodes.end() && selected >= end) display.overview.back() = *selected;
+        }
+        items.push_back({section, std::nullopt});
+        for (std::size_t start = 0; start < display.matches.size(); start += columns) {
+            items.push_back({section, start});
+        }
+        sections.push_back(std::move(display));
+    }
+    if (items.empty()) return EmptyState(Localized("没有匹配的节点"), app::images::search);
+    const auto count = items.size();
+    auto list = PageVirtualList(count,
+        [sections = std::move(sections), items = std::move(items), expanded, actions,
+         triggerGroupTest, columns](std::size_t index) -> huxerui::View {
+            const Item& item = items[index];
+            const ProxyGroupSection& section = sections[item.section];
+            const bool hasNext = index + 1 < items.size();
+            if (!item.rowStart) {
+                const bool last = section.matches.empty();
+                const auto header = ProxyGroupSectionHeader(section, expanded, actions.model->tests, triggerGroupTest);
+                const auto overview = section.overview.empty() ? huxerui::View{}
+                    : ProxyGroupOverview(section, actions.model->tests);
+                return ProxyGroupPanelPart(huxerui::Column {header, overview}.With(
+                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), true, last, last && hasNext)
+                    .Key("proxy-group-header-" + section.name);
+            }
+            const auto start = *item.rowStart;
+            const auto end = std::min(start + columns, section.matches.size());
+            std::vector<huxerui::View> cards;
+            cards.reserve(columns);
+            for (std::size_t i = start; i < end; ++i) {
+                cards.push_back(actions.Card(*section.snapshot, section.matches[i], true));
+            }
+            const bool last = end == section.matches.size();
+            return ProxyGroupPanelPart(ProxyGroupNodeRow(std::move(cards), columns, last),
+                false, last, last && hasNext)
+                .Key("proxy-group-row-" + section.name + "::" + section.snapshot->nodes[section.matches[start]].name);
+        }, insets).EstimatedItemExtent(64.0F).CacheExtent(kProxyGridCacheExtent)
+        .With(RememberPageScroll{offset}, MeasureProxyGroupColumns{columnCount, tasks, compact});
+    return ScrollArea(std::move(list), {}, offset, {}, insets)
+        .With(huxerui::Grow(1.0F)).Key("proxy-grouped-grid");
+}
+
 } // namespace
 
 [[huxerui::composable]] huxerui::View ProxiesPage(bool active) {
@@ -535,6 +800,12 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     auto degradedGroups = huxerui::UseState<std::set<std::string>>({});
     const auto [proxySearch, searchExpanded] = UsePageSearch(active);
     auto sectionMotion = UseSectionTabMotion();
+    auto grouped = huxerui::UseState(false);
+    auto expandedGroups = huxerui::UseState<std::set<std::string>>({});
+    auto groupedColumns = huxerui::UseState<std::size_t>(2);
+    const auto groupedScroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
+    const auto tabScroll = huxerui::UseState(
+        std::make_shared<std::map<std::string, std::shared_ptr<PageScrollOffset>>>()).Get();
     const auto testTasks = huxerui::UseApplicationTaskScope();
     const auto testModel = proxiesModel->tests;
     // 分支路径按模式独立（互不共享）：规则模式 path[0] = 标签栏选中的订阅组，
@@ -554,66 +825,12 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
     // url-test.url，内核内部并发 10）；Android 调用 libbox urlTest，UI 只消费
     // 内核回写的结果。
     const std::function<void(const std::string&)> triggerGroupTest =
-        [testTasks, toast, testModel, control, proxiesModel, groups](std::string groupName) {
-            if (testModel->progress.Get().busy || testModel->singlePending.Get() != 0) return;
-            std::vector<ProxyNode> nodes;
-            for (const auto& group : groups) {
-                if (group.name == groupName) nodes = group.nodes;
-            }
-            RunProxyTestWhenReady(control, testModel, toast,
-                [testTasks, toast, testModel, coreModel = control.model, proxiesModel,
-                 nodes = std::move(nodes), groupName = std::move(groupName)]() -> huxerui::Task<void> {
-                const auto valid = BindProxyTest(coreModel, *testModel);
-                if (!valid()) co_return;
-                const int generation = testModel->Begin();
-                if (!generation) co_return;
-                const bool native = ProxyTestUsesNativeGroup();
-                const auto pollProbe = [proxiesModel](const std::string& tag) {
-                    return ReadProxyTestResult(*proxiesModel, tag);
-                };
-                std::vector<ProxyProbeTarget> targets;
-                std::int64_t latestNativeTime = 0;
-                for (const auto& node : nodes) {
-                    if (node.isGroup) continue;
-                    const auto probe = testModel->Get(node.name, node.delay, node.timeout, node.urlTestTime);
-                    const auto history = native ? NativeProxyHistory::Capture(*probe, pollProbe(node.name))
-                                                : NativeProxyHistory{};
-                    const auto baseline = native ? history.baselineTime : node.urlTestTime;
-                    if (testModel->Start(probe, generation, baseline)) {
-                        targets.push_back({node.name, probe, history});
-                        latestNativeTime = std::max(latestNativeTime, history.baselineTime);
-                    }
-                }
-                testModel->Broadcast(generation, groupName);
-                if (native) co_await WaitForNativeProxyTimestamp(latestNativeTime);
-                if (!testModel->Current(generation)) co_return;
-                if (!valid()) {
-                    testModel->End(generation);
-                    co_return;
-                }
-                bool ok = false;
-                try {
-                    ok = co_await RunOnTaskThread([groupName] { return StartProxyGroupTest(groupName); });
-                } catch (const std::exception&) {}
-                if (!testModel->Current(generation)) co_return;
-                if (!ok || !valid()) {
-                    testModel->End(generation);
-                    toast.Show(Localized("测速失败：内核未运行或启动失败"));
-                    co_return;
-                }
-                if (native) {
-                    LaunchNativeProxyProbeBatch(testTasks, testModel, std::move(targets), generation, valid,
-                        pollProbe);
-                } else {
-                    // 所有组都由内核批量测速；不要逐节点 fan-out，否则会
-                    // 丢失组 URL / 组参数，也无法得到与 sing-box 相同的
-                    // 并发和历史写入顺序。内核批处理期间轮询 /proxies，
-                    // 让每个节点在自己的结果写入 history 后立即显示。
-                    LaunchProxyGroupProbeBatch(testTasks, testModel, groupName,
-                        std::move(targets), generation, MeasureProxyGroupDelay, valid,
-                        pollProbe);
-                }
-                co_await WaitForProxyTestBatch(testModel, generation, native);
+        [testTasks, toast, testModel, control, proxiesModel, groups](const std::string& name) {
+            const auto batch = testModel->GetGroup(name);
+            const int ticket = testModel->Begin(*batch);
+            if (!ticket) return;
+            testTasks.Launch([testTasks, toast, control, proxiesModel, groups, name, batch, ticket] {
+                return RunGroupProxyProbe(testTasks, control, proxiesModel, groups, name, batch, ticket, toast);
             });
         };
 
@@ -728,145 +945,84 @@ std::set<std::string> ResolveDegradedProxyGroups(const store::CoreSnapshot& core
                               huxerui::VerticalAlignment::Stretch));
     }
 
-    const float dotsWidth = probeDotsMetrics->Width();
-    // 一个根分组一页。VirtualGrid 直接用索引读取组节点，不再为所有组预先
-    // 分配完整的 ProxyItem 与 span 数组；只有视口附近的节点会被构造为卡片。
-    // 每个根组仅声明轻量虚拟网格；Pager 提供有界视口并只测量参与显示的页。
-    // 不给各页叠加单独入场动画，避免与 Pager 的完整出入场轨道冲突。
     auto gridInsets = ScrollAreaInsets::Symmetric(kSectionCardSpacing,
         compact ? kCompactFloatingNavigationInset : 0.0F);
     gridInsets.rail_bottom_avoidance = 0.0F;
-    const std::function<void()> onSelectFailure = [toast] {
-        toast.Show(Localized("线路切换失败，请查看日志"));
+    const ProxyNodeActions actions{selectionIntent, tasks, testTasks, control, toast, proxiesModel,
+        probeDotsMetrics->Width(),
+        [toast] { toast.Show(Localized("线路切换失败，请查看日志")); },
+        [toast] { toast.Show(Localized("此分组不支持手动切换节点，仅作展示")); },
     };
-    const std::function<void()> onSelectReadOnly = [toast] {
-        toast.Show(Localized("此分组不支持手动切换节点，仅作展示"));
-    };
-    std::vector<huxerui::View> groupPages;
-    groupPages.reserve(rootGroups.size());
-    for (std::size_t page = 0; page < rootGroups.size(); ++page) {
-        const ProxyGroup& rootGroup = *rootGroups[page];
-        // 只有当前页可能是嵌套子组（path 更深）；其余页就是各自的根分组。
-        const bool selectedPage = page == selectedTab;
-        const ProxyGroup* contentGroup =
-            (selectedPage && current != nullptr) ? current : &rootGroup;
+    const std::string query = proxySearch.Get().text;
+    const auto& degraded = degradedGroups.Get();
+    const bool groupedMode = grouped.Get();
 
-        const auto groupSnapshot = std::make_shared<const ProxyGroup>(*contentGroup);
-        const std::string query = proxySearch.Get().text;
-        std::vector<std::size_t> visibleNodes;
-        visibleNodes.reserve(groupSnapshot->nodes.size());
-        for (std::size_t index = 0; index < groupSnapshot->nodes.size(); ++index) {
-            const ProxyNode& node = groupSnapshot->nodes[index];
-            if (SearchTextMatches(node.name, query) ||
-                SearchTextMatches(node.displayName, query) ||
-                SearchTextMatches(node.type, query) ||
-                SearchTextMatches(node.detail, query)) {
-                visibleNodes.push_back(index);
-            }
-        }
-        const std::size_t nodeCount = visibleNodes.size();
-        if (!query.empty() && nodeCount == 0) {
-            groupPages.push_back(huxerui::Column{
-                EmptyState(Localized("没有匹配的节点"), app::images::search),
-            }.With(huxerui::Grow(1.0F),
-                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-                 .Key("group-page-" + rootGroup.name));
-            continue;
-        }
-        huxerui::View grid = ScrollArea(PageVirtualGrid(
-                                 nodeCount,
-                                 [groupSnapshot, visibleNodes = std::move(visibleNodes),
-                                  tasks, testTasks, control, toast,
-                                  onSelectFailure, onSelectReadOnly,
-                                  nodeCount, proxiesModel, dotsWidth,
-                                  selectionIntent](std::size_t index)
-                                     -> huxerui::View {
-                                     if (index >= nodeCount ||
-                                         visibleNodes[index] >= groupSnapshot->nodes.size()) {
-                                         return huxerui::View{};
-                                     }
-                                     const ProxyNode& node =
-                                         groupSnapshot->nodes[visibleNodes[index]];
-                                     const std::string& nodeName = node.name;
-                                     return NodeCard(
-                                                node, groupSnapshot->name, groupSnapshot->now, dotsWidth,
-                                                selectionIntent, groupSnapshot->selectable,
-                                                testTasks, control, toast, proxiesModel,
-                                                NodeSelectAction(
-                                                    selectionIntent, tasks,
-                                                    proxiesModel,
-                                                    onSelectFailure,
-                                                    onSelectReadOnly,
-                                                    *groupSnapshot, node))
-                                         .Key(groupSnapshot->name + "::" + nodeName);
-                                 }, kSectionCardSpacing)
-                                 .Columns(compact
-                                              ? huxerui::GridColumns::Fixed(2)
-                                              : huxerui::GridColumns::Adaptive(
-                                                    kProxyNodeWidth))
-                                 // 行高**只给估算值**，真实高度由虚拟布局测量卡片内容
-                                 // 得到：卡片是「两行内容 + 上下 8pt 内边距」的
-                                 // 自适应高度（字体缩放、系统字号变化都会改高度），
-                                 // 写死精确行高会在这些情况下裁切/错位。
-                                 .EstimatedRowExtent(52.0F)
-                                 .CacheExtent(kProxyGridCacheExtent)
-                                 .ColumnSpacing(kSectionCardSpacing), {}, {}, {},
-                                 gridInsets)
-                                 .With(huxerui::Grow(1.0F))
-                                 .Key("group-grid-" + rootGroup.name);
-        groupPages.push_back(huxerui::Column {grid}.With(
-            huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
-            .Key("group-page-" + rootGroup.name));
-    }
-
-    huxerui::View body;
+    huxerui::View content;
     if (direct) {
-        body = EmptyState(Localized("直连模式 —— 流量不经过任何代理节点"), app::images::proxies);
+        content = EmptyState(Localized("直连模式 —— 流量不经过任何代理节点"), app::images::proxies);
     } else if (rootGroups.empty()) {
-        body = EmptyState(Localized(global ? "全局模式暂无可用策略组"
+        content = EmptyState(Localized(global ? "全局模式暂无可用策略组"
                                            : "暂无策略组（检查订阅配置）"), app::images::proxies);
+    } else if (groupedMode) {
+        content = GroupedProxyView(rootGroups, query, degraded, expandedGroups, actions,
+            triggerGroupTest, compact, gridInsets, groupedScroll, groupedColumns, tasks);
     } else {
-        body = SectionTabPages(groupPages, selectedTab, [selectGroup, tabNames](std::size_t index) {
+        // The Pager measures just the participating pages; each group retains its own scroll position.
+        std::vector<huxerui::View> groupPages;
+        std::vector<SectionTab> groupTabs;
+        groupPages.reserve(rootGroups.size());
+        groupTabs.reserve(rootGroups.size());
+        for (std::size_t page = 0; page < rootGroups.size(); ++page) {
+            const ProxyGroup& root = *rootGroups[page];
+            groupTabs.push_back({root.name, root.displayName, degraded.contains(root.name) ? "!" : ""});
+            const ProxyGroup& group = page == selectedTab && current != nullptr ? *current : root;
+            auto visibleNodes = MatchingProxyNodes(group, query);
+            huxerui::View grid;
+            if (visibleNodes.empty() && !query.empty()) {
+                grid = EmptyState(Localized("没有匹配的节点"), app::images::search);
+            } else {
+                auto& offset = (*tabScroll)[group.name];
+                if (!offset) offset = std::make_shared<PageScrollOffset>();
+                const auto count = visibleNodes.size();
+                auto items = PageVirtualGrid(count,
+                    [snapshot = std::make_shared<const ProxyGroup>(group),
+                     visibleNodes = std::move(visibleNodes), actions](std::size_t index) {
+                        return actions.Card(*snapshot, visibleNodes[index]);
+                    }, kSectionCardSpacing);
+                grid = ProxyGrid(std::move(items), compact, gridInsets, offset).Key("group-grid-" + group.name);
+            }
+            groupPages.push_back(huxerui::Column {grid}.With(
+                huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+                .Key("group-page-" + root.name));
+        }
+        auto pages = SectionTabPages(groupPages, selectedTab, [selectGroup, tabNames](std::size_t index) {
             if (index < tabNames.size()) selectGroup(tabNames[index]);
         }, sectionMotion);
+        content = huxerui::Column {
+          SectionTabBar(groupTabs, selectedRoot, selectGroup, sectionMotion, SectionTabPickerMode::ResponsiveGroups),
+          std::move(pages).With(huxerui::Grow(1.0F)),
+        }.With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     }
 
-    // 标签栏固定在页面顶部（不随节点列表滚动），只有选中分组的节点参与滚动。
-    std::vector<huxerui::View> columnChildren;
-    if (!tabNames.empty()) {
-        std::vector<SectionTab> groupTabs;
-        groupTabs.reserve(tabNames.size());
-        // 保真度角标：这份订阅编译时被降级 / 跳过的组，在标签上带一个 "!"。这里只
-        // 做「哪个组有问题」的定位，明细在设置页「配置保真度」
-        // （见 docs/singbox-layers-and-fidelity.md §2）。
-        const std::set<std::string> degraded = degradedGroups.Get();
-        for (const std::string& name : tabNames) {
-            groupTabs.push_back(SectionTab{
-                name, findGroup(all, name) ? findGroup(all, name)->displayName : name,
-                degraded.contains(name) ? std::string{"!"} : std::string{}});
+    huxerui::View toolbarActions;
+    if (!rootGroups.empty()) {
+        const auto actionLabel = Localized(groupedMode ? "切换到横滑视图" : "切换到分组视图");
+        const auto icon = groupedMode ? app::images::proxy_view_tabs : app::images::proxy_view_groups;
+        huxerui::View speed;
+        if (groupedMode) {
+            speed = WithoutIconButtonOutlines(ProxyAllSpeedButton(testModel, tabNames, triggerGroupTest));
+        } else if (current != nullptr) {
+            speed = ProxySpeedSearchAction(current->name, testModel, triggerGroupTest);
         }
-        columnChildren.push_back(
-            SectionTabBar(groupTabs, selectedRoot, selectGroup, sectionMotion,
-                          SectionTabPickerMode::ResponsiveGroups));
-    }
-    huxerui::View content = std::move(body);
-    if (!columnChildren.empty()) {
-        columnChildren.push_back(std::move(content).With(huxerui::Grow(1.0F)));
-        content =
-            huxerui::Column(std::move(columnChildren))
-                .With(huxerui::Spacing(0.0F),
-                      huxerui::Grow(1.0F),
-                      huxerui::CrossAlign(
-                          huxerui::CrossAxisAlignment::Stretch));
-    }
-
-    huxerui::View speedAction;
-    if (!direct && current != nullptr) {
-        speedAction = ProxySpeedSearchAction(current->name, testModel, triggerGroupTest);
+        toolbarActions = huxerui::Row {
+          speed,
+          huxerui::IconButton(icon, actionLabel).OnClick([grouped] { grouped = !grouped.Get(); })
+              .With(huxerui::Tooltip(actionLabel)).Key("proxy-view-toggle"),
+        }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
     const auto title = Localized("代理");
     huxerui::View searchToolbar = PageSearchToolbar(
-        proxySearch, searchExpanded, title, Localized("搜索节点"), speedAction);
+        proxySearch, searchExpanded, title, Localized("搜索节点"), toolbarActions);
     huxerui::View page = PageScaffold(title, {}, std::move(content),
                                     false, true, true, std::nullopt, {}, std::move(searchToolbar));
     return huxerui::Stack {sync, page}.With(

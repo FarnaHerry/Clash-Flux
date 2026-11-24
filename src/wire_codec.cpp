@@ -223,13 +223,19 @@ template <> struct meta<clashflux::wire::ProfileRuleEdits> {
     static constexpr auto value = object("format_version", &T::format_version,
         "revision", &T::revision, "rules", &T::rules);
 };
+template <> struct meta<clashflux::wire::ProxyChain> {
+    using T = clashflux::wire::ProxyChain;
+    static constexpr auto value = object("name", &T::name, "source_id", &T::source_id,
+        "kind", &T::kind, "object", &T::object, "port", &T::port, "process", &T::process,
+        "dns_server", &T::dns_server);
+};
 template <> struct meta<clashflux::wire::RouteRule> {
     using T = clashflux::wire::RouteRule;
     static constexpr auto value = object("match", &T::match, "pattern", &T::pattern,
                                         "connection_id", &T::connection_id, "priority", &T::priority,
         "id", &T::id, "tier", &T::tier, "enabled", &T::enabled,
         "unavailable", &T::unavailable, "target_kind", &T::target_kind,
-        "target_object", &T::target_object, "order", &T::order);
+        "target_object", &T::target_object, "order", &T::order, "chain", &T::chain);
 };
 template <> struct meta<clashflux::wire::Policy> {
     using T = clashflux::wire::Policy;

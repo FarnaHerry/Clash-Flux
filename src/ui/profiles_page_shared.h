@@ -42,6 +42,13 @@ using ProfileEditLoader =
     std::function<void(std::int64_t, std::function<void()>)>;
 using ProfileEditDialog = std::function<void(std::int64_t)>;
 
+struct SshProfileDraft {
+    huxerui::TextEditingValue server, port{"22"}, username, password, hostKey, passphrase;
+    std::string privateKey;
+    std::size_t auth = 0;
+    bool operator==(const SshProfileDraft&) const = default;
+};
+
 struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> name;
     huxerui::State<huxerui::TextEditingValue> url;
@@ -59,9 +66,10 @@ struct ProfileCreateFields {
     huxerui::State<huxerui::TextEditingValue> pptp_routes;
     huxerui::State<bool> pptp_mppe;
     huxerui::State<std::optional<huxerui::FileReference>> picked_file;
+    huxerui::State<SshProfileDraft> ssh;
 };
 
-enum class ProfileAddMethod { Qr, File, Url, Direct };
+enum class ProfileAddMethod { Qr, File, Url, Direct, Ssh };
 
 struct ProfileImportRequest {
     bool remote = false;

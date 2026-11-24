@@ -12,6 +12,7 @@
 #include "../src/rule_set_cache_ownership.h"
 #include <cstdio>
 #include "../src/network_settings.h"
+#include "../src/ui/ssh_profile_config.h"
 #include <zstd.h>
 
 import std;
@@ -3257,6 +3258,9 @@ int main(int argc, char** argv) {
         return target_rule_baseline::Benchmark(std::stoi(argv[2]));
     if (argc == 2 && std::string_view(argv[1]) == "--protocol-entries") {
         protocol_entry_tests::Run(); return failures ? 1 : 0;
+    }
+    if (argc == 3 && std::string_view(argv[1]) == "--chain-fixture") {
+        protocol_entry_tests::CheckCrossSourceChain(argv[2]); return failures ? 1 : 0;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--protocol-baseline") {
         testProtocolBaseline(); protocol_model_tests::Run(); return failures ? 1 : 0;

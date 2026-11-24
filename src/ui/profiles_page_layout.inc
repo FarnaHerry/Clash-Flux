@@ -192,13 +192,14 @@
         newPptpMppe = true;
         newQrContent = huxerui::TextEditingValue{""};
         pickedFile = std::nullopt;
+        newSsh = SshProfileDraft{};
     };
     const ProfileCreateFields createFields{
         newName, newUrl, newQrContent, newTypeIdx, newDesc,
         newTimeout, newInterval, newSys, newCore,
         newPptpServer, newPptpUsername, newPptpPassword, newPptpTimeout,
         newPptpRoutes, newPptpMppe,
-        pickedFile};
+        pickedFile, newSsh};
     const auto showCreateDialog = [createFields, tasks, toast, picker, http,
                                     pptpSupported, dialog] {
         ShowEditorDialog(dialog, [=](huxerui::DialogContext ctx) {

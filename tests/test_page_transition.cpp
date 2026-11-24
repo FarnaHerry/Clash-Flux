@@ -80,6 +80,7 @@
 #include "profile_card_layout.h"
 #include "profile_list_layout.h"
 #include "proxy_display_name.h"
+#include "proxy_group_layout.h"
 #include "proxy_test_model.h"
 #include "proxy_node_tile.h"
 #include "proxy_speed_button.h"
@@ -423,7 +424,8 @@ void testWebsiteTests() {
         ui.UpdateResourceConfiguration({.locale = huxerui::Locale::FromLanguageTag("zh")});
         ui.PumpAndSettle();
         const auto shared = websiteFixture;
-        check(!ui.Find(UiSelector::Text("https://www.baidu.com/")).Exists(), "website cards show names without a URL subtitle");
+        check(!ui.Find(UiSelector::Text("https://www.google.com/generate_204")).Exists(),
+              "website cards show names without a URL subtitle");
         check(ui.Find(UiSelector::Key("website-icon-0")).Exists() &&
               ui.Find(UiSelector::Key("website-icon-1")).Exists(),
               "website cards show their site icons at compact and expanded widths");
@@ -440,11 +442,12 @@ void testWebsiteTests() {
         check(!ui.Find(UiSelector::Key("action-menu-surface")).Exists(),
               "right-clicking a fixed site does not open an edit menu");
 
-        const auto first = ui.Find(UiSelector::Text("Baidu")).One().bounds;
-        const auto second = ui.Find(UiSelector::Text("Bilibili")).One().bounds;
+        const auto first = ui.Find(UiSelector::Text("Google")).One().bounds;
+        const auto second = ui.Find(UiSelector::Text("YouTube")).One().bounds;
         check(width == 320.0F ? second.y > first.y : std::abs(second.y - first.y) < 1.0F && second.x > first.x,
               "production website grid uses one compact column and multiple expanded columns");
-        check(shared->sites.Get().size() == 8 && !shared->AnyActive(), "website presets do not make automatic requests");
+        const auto siteCount = shared->sites.Get().size();
+        check(siteCount == 10 && !shared->AnyActive(), "website presets do not make automatic requests");
         ui.SetWindowMetrics({.viewport = {width, 300}});
         ui.PumpAndSettle();
         const float initialCardY = ui.Find(UiSelector::Key("website-card-0")).One().bounds.y;
@@ -489,7 +492,7 @@ void testWebsiteTests() {
         };
         const auto idleLayout = websiteLayout();
         check(testAction(0).Find(UiSelector::Key("website-probe-icon")).Exists() &&
-              idleBounds.y > ui.Find(UiSelector::Text("Baidu")).One().bounds.y,
+              idleBounds.y > ui.Find(UiSelector::Text("Google")).One().bounds.y,
               "the outlined lightning appears in the bottom-right test slot");
         ui.Find(UiSelector::Key("website-test-0")).Tap();
         ui.Pump(std::chrono::milliseconds{1});
@@ -556,7 +559,7 @@ void testWebsiteTests() {
         shared->CancelAll();
         ui.Pump(std::chrono::milliseconds{1});
         check(!shared->AnyActive() && metrics->active == 0 &&
-              shared->sites.Get()[7].result.phase == WebsiteTestPhase::Cancelled,
+              shared->sites.Get()[last].result.phase == WebsiteTestPhase::Cancelled,
               "cancel closes in-flight HTTP tasks and clears queued work immediately");
         shared->Start(*websiteTasks, slow, {0});
         ui.PumpAndSettle();
@@ -589,9 +592,9 @@ void testWebsiteTests() {
         ui.TapAt(batchCenter);
         ui.PumpAndSettle();
         const auto completed = shared->sites.Get();
-        check(!shared->AnyActive() && metrics->maximum == 3 && metrics->started - startedBeforeBatch == 8 &&
-            std::all_of(completed.begin(),
-            completed.begin() + 8, [](const auto& row) { return row.result.status == 403; }),
+        check(!shared->AnyActive() && metrics->maximum == 3 &&
+            metrics->started - startedBeforeBatch == static_cast<int>(siteCount) &&
+            std::ranges::all_of(completed, [](const auto& row) { return row.result.status == 403; }),
             "bounded website workers drain the complete preset batch");
         check(batchAction.One().enabled && !batchLoading.Exists() && batchSlot.One().bounds == batchBounds,
               "the header lightning reappears in place once every website test finishes");
@@ -655,10 +658,11 @@ void testWebsiteNetworkAndTimeout() {
     ui.PumpAndSettle();
     const auto model = websiteFixture;
     auto active = std::make_shared<int>(0);
-    const WebsiteTestModel::Probe stalled = [active](std::string url) -> huxerui::Task<WebsiteTestResult> {
+    const WebsiteTestModel::Probe stalled = [active, queuedUrl = model->sites.Get()[3].url]
+        (std::string url) -> huxerui::Task<WebsiteTestResult> {
         struct Guard { std::shared_ptr<int> count; ~Guard() { --*count; } } guard{active};
         ++*active;
-        co_await huxerui::Delay(url.find("jd.com") != std::string::npos ? std::chrono::milliseconds{10} : std::chrono::hours{24});
+        co_await huxerui::Delay(url == queuedUrl ? std::chrono::milliseconds{10} : std::chrono::hours{24});
         co_return WebsiteTestResult{WebsiteTestPhase::Responded, 200};
     };
     model->Start(*websiteTasks, stalled, {0, 1, 2, 3});
@@ -5784,54 +5788,62 @@ struct ProxyProbeFixture {
 std::shared_ptr<ProxyProbeFixture> proxyProbeFixture;
 void CheckProxyTestAfterStandby(const std::shared_ptr<clashflux::ui::ProxyTestModel>& model) {
     model->ObserveContext(false, 1, 1);
-    model->preparing = true;
+    const auto batch = model->GetGroup("standby-group");
+    const auto other = model->GetGroup("other-standby-group");
+    const auto ticket = model->Begin(*batch);
+    const auto otherTicket = model->Begin(*other);
     model->ObserveContext(true, 1, 2);
-    check(model->preparing.Get(), "pending probe survives the transition into standby");
-    model->preparing = false;
-    const auto ticket = model->Begin();
+    check(batch->Current(ticket) && other->Current(otherTicket),
+          "both waiting groups survive the transition into standby");
+    batch->bound = other->bound = true;
     const auto probe = model->Get("standby-test", 0, false, 0);
-    check(model->Start(probe, ticket, 0), "original probe starts on the ready core");
+    check(batch->Start(probe, ticket, 0), "original probe starts on the ready core");
+    check(!other->Start(probe, otherTicket, 0), "another group cannot claim the same kernel history");
     model->ObserveContext(true, 1, 2);
-    check(model->Current(ticket), "standby observation preserves the new probe");
+    check(batch->Current(ticket), "standby observation preserves the new probe");
     model->ObserveContext(true, 1, 3);
-    model->Complete(probe, ticket, 170);
-    check(!model->Current(ticket) && model->Get("standby-test", 0, false, 0)->value.Get().delay == 0,
-          "core replacement invalidates measurements even when the plan revision matches");
+    batch->Complete(probe, ticket, 170);
+    check(!batch->Current(ticket) && !other->Current(otherTicket) && probe->owner == 0 &&
+          model->Get("standby-test", 0, false, 0)->value.Get().delay == 0,
+          "core replacement retires every bound group even when the plan revision matches");
     model->ObserveContext(true, 1);
 }
 void InstallProxyProbeFixture(huxerui::ApplicationContext& context) {
     proxyProbeFixture = std::make_shared<ProxyProbeFixture>();
+    proxyProbeFixture->model->GetGroup("fixture-group");
     CheckProxyTestAfterStandby(proxyProbeFixture->model);
     context.Provide(proxyProbeFixture);
 }
 void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::TaskScope tasks,
-    bool fail, bool native, int count = 1) {
+    bool fail, bool native, int count = 1, std::string group = "fixture-group", std::string nodePrefix = "node-") {
     using namespace clashflux::ui;
     const auto model = fixture->model;
-    const int ticket = model->Begin();
+    const auto batch = model->GetGroup(group);
+    const int ticket = model->Begin(*batch);
     if (ticket == 0) return;
+    batch->bound = true;
     const int result = 137 + 100 * fixture->requests++;
     std::vector<ProxyProbeTarget> targets;
     for (int index = 0; index < count; ++index) {
-        const auto tag = "node-" + std::to_string(index);
+        const auto tag = nodePrefix + std::to_string(index);
         const auto entry = model->Get(tag, 0, false, 0);
         const auto history = native ? NativeProxyHistory::Capture(
             *entry, std::pair{fixture->nativeDelay.Get(), fixture->nativeTime.Get()}) : NativeProxyHistory{};
-        model->Start(entry, ticket, history.baselineTime);
+        batch->Start(entry, ticket, history.baselineTime);
         targets.push_back({tag, entry, history});
     }
-    model->Broadcast(ticket, "fixture-group");
     if (native) {
-        LaunchNativeProxyProbeBatch(tasks, model, std::move(targets), ticket, [] { return true; },
+        LaunchNativeProxyProbeBatch(tasks, batch, std::move(targets), ticket, [] { return true; },
             [fixture](const std::string&) -> std::optional<std::pair<int, std::int64_t>> {
                 return std::pair{fixture->nativeDelay.Get(), fixture->nativeTime.Get()};
             });
     } else {
         huxerui::State<bool> release{false};
         fixture->releases.push_back(release);
-        LaunchProxyGroupProbeBatch(tasks, model, "fixture-group", std::move(targets), ticket,
-            [fixture, release, fail, result, count](const std::string&)
+        LaunchProxyGroupProbeBatch(tasks, batch, group, std::move(targets), ticket,
+            [fixture, release, fail, result, count, group, nodePrefix](const std::string& measuredGroup)
                 -> huxerui::Task<std::map<std::string, int>> {
+                check(measuredGroup == group, "the batch calls the kernel with its own group tag");
                 ++fixture->started;
                 fixture->peak = std::max(fixture->peak, ++fixture->active);
                 while (!release.Get()) co_await huxerui::Delay(std::chrono::duration<double>{0.01});
@@ -5839,7 +5851,7 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
                 if (fail) throw std::runtime_error("fixture probe failure");
                 std::map<std::string, int> delays;
                 for (int index = 0; index < count; ++index) {
-                    delays["node-" + std::to_string(index)] = result;
+                    delays[nodePrefix + std::to_string(index)] = result;
                 }
                 co_return delays;
             }, [] { return true; },
@@ -5848,9 +5860,6 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
                 return std::pair{fixture->pollDelay.Get(), fixture->pollTime.Get()};
             });
     }
-    tasks.Launch([model, ticket, native]() -> huxerui::Task<void> {
-        co_await WaitForProxyTestBatch(model, ticket, native);
-    });
 }
 [[huxerui::composable]] huxerui::View ProxyProbeOrigin() {
     const auto fixture = huxerui::UseService<ProxyProbeFixture>();
@@ -5862,6 +5871,9 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
       huxerui::Button("Batch probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, false, false, 12); }),
       huxerui::Button("Fail probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, true, false); }),
       huxerui::Button("Native probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, false, true); }),
+      huxerui::Button("Other group probe").OnClick([fixture, tasks] {
+          StartProbeFixture(fixture, tasks, false, false, 1, "other-group", "other-node-");
+      }),
       huxerui::Text(probe.testing ? "PROBE-TESTING" : probe.timeout ? "PROBE-TIMEOUT" :
           "PROBE:" + std::to_string(probe.delay)),
     };
@@ -5872,7 +5884,8 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
     return huxerui::Column {
       huxerui::Button("Toggle probe page").OnClick([shown] { shown = !shown.Get(); }),
       shown.Get() ? ProxyProbeOrigin().Key("probe-origin") : huxerui::View{huxerui::Row{}}.Key("probe-retired"),
-      huxerui::Text(fixture->model->progress.Get().busy ? "PROBE-BATCH-BUSY" : "PROBE-BATCH-READY"),
+      huxerui::Text(fixture->model->GetGroup("fixture-group")->ticket.Get() != 0
+          ? "PROBE-BATCH-BUSY" : "PROBE-BATCH-READY"),
     };
 }
 huxerui::View ProxyProbeFixtureRoot() { return huxerui::FlatTheme{ProxyProbeFixtureContent()}; }
@@ -5882,6 +5895,7 @@ void testProxyProbesSurvivePageRetirement() {
     huxerui::testing::UiTest ui(kProxyProbeFixtureApplication, {.viewport = {600.0F, 700.0F}});
     ui.PumpAndSettle();
     const auto fixture = proxyProbeFixture;
+    const auto batch = fixture->model->GetGroup("fixture-group");
     const auto toggle = [&] { ui.Find(UiSelector::Text("Toggle probe page")).Tap(); ui.Pump(); };
     // Some checks deliberately keep another request suspended; advance its clock
     // without requiring the entire application's task queue to become empty.
@@ -5890,7 +5904,7 @@ void testProxyProbesSurvivePageRetirement() {
     };
     ui.Find(UiSelector::Text("Batch probe")).Tap(); ui.Pump();
     ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
-    check(fixture->requests == 1 && fixture->started == 1 && fixture->model->pending.Get() == 12,
+    check(fixture->requests == 1 && fixture->started == 1 && batch->pending == 12,
           "one group request includes unseen nodes and rejects duplicate clicks");
     toggle();
     check(!ui.Find(UiSelector::Key("probe-origin")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-BUSY")).Exists(),
@@ -5901,11 +5915,11 @@ void testProxyProbesSurvivePageRetirement() {
     fixture->pollDelay = 88;
     fixture->pollTime = std::int64_t{7};
     settle();
-    check(ui.Find(UiSelector::Text("PROBE:88")).Exists() && fixture->model->pending.Get() == 11 &&
+    check(ui.Find(UiSelector::Text("PROBE:88")).Exists() && batch->pending == 11 &&
           ui.Find(UiSelector::Text("PROBE-BATCH-BUSY")).Exists(),
           "kernel snapshot publishes each node before the group batch returns");
     toggle(); fixture->pollTime = 0; fixture->releases[0] = true; settle(); toggle();
-    check(ui.Find(UiSelector::Text("PROBE:88")).Exists() && fixture->model->pending.Get() == 0 &&
+    check(ui.Find(UiSelector::Text("PROBE:88")).Exists() && batch->pending == 0 &&
           fixture->model->probes.at("node-1")->value.Get().delay == 137 &&
           ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
           "incremental node result remains while the rest of the batch completes");
@@ -5913,7 +5927,7 @@ void testProxyProbesSurvivePageRetirement() {
     check(ui.Find(UiSelector::Text("PROBE-TIMEOUT")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
           "measurement exceptions survive remount and clear pending state");
     ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
-    fixture->model->End(fixture->model->progress.Get().generation);
+    batch->End(batch->ticket.Get());
     ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
     fixture->releases[2] = true; settle();
     check(ui.Find(UiSelector::Text("PROBE-TESTING")).Exists(), "late completion cannot overwrite a newer request");
@@ -5921,7 +5935,7 @@ void testProxyProbesSurvivePageRetirement() {
     check(ui.Find(UiSelector::Text("PROBE:437")).Exists(), "latest request publishes its own result");
     ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
     fixture->model->ObserveContext(true, 2); fixture->releases[4] = true; settle();
-    check(ui.Find(UiSelector::Text("PROBE:0")).Exists() && fixture->model->pending.Get() == 0,
+    check(ui.Find(UiSelector::Text("PROBE:0")).Exists() && batch->pending == 0,
           "runtime-plan change discards old results and busy state");
     ui.Find(UiSelector::Text("Native probe")).Tap(); ui.Pump(); toggle();
     fixture->nativeDelay = 42; fixture->nativeTime = std::int64_t{5}; settle(); toggle();
@@ -5938,6 +5952,22 @@ void testProxyProbesSurvivePageRetirement() {
     fixture->nativeTime = std::int64_t{0}; fixture->nativeDelay = 0; settle();
     check(ui.Find(UiSelector::Text("PROBE-TIMEOUT")).Exists() && ui.Find(UiSelector::Text("PROBE-BATCH-READY")).Exists(),
           "libbox history removal settles a failed native group retry immediately");
+
+    const auto requests = fixture->requests;
+    const auto releaseIndex = fixture->releases.size();
+    ui.Find(UiSelector::Text("Probe")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Other group probe")).Tap(); ui.Pump();
+    const auto other = fixture->model->groups.at("other-group");
+    settle();
+    check(fixture->requests == requests + 2 && batch->pending == 1 && other->pending == 1 && fixture->active == 2,
+          "distinct group requests dispatch together with independent pending counts");
+    fixture->releases[releaseIndex + 1] = true; settle();
+    check(other->ticket.Get() == 0 && batch->ticket.Get() != 0 &&
+          fixture->model->probes.at("other-node-0")->value.Get().delay == 137 + 100 * (requests + 1),
+          "the second group finishes and publishes its own result while the first stays busy");
+    fixture->releases[releaseIndex] = true; settle();
+    check(batch->ticket.Get() == 0 && fixture->model->probes.at("node-0")->value.Get().delay == 137 + 100 * requests,
+          "the first group finishes against its own target after the other group");
 }
 
 
@@ -6006,12 +6036,133 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
 huxerui::View SingleProbeFixtureRoot() { return huxerui::FlatTheme{SingleProbeFixtureContent()}; }
 const huxerui::Application kSingleProbeFixtureApplication{SingleProbeFixtureRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallProxyProbeFixture}}};
+void testProxyGroupPanelLayout() {
+    using namespace clashflux::ui;
+    std::shared_ptr<ProxyTestModel> tests;
+    const huxerui::Application app{[]() -> huxerui::View {
+        return huxerui::FlatTheme{huxerui::Scope([] {
+            const auto tests = huxerui::UseService<ProxyTestModel>();
+            const auto expanded = huxerui::UseState(false);
+            const auto measured = huxerui::UseState<std::size_t>(2);
+            const auto tasks = huxerui::UseTaskScope();
+            const auto search = huxerui::UseState(huxerui::TextEditingValue{});
+            const auto searchExpanded = huxerui::UseState(false);
+            const auto start = [tests](const std::string& tag) { tests->Begin(*tests->GetGroup(tag)); };
+            const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
+            const auto columns = compact ? std::size_t{2} : measured.Get();
+            const bool open = expanded.Get();
+            constexpr std::size_t count = 5;
+            const auto rows = open ? (count + columns - 1) / columns : 0;
+            auto list = PageVirtualList(rows + 2, [=](std::size_t index) -> huxerui::View {
+                const auto speed = [tests, start](std::string tag) {
+                    return huxerui::Scope([tests, start, tag] {
+                        return ProxySpeedButton(*tests, tag, [start, tag] { start(tag); });
+                    });
+                };
+                if (index == 0) {
+                    return ProxyGroupPanelPart(huxerui::Column {
+                      ProxyGroupHeader("First group", "Selector", count, true, open, "", speed("first"),
+                          [expanded] { expanded = !expanded.Get(); }),
+                      open ? huxerui::View{} : huxerui::View(huxerui::Text("Group overview")),
+                    }, true, !open, !open).Key("first-group-panel");
+                }
+                if (index == rows + 1) {
+                    return ProxyGroupPanelPart(
+                        ProxyGroupHeader("Second group with a very long name", "URLTest", 124, false,
+                            false, "", speed("second"), [] {}), true, true, false)
+                        .Key("second-group-panel");
+                }
+                const auto start = (index - 1) * columns;
+                std::vector<huxerui::View> cards;
+                for (auto i = start; i < std::min(start + columns, count); ++i) {
+                    cards.push_back(huxerui::Row{huxerui::Text(std::to_string(i))}
+                        .With(huxerui::Frame{.min_height = 40.0F}, huxerui::Grow(1.0F))
+                        .Key("panel-node-" + std::to_string(i)));
+                }
+                const bool last = index == rows;
+                return ProxyGroupPanelPart(ProxyGroupNodeRow(std::move(cards), columns, last), false, last, last)
+                    .Key("panel-row-" + std::to_string(index));
+            }).EstimatedItemExtent(56.0F).With(MeasureProxyGroupColumns{measured, tasks, compact});
+            return huxerui::Column {
+              SearchPageHeader(huxerui::UseTheme(), {}, PageSearchToolbar(search, searchExpanded,
+                  "Proxies", "Search nodes", ProxyAllSpeedButton(tests, {"first", "second"}, start))),
+              ScrollArea(std::move(list)).With(huxerui::Grow(1.0F)),
+            }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        })};
+    }, {.show_debug_overlay = false, .application_hooks = {
+        [&tests](huxerui::ApplicationContext& context) {
+            tests = std::make_shared<ProxyTestModel>();
+            context.Provide(tests);
+        },
+    }}};
+    huxerui::testing::UiTest ui(app, {.viewport = {960.0F, 480.0F}, .resource_provider = AppResources()});
+    ui.PumpAndSettle();
+    const auto overview = ui.Find(UiSelector::Text("Group overview"));
+    const auto node = [&](std::size_t index) { return ui.Find(UiSelector::Key("panel-node-" + std::to_string(index))); };
+    const auto row = [&](std::size_t index) { return ui.Find(UiSelector::Key("panel-row-" + std::to_string(index))); };
+    const auto group = ui.Find(UiSelector::Key("first-group-panel"));
+    const auto second = ui.Find(UiSelector::Key("second-group-panel"));
+    const auto toggle = group.Find(UiSelector::Key("proxy-group-expand"));
+    const auto allSpeed = ui.Find(UiSelector::Key("proxy-test-all"));
+    const auto speedAction = UiSelector::Key("speed-test-action");
+    const auto loading = UiSelector::Key("speed-test-loading");
+    const auto checkHeader = [&](const auto& panel) {
+        const auto title = panel.Find(UiSelector::Key("proxy-group-title")).One().bounds;
+        const auto badge = panel.Find(UiSelector::Key("proxy-group-count")).One().bounds;
+        const auto speed = panel.Find(UiSelector::Key("speed-test-button")).One().bounds;
+        const auto arrow = panel.Find(UiSelector::Key("proxy-group-expand")).One().bounds;
+        const auto bounds = panel.One().bounds;
+        check(title.width > 24.0F && std::abs(title.x - bounds.x - kProxyGroupInset) < 1.0F &&
+              badge.width >= 24.0F && badge.width < 64.0F && title.x + title.width <= badge.x &&
+              badge.x + badge.width <= speed.x && speed.x + speed.width <= arrow.x &&
+              std::abs(arrow.x + arrow.width - (bounds.x + bounds.width - kProxyGroupInset)) < 1.0F,
+              "group title and compact count, lightning and disclosure occupy their own visible positions");
+    };
+    checkHeader(group);
+    checkHeader(second);
+    check(overview.Exists() && !node(0).Exists(), "collapsed panel shows its overview in place of node cards");
+    group.Find(speedAction).Tap(); ui.PumpAndSettle();
+    const auto firstTest = tests->GetGroup("first");
+    const auto secondTest = tests->GetGroup("second");
+    const int firstTicket = firstTest->ticket.Get();
+    check(firstTicket != 0 && group.Find(loading).Exists() && second.Find(speedAction).Exists() &&
+          allSpeed.Find(speedAction).Exists() && overview.Exists(),
+          "group lightning starts its own request without toggling the panel or blocking the toolbar");
+    allSpeed.Find(speedAction).Tap(); ui.PumpAndSettle();
+    const int secondTicket = secondTest->ticket.Get();
+    check(firstTest->ticket.Get() == firstTicket && secondTicket != 0 && allSpeed.Find(loading).Exists(),
+          "toolbar lightning starts the other group and joins the already active request");
+    firstTest->End(firstTicket); ui.PumpAndSettle();
+    check(group.Find(speedAction).Exists() && second.Find(loading).Exists() && allSpeed.Find(loading).Exists(),
+          "the toolbar stays busy until its last group finishes");
+    secondTest->End(secondTicket); ui.PumpAndSettle();
+    check(allSpeed.Find(speedAction).Exists(), "the toolbar lightning returns when the batch finishes");
+    toggle.Tap(); ui.PumpAndSettle();
+    const auto header = group.One().bounds;
+    const auto first = node(0).One().bounds;
+    const auto last = node(4).One().bounds;
+    check(!overview.Exists() && std::abs(row(1).One().bounds.y - (header.y + header.height)) < 1.0F,
+          "the first node row meets the group header without an outside gap");
+    check(node(3).One().bounds.y == first.y && last.y > first.y &&
+          std::abs(last.width - first.width) < 1.0F && std::abs(last.x - first.x) < 1.0F,
+          "wide group uses four equal tracks and keeps the partial last row aligned");
+    ui.SetWindowMetrics({.viewport = {380.0F, 480.0F}}); ui.PumpAndSettle();
+    checkHeader(group);
+    checkHeader(second);
+    check(node(1).One().bounds.y == node(0).One().bounds.y && node(2).One().bounds.y > node(1).One().bounds.y &&
+          std::abs(node(4).One().bounds.width - node(0).One().bounds.width) < 1.0F,
+          "resizing to compact keeps the panel expanded and switches to two aligned columns");
+    toggle.Tap(); ui.PumpAndSettle();
+    check(overview.Exists() && !node(0).Exists(), "closing the panel restores the overview");
+}
+
 void testProxySpeedLoading() {
     using namespace std::chrono_literals;
     struct Fixture {
         clashflux::ui::ProxyTestModel tests;
         huxerui::State<bool> reducedMotion{false};
         huxerui::State<bool> inToolbar{false};
+        huxerui::State<bool> showBoth{false};
         huxerui::State<bool> searchExpanded{false};
         huxerui::State<huxerui::TextEditingValue> search{huxerui::TextEditingValue{}};
         huxerui::State<std::string> group{std::string{"fixture-group"}};
@@ -6023,11 +6174,19 @@ void testProxySpeedLoading() {
             const auto state = huxerui::UseService<Fixture>();
             auto theme = huxerui::MaterialLightThemeSpec();
             theme.motion.reduced_motion = state->reducedMotion.Get();
-            const auto button = clashflux::ui::ProxySpeedButton(state->tests, state->group.Get(), [state] {
+            const auto group = state->group.Get();
+            const auto button = clashflux::ui::ProxySpeedButton(state->tests, group, [state, group] {
                 ++state->clicks;
-                const int ticket = state->tests.Begin();
-                if (ticket) state->tests.Broadcast(ticket, state->group.Get());
+                state->tests.Begin(*state->tests.GetGroup(group));
             });
+            if (state->showBoth.Get()) {
+                return huxerui::MaterialTheme{theme, huxerui::Row {
+                  huxerui::View{button}.Key("first-group-speed"),
+                  clashflux::ui::ProxySpeedButton(state->tests, "second-group", [state] {
+                      state->tests.Begin(*state->tests.GetGroup("second-group"));
+                  }).Key("second-group-speed"),
+                }.With(huxerui::Spacing(8.0F))};
+            }
             if (!state->inToolbar.Get()) return huxerui::MaterialTheme{theme, button};
             auto toolbar = clashflux::ui::PageSearchToolbar(state->search, state->searchExpanded,
                 "Proxies", "Search nodes", button);
@@ -6051,7 +6210,8 @@ void testProxySpeedLoading() {
     const auto bounds = slot.One().bounds;
     const huxerui::Point center{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
     const auto finishTest = [&] {
-        fixture->tests.End(fixture->tests.progress.Get().generation);
+        const auto batch = fixture->tests.GetGroup("fixture-group");
+        batch->End(batch->ticket.Get());
         ui.Pump();
     };
     const auto hasBackdrop = [&] {
@@ -6062,9 +6222,14 @@ void testProxySpeedLoading() {
     };
     check(!hasBackdrop(), "the idle group test icon has no backplate or shadow");
 
-    fixture->tests.preparing = true; ui.Pump();
+    fixture->tests.Begin(*fixture->tests.GetGroup("fixture-group")); ui.Pump();
     check(loading.Exists() && !action.Exists(), "waiting for the core shows the busy indicator");
-    fixture->tests.preparing = false; ui.Pump();
+    fixture->group = std::string{"other-group"}; ui.Pump();
+    check(!loading.Exists() && action.One().enabled,
+          "another group remains ready while the first is waiting for the core");
+    fixture->group = std::string{"fixture-group"}; ui.Pump();
+    check(loading.Exists(), "the original group still shows its readiness spinner");
+    finishTest();
     action.Tap(); ui.Pump();
     const auto circle = loading.One().bounds;
     const auto progress = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Role(
@@ -6087,8 +6252,8 @@ void testProxySpeedLoading() {
     ui.Pump(240ms);
     check(foreground != ui.CaptureSnapshot(), "the circle animates again after returning to the foreground");
     fixture->group = std::string{"another-group"}; ui.Pump();
-    check(!loading.Exists() && !action.One().enabled && slot.One().bounds == bounds,
-          "another group keeps the lightning icon disabled while the current batch runs");
+    check(!loading.Exists() && action.One().enabled && slot.One().bounds == bounds,
+          "another group keeps an enabled lightning icon while the current batch runs");
     fixture->group = std::string{"fixture-group"}; ui.Pump();
     check(loading.Exists(), "returning to the group being measured restores its busy indicator");
 
@@ -6124,9 +6289,6 @@ void testProxySpeedLoading() {
         check(action.One().enabled == (width >= 600.0F),
               "expanded compact search disables group testing and wide search keeps it available");
         if (width >= 600.0F) {
-            fixture->tests.singlePending = 1; ui.Pump();
-            check(!action.One().enabled, "single-node testing also disables the group action during wide search");
-            fixture->tests.singlePending = 0; ui.Pump();
             const int before = fixture->clicks;
             action.Tap(); ui.Pump();
             check(fixture->clicks == before + 1 && loading.Exists() && !action.Exists() &&
@@ -6139,6 +6301,24 @@ void testProxySpeedLoading() {
         check(action.One().enabled && toggle.Exists() && fixture->search.Get().text.empty(),
               "closing search clears the filter and restores group testing");
     }
+
+    fixture->showBoth = true; ui.Pump();
+    const auto first = ui.Find(UiSelector::Key("first-group-speed"));
+    const auto second = ui.Find(UiSelector::Key("second-group-speed"));
+    first.Find(UiSelector::Key("speed-test-action")).Tap(); ui.Pump();
+    check(first.Find(UiSelector::Key("speed-test-loading")).Exists() &&
+          second.Find(UiSelector::Key("speed-test-action")).One().enabled,
+          "starting the first group leaves the second group actionable");
+    second.Find(UiSelector::Key("speed-test-action")).Tap(); ui.Pump();
+    check(first.Find(UiSelector::Key("speed-test-loading")).Exists() &&
+          second.Find(UiSelector::Key("speed-test-loading")).Exists(), "both groups display their own spinner");
+    finishTest();
+    check(first.Find(UiSelector::Key("speed-test-action")).One().enabled &&
+          second.Find(UiSelector::Key("speed-test-loading")).Exists(),
+          "finishing the first group leaves the second group spinner active");
+    const auto secondBatch = fixture->tests.GetGroup("second-group");
+    secondBatch->End(secondBatch->ticket.Get()); ui.Pump();
+    check(second.Find(UiSelector::Key("speed-test-action")).One().enabled, "the second group becomes retryable");
 }
 
 void testNativeSingleProxyProbeCard() {
@@ -6152,6 +6332,7 @@ void testNativeSingleProxyProbeCard() {
     fixture->nativeSingleResults["single-b"] = {234, 7};
     const auto untested = ui.Find(UiSelector::Key("single-a"));
     const auto measured = ui.Find(UiSelector::Key("single-b"));
+    const auto owner = [fixture](const char* tag) { return fixture->model->probes.at(tag)->owner; };
     const auto advance = [&] {
         for (int step = 0; step < 3; ++step) ui.Pump(std::chrono::milliseconds(300));
     };
@@ -6163,16 +6344,16 @@ void testNativeSingleProxyProbeCard() {
           "tapping cached latency starts only that native node and leaves selection alone");
     fixture->nativeSingleResults["single-a"] = {120, 8};
     advance();
-    check(fixture->model->singlePending.Get() == 1,
+    check(owner("single-b") != 0 && owner("single-a") == 0,
           "old latency and another node's new history do not settle the native request");
     fixture->nativeSingleResults["single-b"] = {234, 8};
     advance();
-    check(measured.Find(UiSelector::Text("234")).Exists() && fixture->model->singlePending.Get() == 0,
+    check(measured.Find(UiSelector::Text("234")).Exists() && owner("single-b") == 0,
           "a new timestamp completes the native request even at identical latency");
     measured.Find(UiSelector::Text("234")).Tap(); ui.Pump();
     fixture->nativeSingleResults["single-b"] = {0, 0};
     advance();
-    check(measured.Find(UiSelector::Text("TIMEOUT")).Exists() && fixture->model->singlePending.Get() == 0,
+    check(measured.Find(UiSelector::Text("TIMEOUT")).Exists() && owner("single-b") == 0,
           "libbox history removal completes a failed retry");
     measured.Find(UiSelector::Text("TIMEOUT")).Tap(); ui.Pump();
     fixture->nativeSingleResults["single-b"] = {81, 9};
@@ -6180,6 +6361,16 @@ void testNativeSingleProxyProbeCard() {
     check(measured.Find(UiSelector::Text("81")).Exists() && fixture->singleTags.size() == 3 &&
               fixture->selected.Get() == 0,
           "the timeout label can retry the same node on touch");
+
+    fixture->singleFail = true;
+    measured.Find(UiSelector::Text("81")).Tap(); ui.Pump();
+    untested.Find(UiSelector::Key("node-probe-action")).Tap(); ui.Pump();
+    advance();
+    check(measured.Find(UiSelector::Text("81")).Exists() &&
+              untested.Find(UiSelector::Key("node-probe-action")).Find(UiSelector::Type<huxerui::Image>()).Exists() &&
+              !untested.Find(UiSelector::Text("TIMEOUT")).Exists() &&
+              owner("single-a") == 0 && owner("single-b") == 0 && fixture->singleTags.size() == 5,
+          "a rejected native command restores previous latency or the untested action");
 }
 
 void testSingleProxyProbeCard() {
@@ -6298,17 +6489,20 @@ void testSingleProxyProbeCard() {
     check(fixture->selected.Get() == 1 && fixture->singleTags.empty(),
           "empty space outside the result remains a card selection target");
     fixture->selected = 0;
-    const int batch = fixture->model->Begin(); ui.Pump();
-    check(batch != 0 && action("single-a").One().enabled && action("single-b").One().enabled,
+    const auto batch = fixture->model->GetGroup("fixture-group");
+    const int batchTicket = fixture->model->Begin(*batch); ui.Pump();
+    const auto owner = [fixture](const char* tag) { return fixture->model->probes.at(tag)->owner; };
+    check(batchTicket != 0 && action("single-a").One().enabled && action("single-b").One().enabled,
           "a group batch leaves idle node actions enabled");
     action("single-a").Tap(); ui.Pump();
-    fixture->model->End(batch); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a"} && fixture->selected.Get() == 0 &&
           probing("single-a") && !probeIcon.Exists(),
           "single probe targets the clicked runtime tag and does not activate the parent selection");
     check(tile("single-a").Find(UiSelector::Key("node-probe-slot")).One().bounds == slot &&
-              fixture->model->Begin() == 0,
-          "single loading preserves the bottom slot and excludes a simultaneous group sweep");
+              !batch->Start(fixture->model->probes.at("single-a"), batchTicket, 0) &&
+              batch->Current(batchTicket),
+          "single loading preserves the bottom slot and reserves only the same node");
+    batch->End(batchTicket); ui.Pump();
     action("single-a").Tap(); ui.Pump();
     check(fixture->singleTags.size() == 1 && fixture->selected.Get() == 0,
           "tapping the pending dots does not start another request or select the card");
@@ -6320,7 +6514,7 @@ void testSingleProxyProbeCard() {
     ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active); ui.Pump();
     measured.Find(UiSelector::Text("234")).Tap(); ui.Pump();
     check(fixture->singleTags == std::vector<std::string>{"single-a", "single-b"} &&
-          fixture->model->singlePending.Get() == 2 && fixture->selected.Get() == 0 &&
+          owner("single-a") != 0 && owner("single-b") != 0 && fixture->selected.Get() == 0 &&
           !measured.Find(UiSelector::Text("234")).Exists() &&
           measured.Find(UiSelector::Key("node-probe-dots")).Exists(),
           "clicking the delay starts an independent probe and replaces only that delay with dots");
@@ -6332,14 +6526,14 @@ void testSingleProxyProbeCard() {
           "single result and another node's pending state survive real page retirement");
     check(bounces(), "returning to a pending measurement resumes the bouncing dots");
     fixture->releases.at(1) = true; advance();
-    check(fixture->model->singlePending.Get() == 0, "all single completions release their busy counts");
+    check(owner("single-a") == 0 && owner("single-b") == 0, "all single completions release their nodes");
     tile("single-a").Find(UiSelector::Text("single-a")).Tap(); ui.Pump();
     check(fixture->selected.Get() == 1 && fixture->singleTags.size() == 2, "card body still selects without probing");
     hover("group");
     check(!action("group").Exists(), "group entries expose no individual node action");
     fixture->singleFail = true; hover("single-a"); action("single-a").Tap(); ui.Pump();
     fixture->releases.at(2) = true; advance(); move({500.0F, 650.0F});
-    check(tile("single-a").Find(UiSelector::Text("TIMEOUT")).Exists() && fixture->model->singlePending.Get() == 0,
+    check(tile("single-a").Find(UiSelector::Text("TIMEOUT")).Exists() && owner("single-a") == 0,
           "individual measurement failure clears loading and remains retryable");
     fixture->singleFail = false; hover("single-a"); action("single-a").Tap(); ui.Pump();
     const auto retired = fixture->model->probes.at("single-a");
@@ -6348,9 +6542,9 @@ void testSingleProxyProbeCard() {
     hover("single-a"); action("single-a").Tap(); ui.Pump();
     fixture->releases.at(3) = true; advance();
     check(probing("single-a") &&
-          fixture->model->singlePending.Get() == 1, "old individual result cannot overwrite a new plan's request");
+          owner("single-a") != 0, "old individual result cannot overwrite a new plan's request");
     fixture->releases.at(4) = true; advance(); move({500.0F, 650.0F});
-    check(tile("single-a").Find(UiSelector::Text("81")).Exists() && fixture->model->singlePending.Get() == 0,
+    check(tile("single-a").Find(UiSelector::Text("81")).Exists() && owner("single-a") == 0,
           "retry after a plan change publishes only the new request");
     {
         static int idleTileMounts = 0;
@@ -10018,7 +10212,12 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-node-card") {
-        testSingleProxyProbeCard(); return failures == 0 ? 0 : 1;
+        try { testSingleProxyProbeCard(); }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "FAIL: single proxy probe: %s\n", error.what());
+            return 1;
+        }
+        return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--native-proxy-node-card") {
         try { testNativeSingleProxyProbeCard(); }
@@ -10044,8 +10243,21 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-speed-loading") {
         testProxySpeedLoading(); return failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--proxy-group-panel") {
+        try { testProxyGroupPanelLayout(); }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "FAIL: proxy group panel: %s\n", error.what());
+            return 1;
+        }
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-probe-lifetime") {
-        testProxyProbesSurvivePageRetirement(); return failures == 0 ? 0 : 1;
+        try { testProxyProbesSurvivePageRetirement(); }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
+            return 1;
+        }
+        return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--rules-cache") {
         testSharedRulesCache(); return failures == 0 ? 0 : 1;
@@ -10053,7 +10265,14 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--qr-share") {
         testQrShareBounds(); return failures == 0 ? 0 : 1;
     }
-    if (argc == 2 && std::string_view(argv[1]) == "--website-tests") { testWebsiteTests(); testWebsiteNetworkAndTimeout(); return failures == 0 ? 0 : 1; }
+    if (argc == 2 && std::string_view(argv[1]) == "--website-tests") {
+        try { testWebsiteTests(); testWebsiteNetworkAndTimeout(); }
+        catch (const std::exception& error) {
+            std::fprintf(stderr, "FAIL: website tests: %s\n", error.what());
+            return 1;
+        }
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--home-network") { testHomeNetworkModel(); return failures == 0 ? 0 : 1; }
     if (argc == 2 && std::string_view(argv[1]) == "--home-proxy-pickers") {
         testHomeProxyPickers();
@@ -10400,7 +10619,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
         ++failures;
     }
-    try { testProxySpeedLoading(); }
+    try { testProxySpeedLoading(); testProxyGroupPanelLayout(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: proxy speed loading: %s\n", error.what());
         ++failures;

@@ -17,6 +17,7 @@ git diff --check
 ```
 
 Windows 用 `./run.ps1 --version`。MSVC 需在已加载开发环境的 PowerShell 中构建；不要因缺失 INCLUDE/LIB 改工程配置。
+Windows MSVC/Ninja 若旧目录漏记头文件依赖，从新目录重新配置和构建，详见 [CPS 依赖管理](../../docs/cps-dependencies.md#构建流程)。
 Windows 版本命令需要控制台时使用终端执行，确认实际版本输出与退出码。
 脚本不会隐式编译。`run.ps1` 从 build/CMakeCache.txt 的 CMAKE_RUNTIME_OUTPUT_DIRECTORY 找二进制，未配置则回落 build/clash-flux.exe。
 其它构建目录必须显式指定 `CLASHFLUX_BIN`：Linux 为 `CLASHFLUX_BIN=/绝对路径/clash-flux ./run.sh --version`；PowerShell 设置 `$env:CLASHFLUX_BIN` 后运行脚本。

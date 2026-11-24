@@ -4,10 +4,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -19,62 +22,107 @@ struct ProbeState {
     bool testing = false;
     bool operator==(const ProbeState&) const = default;
 };
-struct GroupTestProgress {
-    int generation = 0;
-    bool busy = false;
-    bool operator==(const GroupTestProgress&) const = default;
-};
 struct ProxyProbe {
     huxerui::State<ProbeState> value{ProbeState{}};
-    huxerui::State<int> generation{0};
     huxerui::State<std::int64_t> baselineTime{0};
+    ProbeState beforeTest;
+    int owner = 0;
+};
+
+struct ProxyGroupTest {
+    huxerui::State<int> ticket{0};
+    bool bound = false;
+    int pending = 0;
+    std::vector<std::shared_ptr<ProxyProbe>> claimed;
+
+    bool Current(int id) const { return id != 0 && ticket.Get() == id; }
+
+    bool Start(const std::shared_ptr<ProxyProbe>& probe, int id, std::int64_t time) {
+        if (!Current(id) || probe->owner != 0) return false;
+        claimed.push_back(probe);
+        probe->owner = id;
+        probe->beforeTest = probe->value.Get();
+        probe->baselineTime = std::max(probe->baselineTime.Get(), time);
+        probe->value = ProbeState{0, false, true};
+        ++pending;
+        return true;
+    }
+
+    void Complete(const std::shared_ptr<ProxyProbe>& probe, int id, int delay) {
+        if (!Current(id) || probe->owner != id || !probe->value.Get().testing) return;
+        probe->value = ProbeState{delay > 0 ? delay : 0, delay <= 0, false};
+        --pending;
+    }
+
+    void End(int id, bool timedOut = true) {
+        if (!Current(id)) return;
+        for (const auto& probe : claimed) {
+            if (probe->value.Get().testing) {
+                probe->value = timedOut ? ProbeState{0, true, false} : probe->beforeTest;
+            }
+            probe->owner = 0;
+        }
+        claimed.clear();
+        pending = 0;
+        bound = false;
+        ticket = 0;
+    }
 };
 
 // UI-thread state owned by ProxiesModel, independent of pages and virtual rows.
 struct ProxyTestModel {
-    huxerui::State<int> generation{0};
-    huxerui::State<std::string> group{std::string{}};
-    huxerui::State<GroupTestProgress> progress{GroupTestProgress{}};
-    huxerui::State<int> pending{0};
-    huxerui::State<int> singlePending{0};
-    huxerui::State<bool> preparing{false};
-    std::map<std::string, std::shared_ptr<ProxyProbe>> probes;
-    std::optional<std::tuple<bool, std::uint64_t, std::uint64_t>> context;
+    using GroupRequest = std::pair<std::shared_ptr<ProxyGroupTest>, int>;
 
-    bool Current(int ticket) const {
-        return progress.Get().busy && progress.Get().generation == ticket;
+    huxerui::State<int> generation{0};
+    std::map<std::string, std::shared_ptr<ProxyProbe>> probes;
+    std::map<std::string, std::shared_ptr<ProxyGroupTest>, std::less<>> groups;
+    huxerui::State<std::vector<GroupRequest>> allGroupRequests{std::vector<GroupRequest>{}};
+    std::optional<std::tuple<bool, std::uint64_t, std::uint64_t>> context;
+    std::shared_ptr<std::optional<bool>> readiness;
+    std::set<std::string> singlePreparing;
+    int nextTicket = 0;
+
+    std::shared_ptr<ProxyGroupTest> GetGroup(std::string_view tag) {
+        auto [entry, inserted] = groups.try_emplace(std::string(tag));
+        if (inserted) entry->second = std::make_shared<ProxyGroupTest>();
+        return entry->second;
     }
-    int Begin() {
-        if (progress.Get().busy || singlePending.Get() != 0) return 0;
-        const int ticket = generation.Get() + 1;
-        pending = 0;
-        progress = GroupTestProgress{ticket, true};
-        return ticket;
+
+    int Begin(ProxyGroupTest& group) {
+        if (group.ticket.Get() != 0) return 0;
+        group.ticket = ++nextTicket;
+        return nextTicket;
     }
-    void Broadcast(int ticket, const std::string& name) {
-        if (!Current(ticket)) return;
-        group = name;
-        if (generation.Get() < ticket) generation = ticket;
+
+    bool AllGroupsTesting() const {
+        return std::ranges::any_of(allGroupRequests.Get(), [](const GroupRequest& request) {
+            return request.first->Current(request.second);
+        });
     }
-    void End(int ticket) {
-        if (!Current(ticket)) return;
-        for (auto& [tag, probe] : probes)
-            if (probe->generation.Get() == ticket && probe->value.Get().testing)
-                probe->value = ProbeState{0, true, false};
-        if (generation.Get() < ticket) generation = ticket;
-        pending = 0;
-        progress = GroupTestProgress{};
+
+    void StartAllGroups(const std::vector<std::string>& tags,
+        const std::function<void(const std::string&)>& start) {
+        if (AllGroupsTesting()) return;
+        std::vector<GroupRequest> requests;
+        requests.reserve(tags.size());
+        for (const auto& tag : tags) {
+            auto group = GetGroup(tag);
+            if (group->ticket.Get() == 0) start(tag);
+            const int ticket = group->ticket.Get();
+            if (ticket != 0) requests.emplace_back(std::move(group), ticket);
+        }
+        allGroupRequests = std::move(requests);
     }
+
     void ObserveContext(bool running, std::uint64_t revision, std::uint64_t epoch = 0) {
         const auto next = std::tuple{running, revision, epoch};
         if (context && *context != next) {
-            const int ticket = std::max(generation.Get(), progress.Get().generation) + 1;
-            progress = GroupTestProgress{};
-            pending = 0;
-            singlePending = 0;
+            // Requests waiting for standby bind to the runtime after it starts.
+            for (const auto& [tag, group] : groups) {
+                if (group->bound) group->End(group->ticket.Get(), false);
+            }
             probes.clear();
-            generation = ticket;
-            group = std::string{};
+            generation += 1;
         }
         context = next;
     }
@@ -87,38 +135,22 @@ struct ProxyTestModel {
         }
         return probe;
     }
-    bool Start(const std::shared_ptr<ProxyProbe>& probe, int ticket, std::int64_t time) {
-        if (!Current(ticket) || probe->generation.Get() == ticket || probe->value.Get().testing) return false;
-        probe->generation = ticket;
-        probe->baselineTime = time;
-        probe->value = ProbeState{0, false, true};
-        pending += 1;
-        return true;
-    }
-    void Complete(const std::shared_ptr<ProxyProbe>& probe, int ticket, int delay) {
-        if (!Current(ticket) || probe->generation.Get() != ticket || !probe->value.Get().testing) return;
-        probe->value = ProbeState{delay > 0 ? delay : 0, delay <= 0, false};
-        if (pending.Get() > 0) pending -= 1;
-    }
     int StartSingle(const std::string& tag, const std::shared_ptr<ProxyProbe>& probe) {
         const auto found = probes.find(tag);
-        if (found == probes.end() || found->second != probe ||
-            probe->value.Get().testing) return 0;
-        const int ticket = std::max(generation.Get(), progress.Get().generation) + 1;
-        generation = ticket;
-        probe->generation = ticket;
+        if (found == probes.end() || found->second != probe || probe->owner != 0) return 0;
+        const int ticket = ++nextTicket;
+        probe->owner = ticket;
+        probe->beforeTest = probe->value.Get();
         probe->value = ProbeState{0, false, true};
-        singlePending += 1;
         return ticket;
     }
     void CompleteSingle(const std::string& tag, const std::shared_ptr<ProxyProbe>& probe,
                         int ticket, std::optional<int> delay) {
         const auto found = probes.find(tag);
-        if (found == probes.end() || found->second != probe ||
-            probe->generation.Get() != ticket || !probe->value.Get().testing) return;
-        probe->value = ProbeState{delay && *delay > 0 ? *delay : 0,
-                                 delay && *delay <= 0, false};
-        if (singlePending.Get() > 0) singlePending -= 1;
+        if (found == probes.end() || found->second != probe || probe->owner != ticket) return;
+        probe->value = delay ? ProbeState{std::max(*delay, 0), *delay <= 0, false}
+                             : probe->beforeTest;
+        probe->owner = 0;
     }
 };
 
@@ -128,11 +160,11 @@ bool LaunchSingleProxyProbe(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestM
     const int ticket = model->StartSingle(tag, probe);
     if (!ticket) return false;
     tasks.Launch([model, tag = std::move(tag), probe, ticket, measure, valid]() -> huxerui::Task<void> {
-        int delay = 0;
+        std::optional<int> delay{0};
         if (valid()) {
             try { delay = co_await measure(tag); } catch (...) {}
         }
-        model->CompleteSingle(tag, probe, ticket, valid() ? std::optional<int>{delay} : std::nullopt);
+        model->CompleteSingle(tag, probe, ticket, valid() ? delay : std::nullopt);
     });
     return true;
 }
@@ -144,7 +176,8 @@ struct NativeProxyHistory {
     static NativeProxyHistory Capture(const ProxyProbe& probe,
         const std::optional<std::pair<int, std::int64_t>>& previous) {
         const auto time = previous ? previous->second : 0;
-        return {std::max(probe.baselineTime.Get(), time), time > 0};
+        const auto baseline = std::max(probe.baselineTime.Get(), time);
+        return {baseline, time > 0 && time == baseline};
     }
 
     std::optional<int> Resolve(ProxyProbe& probe,
@@ -174,14 +207,14 @@ inline constexpr auto kNativeProxyPollInterval = std::chrono::milliseconds{250};
 inline constexpr int kNativeProxyPollAttempts = 120;
 
 template<class Start, class Poll, class Valid>
-huxerui::Task<int> MeasureNativeProxyDelay(std::string tag, std::shared_ptr<ProxyProbe> probe,
+huxerui::Task<std::optional<int>> MeasureNativeProxyDelay(std::string tag, std::shared_ptr<ProxyProbe> probe,
     Start start, Poll poll, Valid valid) {
     const auto history = NativeProxyHistory::Capture(*probe, poll(tag));
     co_await WaitForNativeProxyTimestamp(history.baselineTime);
-    if (!valid() || !(co_await start(tag))) co_return 0;
+    if (!valid() || !(co_await start(tag))) co_return std::nullopt;
     for (int attempt = 0; attempt < kNativeProxyPollAttempts; ++attempt) {
         co_await huxerui::Delay(kNativeProxyPollInterval);
-        if (!valid()) co_return 0;
+        if (!valid()) co_return std::nullopt;
         if (const auto result = history.Resolve(*probe, poll(tag))) co_return *result;
     }
     co_return 0;
@@ -197,7 +230,7 @@ struct ProxyProbeTarget {
 // UI-side per-node fan-out so the kernel owns the group URL, concurrency and
 // history write order (sing-box /group/{name}/delay semantics).
 template<class Measure, class Valid, class Poll>
-void LaunchProxyGroupProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestModel> model,
+void LaunchProxyGroupProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyGroupTest> batch,
     std::string group, std::vector<ProxyProbeTarget> targets, int ticket,
     Measure measure, Valid valid, Poll poll) {
     struct BatchResult {
@@ -216,56 +249,50 @@ void LaunchProxyGroupProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyT
         result->delays = std::move(delays);
         result->done = true;
     });
-    tasks.Launch([model, targets = std::move(targets), ticket, valid, poll, result]() -> huxerui::Task<void> {
+    tasks.Launch([batch, targets = std::move(targets), ticket, valid, poll, result]() -> huxerui::Task<void> {
         for (int attempt = 0; attempt < 124; ++attempt) {
-            if (!valid() || !model->Current(ticket)) co_return;
+            if (!batch->Current(ticket)) co_return;
+            if (!valid()) { batch->End(ticket, false); co_return; }
             if (result->done) break;
             for (const auto& target : targets) {
                 const auto& probe = target.probe;
-                if (probe->generation.Get() != ticket || !probe->value.Get().testing) continue;
+                if (!probe->value.Get().testing) continue;
                 const auto measured = poll(target.tag);
                 if (measured && measured->first > 0 &&
                     measured->second > probe->baselineTime.Get()) {
-                    model->Complete(probe, ticket, measured->first);
+                    batch->Complete(probe, ticket, measured->first);
                     probe->baselineTime = measured->second;
                 }
             }
             co_await huxerui::Delay(std::chrono::duration<double>{0.25});
         }
-        if (!valid() || !model->Current(ticket)) co_return;
+        if (!batch->Current(ticket)) co_return;
+        if (!valid()) { batch->End(ticket, false); co_return; }
         for (const auto& target : targets) {
             const auto found = result->delays.find(target.tag);
-            model->Complete(target.probe, ticket, found == result->delays.end() ? 0 : found->second);
+            batch->Complete(target.probe, ticket, found == result->delays.end() ? 0 : found->second);
         }
+        batch->End(ticket);
     });
 }
 
 template<class Valid, class Poll>
-void LaunchNativeProxyProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyTestModel> model,
+void LaunchNativeProxyProbeBatch(huxerui::TaskScope tasks, std::shared_ptr<ProxyGroupTest> batch,
     std::vector<ProxyProbeTarget> targets, int ticket, Valid valid, Poll poll) {
-    tasks.Launch([model, targets = std::move(targets), ticket, valid, poll]() -> huxerui::Task<void> {
+    tasks.Launch([batch, targets = std::move(targets), ticket, valid, poll]() -> huxerui::Task<void> {
         for (int attempt = 0; attempt < kNativeProxyPollAttempts; ++attempt) {
             co_await huxerui::Delay(kNativeProxyPollInterval);
-            if (!valid()) { model->End(ticket); co_return; }
-            if (!model->Current(ticket) || model->pending.Get() == 0) co_return;
+            if (!batch->Current(ticket)) co_return;
+            if (!valid()) { batch->End(ticket, false); co_return; }
             for (const auto& target : targets) {
                 const auto& probe = target.probe;
-                if (probe->generation.Get() != ticket || !probe->value.Get().testing) continue;
+                if (!probe->value.Get().testing) continue;
                 if (const auto result = target.nativeHistory.Resolve(*probe, poll(target.tag)))
-                    model->Complete(probe, ticket, *result);
+                    batch->Complete(probe, ticket, *result);
             }
+            if (batch->pending == 0) break;
         }
-        model->End(ticket);
+        batch->End(ticket);
     });
-}
-
-inline huxerui::Task<void> WaitForProxyTestBatch(std::shared_ptr<ProxyTestModel> model, int ticket,
-    bool bounded = true) {
-    for (int attempt = 0; !bounded || attempt < 124; ++attempt) {
-        co_await huxerui::Delay(std::chrono::duration<double>{0.25});
-        if (!model->Current(ticket)) co_return;
-        if (model->pending.Get() == 0) break;
-    }
-    model->End(ticket);
 }
 } // namespace clashflux::ui

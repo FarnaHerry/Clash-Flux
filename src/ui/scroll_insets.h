@@ -83,8 +83,9 @@ template<class Factory>
 huxerui::VirtualGrid PageVirtualGrid(std::size_t count, Factory factory, float rowSpacing,
     std::optional<ScrollAreaInsets> insets = {}) {
     const float gap = count == 0 ? 0.0F : rowSpacing;
+    constexpr auto full = std::numeric_limits<std::size_t>::max();
     std::vector<std::size_t> spans(count + 2, 1);
-    spans.front() = spans.back() = std::numeric_limits<std::size_t>::max();
+    spans.front() = spans.back() = full;
     return huxerui::VirtualGrid(count + 2, [=](std::size_t index) -> huxerui::View {
         if (index == 0) return ScrollContentEdge(false, gap, insets);
         if (index == count + 1) return ScrollContentEdge(true, gap, insets);

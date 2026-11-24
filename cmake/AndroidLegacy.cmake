@@ -172,6 +172,7 @@ function(clashflux_prepare_android_sources output_directory output_header
         "${_root}/src/ui/profile_rules_snapshot.cpp"
         "${_root}/src/ui/profile_preparation_model.h"
         "${_root}/src/ui/profiles_page_shared.h"
+        "${_root}/src/ui/ssh_profile_config.h"
         "${_root}/src/ui/subscription_rule_layout.h"
         "${_root}/src/ui/filtered_indices.h"
         "${_root}/src/ui/proxies_model.h"

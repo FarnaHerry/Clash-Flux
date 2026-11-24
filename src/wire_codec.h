@@ -83,6 +83,15 @@ struct Proxies {
     std::map<std::string, Proxy> entries;
     bool operator==(const Proxies&) const = default;
 };
+struct ProxyChain {
+    std::string name;
+    std::string source_id;
+    std::string kind;
+    std::string object;
+    int port = 0;
+    std::string process;
+    std::string dns_server;
+};
 struct RouteRule {
     std::string match;
     std::string pattern;
@@ -95,6 +104,7 @@ struct RouteRule {
     std::string target_kind = "default";
     std::string target_object;
     std::int64_t order = 0;
+    std::optional<ProxyChain> chain;
 };
 struct Policy {
     int format_version = 1;

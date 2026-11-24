@@ -13,6 +13,23 @@ import clashflux.routing;
 
 int main() {
     {
+        vpn::VpnPolicy policy;
+        policy.rules.push_back({.match = vpn::MatchKind::ExactDomain,
+            .pattern = "admin.example.test", .connectionId = "profile-2",
+            .targetKind = vpn::TargetKind::Node, .targetObject = "destination",
+            .chain = vpn::ProxyChain{"private admin", "profile-1", vpn::TargetKind::Node,
+                "upstream", 443, "browser.exe", "192.0.2.53"}});
+        const auto encoded = routing::EncodePolicy(policy);
+        assert(nlohmann::json::parse(encoded).at("format_version") == 3);
+        assert(routing::DecodePolicy(encoded).rules == policy.rules);
+        assert(policy.rules.front().ReferencesSource("profile-1") &&
+            policy.rules.front().ReferencesSource("profile-2"));
+        policy.rules.front().chain.reset();
+        const auto legacy = routing::EncodePolicy(policy);
+        assert(nlohmann::json::parse(legacy).at("format_version") == 2);
+        assert(routing::DecodePolicy(legacy).rules == policy.rules);
+    }
+    {
         clashflux::network::Settings network;
         network.revision = 17;
         network.stack = "mixed";

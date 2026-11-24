@@ -321,7 +321,7 @@ inline huxerui::View ProxyProbeDots(huxerui::Color color, float width) {
 inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
     huxerui::View delay, float dotsWidth, bool selected, std::string label, std::function<void()> activate,
     SelectableTileInteraction interaction, bool canProbe, bool testing,
-    std::function<void()> startProbe) {
+    std::function<void()> startProbe, bool insideGroup = false) {
     title = std::move(title).With(huxerui::Semantics{.hidden = true});
     detail = std::move(detail).With(huxerui::Grow(1.0F), huxerui::Semantics{.hidden = true});
     return huxerui::Scope([=] {
@@ -378,7 +378,7 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
                huxerui::MainAlign(huxerui::MainAxisAlignment::SpaceBetween),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
                huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
-               huxerui::Background(colors.surface),
+               huxerui::Background(insideGroup && !selected ? ResolveIslandTheme(theme).base : colors.surface),
                huxerui::CornerRadius(kSelectableTileRadius),
                huxerui::Grow(1.0F),
                huxerui::Semantics{.role = interactive ? huxerui::SemanticRole::Button

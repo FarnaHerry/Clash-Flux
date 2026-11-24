@@ -267,6 +267,25 @@ bool CoreControl::Run(CoreCommand command, std::function<void(bool)> onFinished)
                 }
     #endif
     #if defined(__ANDROID__)
+                if (command.action == CoreAction::Start && result.status == CoreApplyStatus::Applied) {
+                    // The service starts asynchronously. Wait for the Binder state
+                    // before allowing the original action to use the new runtime.
+                    bool sawStarting = false;
+                    bool running = false;
+                    for (int attempt = 0; attempt < 150 && !control.model->closing; ++attempt) {
+                        const auto state = co_await RunOnTaskThread([] {
+                            return store::coreStore().snapshot().state;
+                        });
+                        if (state == core::CoreState::Running) {
+                            running = true;
+                            break;
+                        }
+                        if (sawStarting && state != core::CoreState::Starting) break;
+                        sawStarting = state == core::CoreState::Starting;
+                        co_await huxerui::Delay(std::chrono::milliseconds{200});
+                    }
+                    if (!running) result.status = CoreApplyStatus::Failed;
+                }
                 if (command.action == CoreAction::Tun && result.status == CoreApplyStatus::Applied) {
                     bool accepted = false;
                     for (int attempt = 0; attempt < 300; ++attempt) {

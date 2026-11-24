@@ -107,6 +107,26 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         enable_language(RC)
     endif ()
 
+    if (WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_GENERATOR MATCHES "^Ninja")
+        # Ninja matches the compiler's raw /showIncludes output. CMake's
+        # console-code-page conversion can corrupt a localized UTF-8 prefix.
+        set(_show_includes_dir "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/ClashFluxShowIncludes")
+        file(WRITE "${_show_includes_dir}/clashflux_include_probe.h" "\n")
+        file(WRITE "${_show_includes_dir}/probe.cpp" "#include \"clashflux_include_probe.h\"\n")
+        execute_process(
+            COMMAND "${CMAKE_CXX_COMPILER}" /nologo /showIncludes /Zs probe.cpp
+            WORKING_DIRECTORY "${_show_includes_dir}"
+            RESULT_VARIABLE _show_includes_result OUTPUT_VARIABLE _show_includes_output
+            ERROR_QUIET ENCODING NONE)
+        if (_show_includes_result STREQUAL "0" AND
+            _show_includes_output MATCHES "(^|\n)([^\r\n]*:[ \t]+)[A-Za-z]:[^\r\n]*clashflux_include_probe\\.h")
+            if (NOT CMAKE_CL_SHOWINCLUDES_PREFIX STREQUAL CMAKE_MATCH_2)
+                message(STATUS "clash-flux: corrected the MSVC /showIncludes prefix for Ninja")
+                set(CMAKE_CL_SHOWINCLUDES_PREFIX "${CMAKE_MATCH_2}")
+            endif ()
+        endif ()
+    endif ()
+
     set(CMAKE_CXX_STANDARD 23)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CXX_EXTENSIONS ON)            # gnu++23：模块实现与 GCC 标准库组合最顺

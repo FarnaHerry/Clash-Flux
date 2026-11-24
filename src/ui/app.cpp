@@ -359,22 +359,23 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     return huxerui::ProvideEnvironment(std::move(fields), std::move(content));
 }
 
-// 桌面与手机共用图标定义；选中只改变内容色和指示器，不替换图标轮廓。
+// 桌面侧栏与窄屏底栏共享线框和实填图标。
 struct NavigationEntry {
-    huxerui::ImageResource icon;
+    huxerui::ImageResource outlineIcon;
+    huxerui::ImageResource selectedIcon;
     huxerui::StringVariant label;
 };
 
-const std::array<NavigationEntry, 8> kNavigationEntries{
-    NavigationEntry{app::images::home, Localized("首页")},
-    NavigationEntry{app::images::request, Localized("订阅")},
-    NavigationEntry{app::images::proxies, Localized("代理")},
-    NavigationEntry{app::images::route, Localized("规则")},
-    NavigationEntry{app::images::connections, Localized("连接")},
-    NavigationEntry{app::images::logs, Localized("日志")},
-    NavigationEntry{app::images::website_test, Localized("网站测试")},
-    NavigationEntry{app::images::gear, Localized("设置")},
-};
+const std::array<NavigationEntry, 8> kNavigationEntries{{
+    {app::images::home, app::images::home_selected, Localized("首页")},
+    {app::images::request, app::images::request_selected, Localized("订阅")},
+    {app::images::proxies, app::images::proxies_selected, Localized("代理")},
+    {app::images::route, app::images::route_selected, Localized("规则")},
+    {app::images::connections, app::images::connections_selected, Localized("连接")},
+    {app::images::logs, app::images::logs_selected, Localized("日志")},
+    {app::images::website_test, app::images::website_test_selected, Localized("网站测试")},
+    {app::images::gear_outline, app::images::gear, Localized("设置")},
+}};
 
 // Android 仅暴露四个一级页；规则、连接、日志和网站测试由设置页的“更多”入口承载。
 constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
@@ -497,7 +498,8 @@ private:
           huxerui::Stack {}.With(huxerui::Frame{.width = indicator.width, .height = indicator.height},
               huxerui::Background(style.indicator), radius,
               huxerui::Opacity(huxerui::AnimateTo(selected ? 1.0F : 0.0F, style.selection_animation))),
-          huxerui::Image(entry.icon).Tint(selected ? style.selected_content : style.label_style.foreground)
+          huxerui::Image(selected ? entry.selectedIcon : entry.outlineIcon)
+              .Tint(selected ? style.selected_content : style.label_style.foreground)
               .With(huxerui::Frame{.width = style.icon_size, .height = style.icon_size}),
         }.With(huxerui::Frame{.height = style.item_height}, huxerui::Padding(style.item_margin), radius,
             huxerui::Align(huxerui::HorizontalAlignment::Center, huxerui::VerticalAlignment::Center),
@@ -567,13 +569,13 @@ private:
         const std::size_t destination = kAndroidNavDestinations[index];
         const NavigationEntry& entry = kNavigationEntries[destination];
         const bool isSelected = index == selected;
-        // 图标和文字共用同一层的选中颜色和渐变。
-        // 动画是框架的呈现修饰符，不逐帧写 State，也不参与槽位布局。
-        const auto content = [entry](huxerui::Color color) {
+        const huxerui::TweenSpec fade{duration, huxerui::Easing::EaseOut};
+        const auto content = [entry, isSelected, fade](huxerui::Color color, bool filled) {
             return huxerui::Column {
-                huxerui::Image(entry.icon)
+                huxerui::Image(filled ? entry.selectedIcon : entry.outlineIcon)
                     .Tint(color)
-                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+                    .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
+                          huxerui::Opacity(huxerui::AnimateTo(filled || !isSelected ? 1.0F : 0.0F, fade))),
                 huxerui::Text(entry.label).Style(huxerui::TextStyle{
                     huxerui::Font::System(font_size::kCaption), color})
                     .Align(huxerui::TextAlign::Center),
@@ -583,11 +585,9 @@ private:
         };
         entries.push_back(
             huxerui::Stack {
-                content(theme.colors.on_surface_variant),
-                content(theme.colors.primary)
-                    .With(huxerui::Opacity(huxerui::AnimateTo(
-                        isSelected ? 1.0F : 0.0F,
-                        huxerui::TweenSpec{duration, huxerui::Easing::EaseOut}))),
+                content(theme.colors.on_surface_variant, false),
+                content(theme.colors.primary, true)
+                    .With(huxerui::Opacity(huxerui::AnimateTo(isSelected ? 1.0F : 0.0F, fade))),
             }.With(huxerui::Grow(1.0F),
                       huxerui::Frame{.height = 64.0F},
                       huxerui::Padding(

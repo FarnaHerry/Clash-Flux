@@ -37,14 +37,16 @@ struct WebsiteTestSite {
 
 inline std::vector<WebsiteTestSite> FixedWebsiteTests() {
     std::vector<WebsiteTestSite> rows{
-        {"Baidu", "https://www.baidu.com/", app::images::website_baidu},
-        {"Bilibili", "https://www.bilibili.com/", app::images::website_bilibili},
-        {"QQ", "https://www.qq.com/", app::images::website_qq},
-        {"JD", "https://www.jd.com/", app::images::website_jd},
         {"Google", "https://www.google.com/generate_204", app::images::website_google},
         {"YouTube", "https://www.youtube.com/", app::images::website_youtube},
+        {"TikTok", "https://www.tiktok.com/", app::images::website_tiktok},
+        {"Bilibili 港澳台", "https://www.bilibili.com/bangumi/play/ss44467", app::images::website_bilibili},
         {"GitHub", "https://github.com/", app::images::github},
         {"Cloudflare", "https://www.cloudflare.com/", app::images::website_cloudflare},
+        {"ChatGPT", "https://chatgpt.com/", app::images::website_chatgpt},
+        {"Claude", "https://claude.ai/", app::images::website_claude},
+        {"Gemini", "https://gemini.google.com/app", app::images::website_gemini},
+        {"Muse AI", "https://muse.ai/", app::images::website_muse},
     };
     for (std::size_t i = 0; i < rows.size(); ++i) rows[i].id = i;
     return rows;

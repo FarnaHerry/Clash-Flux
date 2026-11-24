@@ -441,7 +441,11 @@ View InstallerContent() {
 [[huxerui::composable]]
 View InstallerPage() {
   const ThemeSpec theme = InstallerThemeSpec(UseSystemThemeBrightness() == ThemeBrightness::Dark);
-  return MaterialTheme(theme, InstallerContent());
+  return MaterialTheme(theme, Scope([] {
+    auto progress = UseEnvironment<ProgressBarStyle>();
+    progress.stop_indicator_size = 0.0F;
+    return ProvideEnvironment(progress, InstallerContent());
+  }));
 }
 
 const Application application{

@@ -219,7 +219,102 @@ void RunBoundaries(const std::filesystem::path& directory) {
     check(!singbox::inspectProfileSourceObjects(main).error.empty(), "P5 native JSON does not accidentally enable a Clash object inventory");
 }
 
+void CheckManualSshProfile() {
+    clashflux::ui::SshProfileConfig entry{
+        .server = "192.168.1.10", .port = 2222, .username = "private-user",
+        .password = " pass: # \"word\" ", .hostKey = "ssh-ed25519 fixture-host-key"};
+    singbox::CompileOptions options;
+    options.mainConnectionId = "manual-ssh";
+    options.profileYaml = clashflux::ui::MakeSshProfileYaml(entry);
+    std::string error;
+    check(singbox::ValidateProfileDocument(options.profileYaml, error), "manual SSH YAML uses the normal local import path");
+    const auto compiled = singbox::compileConfig(options);
+    const auto node = Node(compiled, options.mainConnectionId, "SSH · 192.168.1.10");
+    check(compiled.error.empty() && node.is_object() && node.value("server", "") == entry.server &&
+          node.value("server_port", 0) == 2222 && node.value("user", "") == entry.username &&
+          node.value("password", "") == entry.password &&
+          node.value("host_key", std::vector<std::string>{}) == std::vector<std::string>{entry.hostKey},
+          "manual SSH profile preserves the private address, credentials, and pinned host key");
+    if (node.is_object() && !compiled.json.empty()) {
+        const auto config = json::parse(compiled.json);
+        const auto final = config.at("route").at("final");
+        const auto& outbounds = config.at("outbounds");
+        check(std::ranges::any_of(outbounds, [&](const auto& outbound) {
+            return outbound.value("type", "") == "selector" && outbound.at("tag") == final &&
+                outbound.at("outbounds") == json::array({node.at("tag")});
+        }), "manual SSH profile routes through the namespaced SSH selector");
+    }
+
+    entry.privateKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n";
+    entry.passphrase = " key: # phrase ";
+    options.profileYaml = clashflux::ui::MakeSshProfileYaml(entry);
+    const auto keyed = singbox::compileConfig(options);
+    const auto keyedNode = Node(keyed, options.mainConnectionId, "SSH · 192.168.1.10");
+    check(keyed.error.empty() && keyedNode.is_object() && !keyedNode.contains("password") &&
+          keyedNode.value("private_key", "") == entry.privateKey &&
+          keyedNode.value("private_key_passphrase", "") == entry.passphrase,
+          "manual SSH preserves the multiline key and passphrase and only saves the selected authentication");
+}
+
+void CheckCrossSourceChain(const std::filesystem::path& output = {}) {
+    singbox::CompileOptions options;
+    options.mainConnectionId = "main";
+    options.profileYaml = "rules: ['MATCH,DIRECT']\n";
+    const auto source = [](std::string_view name, int port) {
+        return std::format("proxies: [{{name: {}, type: socks5, server: 127.0.0.1, port: {}}}]\n"
+            "rules: ['MATCH,DIRECT']\n", name, port);
+    };
+    options.auxiliarySources = {{"entry", "Upstream", source("edge", 32001)},
+                                {"exit", "Destination", source("private", 32002)}};
+    options.globalRules = {{.match = vpn::MatchKind::DomainSuffix, .pattern = "private.example",
+        .connectionId = "exit", .id = "loopback-chain", .targetKind = vpn::TargetKind::Node,
+        .targetObject = "private", .chain = vpn::ProxyChain{
+            "private services", "entry", vpn::TargetKind::Node, "edge", 443, "fixture.exe", "192.0.2.53"}}};
+    const auto compiled = singbox::compileConfig(options);
+    check(compiled.error.empty() && !compiled.json.empty(), "cross-source chain compiles: " + compiled.error);
+    if (compiled.json.empty()) return;
+    const auto config = json::parse(compiled.json);
+    const auto entry = Node(compiled, "entry", "edge");
+    const auto exit = Node(compiled, "exit", "private");
+    check(entry.is_object() && exit.is_object() && !exit.contains("detour"),
+          "chain keeps both source references and preserves the original exit");
+    const auto& rules = config.at("route").at("rules");
+    const auto rule = std::ranges::find_if(rules, [](const auto& rule) { return rule.contains("domain_suffix"); });
+    check(rule != rules.end() && rule->value("port", 0) == 443 &&
+          rule->value("process_name", "") == "fixture.exe", "chain adds destination port and process constraints");
+    if (rule == rules.end() || !entry.is_object()) return;
+    const auto selected = rule->at("outbound").get<std::string>();
+    const auto upstreamTag = entry.at("tag").get<std::string>();
+    check(config.at("route").at("final").get<std::string>() != selected,
+          "unmatched traffic keeps its existing default outbound");
+    check(std::ranges::any_of(config.at("outbounds"), [&](const auto& outbound) {
+        return outbound.value("tag", "") == selected && outbound.value("server_port", 0) == 32002 &&
+            outbound.value("detour", "") == upstreamTag;
+    }), "rule routes to a clone of the exit dialed through the upstream");
+    check(std::ranges::any_of(config.at("dns").at("servers"), [&](const auto& server) {
+        return server.value("server", "") == "192.0.2.53" && server.value("detour", "") == selected;
+    }), "private DNS uses the compiled chain");
+    if (!output.empty()) {
+        std::ofstream file(output);
+        file << compiled.json;
+        file.close();
+        check(bool(file), "write chain fixture for fixed core validation");
+    }
+    options.auxiliarySources.front().available = false;
+    const auto unavailable = singbox::compileConfig(options);
+    check(unavailable.error.empty() && !unavailable.json.empty(), "missing upstream retains a compiled policy");
+    if (!unavailable.json.empty()) {
+        const auto failed = json::parse(unavailable.json);
+        check(std::ranges::any_of(failed.at("route").at("rules"), [](const auto& rule) {
+            return rule.contains("domain_suffix") && rule.value("action", "") == "reject";
+        }) && failed.at("dns").at("rules").front().value("action", "") == "reject",
+          "unavailable upstream fails closed for both traffic and private DNS");
+    }
+}
+
 void Run() {
+    CheckManualSshProfile();
+    CheckCrossSourceChain();
     const RuleSetTestDirectory directory;
     unsigned families = 0;
     for (const auto& fixture : LoadCases("protocol-baseline.json")) {

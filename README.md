@@ -181,6 +181,8 @@ cmake --build build -j
 ./run.sh
 ```
 
+Windows 在 MSVC 开发 PowerShell 中构建，运行用 `./run.ps1`。旧 Ninja 构建目录若遗漏头文件依赖，请用新目录完整构建。详见 [CPS 依赖管理](docs/cps-dependencies.md#构建流程)。
+
 ### 开发验证规范
 
 项目级 AI 开发入口为 [AGENTS.md](AGENTS.md)，按任务读取受版本控制的 `project-skills/`：
@@ -419,7 +421,7 @@ Linux RPM/DEB 自带桌面集成：`/usr/bin/clash-flux` 命令入口、应用�
 `main` 保留官方基线；Lib-Camera、Lib-Charts、Lib-SQLite 也从各自 `FarnaHerry` fork 的
 `farna/main` 按固定 SHA 获取，原生构建与 Android 库图共用同一依赖身份。
 本地检出、补丁归属与升级流程见 [HuxerUI fork](docs/huxerui-fork.md)。
-本机与 CI 固定使用 `cbd3ce2`，包含 HuxerUI 0.5.0 源码基线及 Linux 托盘原位更新修复。CodeEditor 同步到 fork `ee5b0cf8`，文档与挂载控制器分离；Media 同步到官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
+本机与 CI 固定使用 `e53ac6a`，基于 HuxerUI 0.5.0 源码，包含状态相关前景色及 Linux 托盘原位更新修复。CodeEditor 同步到 fork `ee5b0cf8`，文档与挂载控制器分离；Media 同步到官方 `fee506de`，扫码页适配系统图片选择 API。Camera 的新音频依赖集成另见上述 fork 记录。应用尚未启用新优先级策略，既有布局沿用原行为。源码 CLI 使用 `--sdk` 选择框架，Android CI 复用锁定的 0.4.0 离线归档中的 CLI 并以 `--sdk` 构建同一 fork 源码。离线回落包为独立锁定的 0.4.0 SDK，仅提供 CLI 与宿主工具，不含 fork 专属 `create_initial_window` 运行时 API，桌面构建使用 fork 源码（配置期守卫校验）。
 
 Windows 打包：`huxerui package windows` 产出自带安装向导的 setup.exe
 （Burn 捆绑 MSI + HuxerUI 编写的安装器界面，含安装目录选择、桌面快捷方式、

@@ -261,6 +261,8 @@ cmake --build build -j
 ./run.sh
 ```
 
+On Windows, build in the MSVC Developer PowerShell and run the app with `./run.ps1`. Use a fresh build directory if an older Ninja build missed header dependencies. See [CPS dependency management](docs/cps-dependencies.md#构建流程).
+
 ### Required development validation
 
 [AGENTS.md](AGENTS.md) routes AI development work to version-controlled project skills in `project-skills/`,
@@ -580,7 +582,7 @@ Lib-Charts and Lib-SQLite also use pinned commits from their `FarnaHerry` forks'
 `farna/main` branches, with the same URL/COMMIT identities in native builds and the
 Android library graph. See [HuxerUI fork maintenance](docs/huxerui-fork.md) for local
 checkout, patch ownership and upgrade instructions.
-Local builds and CI pin `cbd3ce2`, which includes the HuxerUI 0.5.0 source baseline and in-place Linux tray updates. CodeEditor uses fork `ee5b0cf8`, with retained documents and a controller for each mount. Media uses upstream `fee506de`, with the QR page migrated to the system image-picker API. The fork record explains the remaining Camera audio-dependency integration. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
+Local builds and CI pin `e53ac6a`, based on HuxerUI 0.5.0 source with state-dependent foreground colors and in-place Linux tray updates. CodeEditor uses fork `ee5b0cf8`, with retained documents and a controller for each mount. Media uses upstream `fee506de`, with the QR page migrated to the system image-picker API. The fork record explains the remaining Camera audio-dependency integration. The app does not yet enable the new priority policy; existing layouts keep their previous behavior. The source CLI selects the framework with `--sdk`; the Android CI reuses the CLI from the locked 0.4.0 offline archive and points it at the same pinned fork source with `--sdk`. The offline fallback is the separately locked 0.4.0 SDK archive, which supplies the CLI and host tools only; it lacks the fork-only `create_initial_window` runtime API, so desktop builds use the pinned fork source (checked by a configure-time guard).
 
 Windows packaging with `huxerui package windows` creates a `setup.exe` with an
 installation wizard: Burn bundles an MSI and a HuxerUI installer interface with

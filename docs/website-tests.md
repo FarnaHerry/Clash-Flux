@@ -6,15 +6,16 @@
 
 ## 固定站点与卡片
 
-- 固定提供 Baidu、Bilibili、QQ、JD、Google、YouTube、GitHub、Cloudflare。每个站点在
+- 固定提供 Google、YouTube、TikTok、Bilibili 港澳台、GitHub、Cloudflare、ChatGPT、Claude、Gemini、Muse AI。每个站点在
   `src/ui/website_test_model.h` 中指定名称、测试地址和打包图标。宽屏为自适应网格，Compact 单列。
   卡片显示网站图标与名称，页头提供全部测试，卡片提供单站测试。
 - 使用站点提供的 favicon，PNG 保存在 `resources/images/website_*.png`；GitHub 复用项目已有的
   Octicons 图标，随深浅主题适配。来源为
-  [Baidu](https://www.baidu.com/favicon.ico)、[Bilibili](https://www.bilibili.com/favicon.ico)、
-  [QQ](https://www.qq.com/favicon.ico)、[JD](https://www.jd.com/favicon.ico)、
+  [Bilibili](https://www.bilibili.com/favicon.ico)、[TikTok](https://www.tiktok.com/favicon.ico)、
   [Google](https://www.google.com/favicon.ico)、[YouTube](https://www.youtube.com/s/desktop/95c3254f/img/favicon_96x96.png)、
-  [Cloudflare](https://www.cloudflare.com/favicon.ico) 和 [GitHub Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-16.svg)。
+  [Cloudflare](https://www.cloudflare.com/favicon.ico)、[GitHub Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-16.svg)、
+  [ChatGPT](https://chatgpt.com/cdn/assets/favicon-48x48.7d42b2e65f.png)、[Claude](https://claude.ai/favicon.ico) 和
+  [Gemini](https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64) 和 [Muse AI](https://muse.ai/favicon.ico)。
 - 左下角显示命中的代理节点或「直连」。收到响应但缺少出站证据时显示「出站未确认」，长节点名可悬停查看全文。
 - 右下角固定为测速槽。待测时显示 14pt 空心对称闪电，成功后显示毫秒数字，失败时显示「超时」或「失败」。
   实际按钮在槽内右对齐，悬停底色、提示和点击范围围绕图标或文字。
@@ -30,6 +31,7 @@
 - 网站测试使用应用共享的 HuxerUI HttpClient，遵循系统当前代理、路由、VPN/TUN 及证书策略。
   网络请求只对目标发送 HTTP HEAD，随平台处理重定向。延迟以实际发送到收到最终响应头的单调时钟耗时计量，
   包含建立连接与重定向，排除排队、读取内核出站及读取响应体的时间。2xx/3xx 成功，4xx/5xx 及传输错误显示失败。
+- Bilibili 港澳台探测港澳台限定番剧的页面访问延迟，实际播放权限需在播放器内验证。[港澳台限定番剧](https://www.bilibili.com/bangumi/play/ss44467)
 - 仅显式单站或批量测试发请求，最多三个并发。实际执行后共享 10 秒预算，模型超时兜底释放并发槽，
   按稳定站点 ID 和请求代次拒绝已结束请求的回调。切页和宽窄切换保留应用级任务。
 - 桌面内核开放代理监听时，读取请求前的连接 ID 与运行实例、计划和端口，

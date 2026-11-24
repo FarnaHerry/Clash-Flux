@@ -180,7 +180,7 @@ bool compileAuxiliarySources(Context& ctx) {
             return false;
         }
         const bool referenced = std::ranges::any_of(ctx.opt.globalRules, [&](const auto& rule) {
-            return rule.enabled && rule.connectionId == source.id;
+            return rule.enabled && rule.ReferencesSource(source.id);
         });
         if (!referenced) continue;
         if (!source.available) {
@@ -256,6 +256,11 @@ bool compileAuxiliarySources(Context& ctx) {
         std::set<std::string> neededOutputs, neededServers;
         std::vector<std::pair<bool, std::string>> pending;
         for (const auto& rule : ctx.opt.globalRules) {
+            if (rule.enabled && rule.chain && rule.chain->sourceId == source.id) {
+                for (const auto& object : part.result.sourceObjects)
+                    if (object.kind == rule.chain->kind && object.objectId == rule.chain->object)
+                        pending.emplace_back(false, object.tag);
+            }
             if (!rule.enabled || rule.connectionId != source.id) continue;
             if (rule.targetKind == vpn::TargetKind::Default) {
                 if (!reject) pending.emplace_back(false, defaultTag);

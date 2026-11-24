@@ -1,5 +1,69 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-24 代理分组组头与全局测速
+
+- 基于 `a204053` 工作区和 HuxerUI `e53ac6a`。组头左侧显示组名与类型，右侧按节点数、分组测速和展开箭头排列。计数按内容测量。分组视图顶栏闪电测试当前出站模式下的全部组，合并在途请求，保留各组独立忙态。
+- Windows `cmake --build build-hui --target clash-flux test_page_transition` 和 Android `./gradlew.bat :app:assembleDebug --max-workers=3 --console=plain` 通过。`./run.ps1 --version`（v0.3.129）、`git diff --check`、CTest `ui_resources` 和 `proxy_standby_runtime` 通过。
+- `--proxy-group-panel` 用实际组头覆盖 960pt 和 380pt 的布局、展开折叠、组测速与全局测速交互。`--proxy-speed-loading`、`--page-search`、`--responsive-shell`、`--proxy-probe-lifetime` 通过。完整 `page_transition` 在 90 秒超时。Windows 窗口检查工具连接超时，未完成原生目测或 Android 真机验收。
+
+## 2026-11-24 HuxerUI farna/main 更新
+
+- 基于 `a204053` 工作区；本机维护分支快进到远端 `e53ac6ab43e3ee1347833856820101f6ff889443`，已包含官方 `main` 的 `d0675f71`。CI 与独立 `third_party/huxerui` checkout 使用该 SHA。
+- Windows/MSVC 使用独立 `build-hui` 全量构建，主目标和测试经 codegen 编译，隔离窗口启动正常。版本检查（v0.3.129）和 `git diff --check` 通过。首页图表、主题、响应式布局、代理分组/测速、搜索和站点测速的定向回归通过。
+- `clashflux-required` 中 37 项分批通过，包含 `persistence`、`cps_dependencies` 和 `ui_resources`。新版完整 `page_transition` 在 600 秒超时，原构建重跑也在 90 秒超时。未运行需要管理员的 `windows_service`、`windows_physical_dns_wfp`。
+- Android Java 与 native 使用同一提交，`./gradlew.bat :app:assembleDebug --max-workers=3 --console=plain` 通过。未进行 Android 真机、macOS 或 Linux 验收。
+
+## 2026-11-24 代理分组卡片布局
+
+- 基于 `a204053` 工作区与 HuxerUI `c154e52`。组头增加类型和节点计数，折叠显示含选中节点的状态点，展开使用连贯卡片表面包住节点。组间距 12pt，节点区仍按可见行虚拟化。
+- Windows 主目标和 `test_page_transition` 经 codegen 构建。`./run.ps1 --version`（v0.3.129）、`git diff --check`、`ui_resources`、`--proxy-group-panel`、`--proxy-speed-loading`、`--proxy-node-card`、`--page-search` 通过。无窗口回归覆盖 960pt/380pt、展开折叠、节点等宽和末行对齐。
+- Android `./gradlew.bat :app:assembleDebug --max-workers=3 --console=plain` 通过。Windows 测试窗口启动成功，锁屏期间未完成原生目测，未进行手机真机验收。
+
+## 2026-11-23 代理组独立测速
+
+- 基于 `a204053` 工作区与 HuxerUI `c154e52`。横滑和分组视图按分组 tag 绑定请求与忙态，同组去重，无共用节点的请求并行。共用节点的请求等当前测量释放，停核时的待命启动共用一次内核操作。
+- Windows 主目标和 `test_page_transition` 经 codegen 在独立产物目录构建。`./run.ps1 --version`（v0.3.129）、`git diff --check`、`ui_resources`、`proxy_standby_runtime`、`--proxy-speed-loading`、`--proxy-probe-lifetime`、`--proxy-node-card`、`--native-proxy-node-card` 通过。覆盖两组按钮同时加载、第二组先出结果、组内去重、共用节点占用及内核换代。
+- Android `./gradlew.bat :app:assembleDebug --max-workers=3 --console=plain` 通过。两组并发通过无窗口回归验证，未做手机真机和真实线路并发测速。
+
+## 2026-11-23 代理页视图切换
+
+- 基于 `a204053` 工作区与 HuxerUI `c154e52`。代理页标题栏可在横滑和纵向分组间切换，共用节点卡、线路选择与测速。分组视图的搜索跨组筛选节点，组测速等待内核时只在目标组显示忙态。
+- Windows 主目标及 `test_page_transition` 经 codegen 构建，`./run.ps1 --version`（v0.3.129）、`git diff --check`、`ui_resources`、`--page-search`、`--proxy-node-card`、`--proxy-speed-loading`、`--proxy-probe-lifetime`、`--scrollbars` 通过。
+- Windows 隔离订阅窗口验证 1080pt 与 470pt 布局、往返切换、展开、跨组搜索与清除、两种视图滚动位置分别恢复。Android `./gradlew.bat :app:assembleDebug --max-workers=3 --console=plain` 通过。未进行手机真机或实际测速验收。
+
+## 2026-11-23 跨来源代理链与按规则分流
+
+- 基于 `a204053` 工作区、HuxerUI `c154e52` 和 sing-box `1.14.4`。桌面全局规则可组合两个跨来源出口，或从已有链带入出口配置。规则可追加目标端口和进程名。域名规则可指定经链路查询的 TCP 私有 DNS。策略格式 v3，兼容读取 v1/v2。
+- Windows 主目标以及 `test_singbox`、`test_routing`、`test_persistence`、`test_page_transition` 构建通过。`./run.ps1 --version`（v0.3.129）、`git diff --check`、`routing`、`persistence`、`ui_resources`、`--protocol-entries`、`--protocol-baseline` 和 `--rules-cache` 通过。
+- `--chain-fixture` 的配置通过固定版 sing-box 检查。回环测试覆盖两个 SOCKS 出口、经链 TCP DNS 和未命中流量的默认路径。编译回归覆盖前置出口缺失时拒绝匹配流量及 DNS 查询。Android `./gradlew.bat :app:assembleDebug --max-workers=3 --console=plain` 通过。未检查真实内网、按进程实时分流、原生窗口、手机真机或完整页面套件。
+
+## 2026-11-23 手动 SSH 节点
+
+- 基于 `a204053` 工作区、HuxerUI `c154e52` 和 sing-box `1.14.4`。订阅新增 SSH 表单，可输入内网地址，使用密码或内联私钥认证，要求主机公钥。生成普通本地 Clash YAML，复用既有导入与候选流程。
+- Windows 主目标、`test_singbox`、`test_persistence`、`test_page_transition` 在独立输出目录构建通过。版本检查（v0.3.129）、`git diff --check`、`ui_resources`、`persistence`、`--protocol-entries`、`--protocol-baseline` 和 `--profile-file-filter` 通过。
+- 固定版 sing-box 对独占回环 SSH 服务验证了密码和加密私钥的实际 TCP 请求，错误主机公钥时未向目标发送请求。Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。未运行完整页面套件，未验收真实内网服务或 Android 真机表单。
+
+## 2026-11-23 一级导航图标选中态
+
+- 基于 `a204053` 工作区与 HuxerUI `c154e52`。八个一级导航入口共用线框与填充图标配对，桌面侧栏随选中状态切换，窄窗及手机底栏在固定槽内交叉淡化。逐一检查了深浅色 SVG 预览。
+- Windows 主目标与 `test_page_transition` 构建、`./run.ps1 --version`（v0.3.129）、`git diff --check`、`ui_resources`、`--responsive-shell`、`--accent-roles`、`--root-dock` 通过。Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。未运行完整页面套件、原生窗口或真机视觉检查。
+- 同日细化代理和订阅的填充图标。地球经纬留白连贯，纸飞机折线收细并延长。检查了深浅配色及 20pt 预览，Windows 主目标、版本、差异检查、`ui_resources` 和 Android Debug 构建通过。
+
+## 2026-11-23 网站测速预设调整
+
+- 基于 `a204053` 工作区与 HuxerUI `c154e52`。移除 Baidu、QQ、JD 和 Bilibili 首页，加入 TikTok 国际站、Bilibili 港澳台限定番剧页与 Muse AI。三个新地址在当前网络下的 HEAD 请求均返回 200，未验证番剧播放权限。
+- Windows 主目标、`test_page_transition`、`./run.ps1 --version`（v0.3.129）、`git diff --check`、`ui_resources` 和 `--website-tests` 通过。Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。核对桌面和 Android 产物均包含三个新地址，未运行完整页面套件或真机检查。
+
+## 2026-11-23 AI 网站测速预设
+
+- 基于 `a204053` 工作区与 HuxerUI `c154e52`。新增 ChatGPT、Claude、Gemini 预设与本地图标，批量测速回归覆盖全部 11 个站点，保持最多三个并发。
+- Windows 主目标和 `test_page_transition` 构建、`./run.ps1 --version`（v0.3.129）、`git diff --check`、`ui_resources`、`--website-tests` 通过。Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。未运行完整页面套件或真机检查。
+
+## 2026-11-23 Android 代理测速就绪与请求失败
+
+- 基于 `a204053` 工作区、HuxerUI `c154e52` 和 sing-box `1.14.4`。Android 与桌面共用测速就绪入口；Android 停核时请求无 TUN 待命，等后台就绪后测速。Binder 未受理时恢复原状态。回归覆盖首次被拒绝、已有延迟被拒绝、历史更新及历史清除。
+- Windows 主目标与 `test_page_transition` 经 codegen 构建通过。版本检查（v0.3.129）、`git diff --check`、`ui_resources`、`core_api_lifetime`、`proxy_standby_runtime` 及四项代理卡片、测速生命周期和加载专项通过。Android `./gradlew.bat :app:assembleDebug --max-workers=3` 通过。未运行完整页面套件或 Android 真机端到端测速。
+
 ## 2026-11-23 搜索胶囊关闭图标
 
 - 基于 `d360e68` 工作区与 HuxerUI `c154e52`。页面搜索胶囊的关闭图标统一为 16pt，点击区仍为 32pt。

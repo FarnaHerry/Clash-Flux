@@ -31,6 +31,10 @@ ctest --test-dir build --output-on-failure --no-tests=error -L clashflux-require
 `CLASHFLUX_DEPENDENCY_CACHE_DIR` 可指定独立包缓存目录；
 `CLASHFLUX_DEPENDENCY_JOBS` 控制 producer 的编译并行度（默认 4）。
 
+Windows 使用 MSVC/Ninja 时，应用配置直接读取本地化 `/showIncludes` 前缀的原始字节。
+这避免 CMake 按控制台代码页转码后，Ninja 漏记头文件依赖并链接旧对象。
+可用 `ninja -C build -t deps` 核对对象记录。已有遗漏的目录需要用新目录重新配置并完整构建。
+
 ## 包与平台边界
 
 - curl 保留静态库、桌面 OpenSSL、HTTP/2/IDN 自动发现和本地 WebSocket 的既有

@@ -148,6 +148,17 @@ export inline std::optional<TargetKind> ParseTargetKind(std::string_view value) 
     return std::nullopt;
 }
 
+export struct ProxyChain {
+    std::string name;
+    std::string sourceId;
+    TargetKind kind = TargetKind::Node;
+    std::string object;
+    int port = 0;
+    std::string process;
+    std::string dnsServer;
+    bool operator==(const ProxyChain&) const = default;
+};
+
 export struct RouteRule {
     MatchKind match = MatchKind::Any;
     std::string pattern;
@@ -160,7 +171,11 @@ export struct RouteRule {
     TargetKind targetKind = TargetKind::Default;
     std::string targetObject; // 来源内唯一原始对象名；改名视为引用失效
     std::int64_t order = 0;
+    std::optional<ProxyChain> chain;
 
+    bool ReferencesSource(std::string_view source) const {
+        return connectionId == source || (chain && chain->sourceId == source);
+    }
     bool operator==(const RouteRule&) const = default;
 };
 
@@ -185,6 +200,18 @@ export inline bool ValidatePolicyRules(const std::vector<RouteRule>& rules, std:
         if (!rule.id.empty() && !ids.insert(rule.id).second) {
             error = "编排规则 ID 重复";
             return false;
+        }
+        if (rule.chain) {
+            const auto& chain = *rule.chain;
+            if (chain.name.empty() || chain.sourceId.empty() || chain.sourceId == DirectConnectionId() ||
+                chain.object.empty() || (chain.kind != TargetKind::Node && chain.kind != TargetKind::Group) ||
+                direct || rule.targetKind != TargetKind::Node || chain.port < 0 || chain.port > 65535 ||
+                (chain.sourceId == rule.connectionId && chain.object == rule.targetObject) ||
+                (!chain.dnsServer.empty() && rule.match != MatchKind::ExactDomain &&
+                 rule.match != MatchKind::DomainSuffix)) {
+                error = "代理链需要有效的名称、前置出口和不同的最终节点";
+                return false;
+            }
         }
     }
     error.clear();

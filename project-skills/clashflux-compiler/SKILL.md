@@ -59,7 +59,7 @@ description: 修改 Clash-Flux 订阅转换、协议/DNS/规则/provider 映射�
 改编排前读 [桌面订阅编排](../../docs/desktop-subscription-orchestration.md)。唯一主订阅 + 按启用规则参与的次来源；手机仍单活动普通来源，UI/CLI/导入/写入口按平台限制，不随视口变化。
 规则层次固定：前置动作 → UserOverride → SourcePolicy → 模式规则 → MainPolicy → MainFallback，priority 仅同层比较后按 order。
 不可用目标保留匹配并 Reject（默认）/UseMain（默认出口、不重跑主规则）/Direct，无启用规则不载入次来源。
-身份 source ID + kind + 原唯一名称；改名引用失效，不宣称对象 UUID；policy format_version=2，v1 保序迁移，拒未知/未来版本，不顺手改 SQLite schema。
+身份 source ID + kind + 原唯一名称；改名引用失效，不宣称对象 UUID；无链 policy 写 v2，含链写 v3，v1 保序迁移，拒未知/未来版本，不顺手改 SQLite schema。
 连接规则追溯遵循[已应用计划与内核证据](../../docs/connection-rule-tracing.md)：完整清单唯一映射、历史基线不补绑、原生实例及发布版本核对，不将预览或相似文本当作生效规则。
 候选先 check 再停旧实例，启动失败仅旧原生资源有效才恢复；planRevision 是成功应用运行号，预览不能覆盖运行映射。
 规则编辑器对象目录只读、独立于运行/预览，包含未参与 Clash 来源；异步核对请求号/来源/内容修订，切源清旧选择，失效引用保留原名，不自动选首项/跨来源同名对象。

@@ -52,6 +52,12 @@ export inline std::string EncodePolicy(const vpn::VpnPolicy& policy) {
                               rule.connectionId, rule.priority, rule.id, std::string(vpn::RuleTierKey(rule.tier)),
             rule.enabled, std::string(vpn::UnavailablePolicyKey(rule.unavailable)),
             std::string(vpn::TargetKindKey(rule.targetKind)), rule.targetObject, rule.order});
+        if (rule.chain) {
+            const auto& chain = *rule.chain;
+            wire.format_version = 3;
+            wire.rules.back().chain = clashflux::wire::ProxyChain{chain.name, chain.sourceId,
+                std::string(vpn::TargetKindKey(chain.kind)), chain.object, chain.port, chain.process, chain.dnsServer};
+        }
     }
     auto result = clashflux::wire::EncodePolicy(wire);
     if (!result) throw std::runtime_error("全局路由配置编码失败：" + result.error);
@@ -62,7 +68,7 @@ export inline vpn::VpnPolicy DecodePolicy(const std::string& text) {
     if (text.empty()) return {};
     const auto value = clashflux::wire::DecodePolicy(text);
     if (!value) throw std::runtime_error("全局路由配置格式错误：" + value.error);
-    if (value.value.format_version < 1 || value.value.format_version > 2)
+    if (value.value.format_version < 1 || value.value.format_version > 3)
         throw std::runtime_error("不支持的编排策略版本；保留原配置");
     vpn::VpnPolicy policy;
     policy.revision = value.value.revision;
@@ -79,6 +85,14 @@ export inline vpn::VpnPolicy DecodePolicy(const std::string& text) {
             .connectionId = item.connection_id, .priority = item.priority,
             .id = item.id, .tier = *tier, .enabled = item.enabled, .unavailable = *unavailable,
             .targetKind = *kind, .targetObject = item.target_object, .order = item.order});
+        if (item.chain) {
+            const auto& chain = *item.chain;
+            const auto kind = vpn::ParseTargetKind(chain.kind);
+            if (!kind || value.value.format_version < 3)
+                throw std::runtime_error("代理链配置版本或目标类型无效");
+            policy.rules.back().chain = vpn::ProxyChain{chain.name, chain.source_id, *kind,
+                chain.object, chain.port, chain.process, chain.dns_server};
+        }
     }
     if (value.value.format_version == 1) {
         // 将旧版同权重的匹配类型排序固化成顺序；新规则只按显式 order。
@@ -127,8 +141,8 @@ export inline bool ValidatePlatformPolicy(const vpn::VpnPolicy& policy,
     if (!vpn::ValidatePolicyRules(policy.rules, error)) return false;
     for (const auto& rule : policy.rules) {
         for (const auto& profile : profiles) {
-            if (ConnectionId(profile.id) == rule.connectionId &&
-                (profile.type == "pptp") && rule.targetKind != vpn::TargetKind::Default) {
+            if (rule.ReferencesSource(ConnectionId(profile.id)) && profile.type == "pptp" &&
+                (rule.chain || rule.targetKind != vpn::TargetKind::Default)) {
                 error = "原生连接只支持默认出口引用"; return false;
             }
         }
@@ -137,7 +151,7 @@ export inline bool ValidatePlatformPolicy(const vpn::VpnPolicy& policy,
     for (const auto& rule : policy.rules) {
         if (!rule.enabled) continue;
         for (const auto& profile : profiles) {
-            if (ConnectionId(profile.id) != rule.connectionId) continue;
+            if (!rule.ReferencesSource(ConnectionId(profile.id))) continue;
             if (profile.type != "pptp" && !profile.selected) {
                 error = "手机平台只允许规则引用当前活动代理订阅";
                 return false;

@@ -31,17 +31,26 @@
                message.find("EOF") != std::string::npos;
     }
 
-    // Desktop standby keeps protocol implementations available for URL tests,
-    // without restoring saved system proxy/TUN choices or opening proxy ports.
+    // Start the platform's standby runtime for control and URL tests.
     bool startReadyCore() {
         std::lock_guard operationLock(lifecycleMutex_);
         ensureOpen();
-        if (snapshot().state == core::CoreState::Running) return true;
+        const auto state = snapshot().state;
+        if (state == core::CoreState::Running) return true;
+#if defined(__ANDROID__)
+        if (state == core::CoreState::Starting) return true;
+        // Preserve the saved VPN config while asking the service for core-only.
+        startCore(currentMainContent(), false, tunEnabled(), std::nullopt, false, true,
+                  /*startVpn=*/false);
+        std::lock_guard lock(mutex_);
+        return snap_.lastError.empty();
+#else
         const auto profileYaml = currentMainContent();
         preparedOptions_ = routingOptions(profileYaml, false);
         preparedOptions_->proxyListening = false;
         startCore(profileYaml, false, false, false);
         return snapshot().state == core::CoreState::Running && snapshot().lastError.empty();
+#endif
     }
 
     bool connectProxy() {
@@ -979,7 +988,7 @@ public:
                 ((profile.type == "pptp") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
         const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
         return std::ranges::any_of(policy.rules, [&](const auto& rule) {
-            return rule.enabled && rule.connectionId == connection;
+            return rule.enabled && rule.ReferencesSource(connection);
         });
     }
 
@@ -1015,7 +1024,7 @@ public:
                  ((profile.type == "pptp") && !routing::SplitRoutes(profile.nativeRoutes).empty()))) return true;
         const auto policy = routing::DecodePolicy(setting("vpn.global_policy", ""));
         return std::ranges::any_of(policy.rules, [&](const auto& rule) {
-            return rule.enabled && rule.connectionId == connection;
+            return rule.enabled && rule.ReferencesSource(connection);
         });
     }
 

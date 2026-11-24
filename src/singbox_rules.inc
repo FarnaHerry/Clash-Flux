@@ -1437,12 +1437,43 @@ bool applyConnectionRules(Context& ctx, ProfileFormat format) {
             if ((main != ctx.sourceDefaults.end() && main->second.drop) || ctx.finalTarget == "REJECT-DROP") rule["method"] = "drop";
         } else rule["outbound"] = finalOutbound;
     };
-    const auto applyTarget = [&](nlohmann::json& rule, const vpn::RouteRule& target) -> std::string {
-        if (target.connectionId == vpn::DirectConnectionId() &&
+    const auto applyTarget = [&](nlohmann::json& rule, const vpn::RouteRule& target,
+                                 std::string& chainOutbound) -> std::string {
+        if (target.chain) {
+            const auto& chain = *target.chain;
+            const auto findObject = [&](std::string_view source, vpn::TargetKind kind, std::string_view name) {
+                return std::ranges::find_if(ctx.result.sourceObjects, [&](const auto& object) {
+                    return object.sourceId == source && object.kind == kind && object.objectId == name;
+                });
+            };
+            const auto via = findObject(chain.sourceId, chain.kind, chain.object);
+            const auto exit = findObject(target.connectionId, target.targetKind, target.targetObject);
+            if (via != ctx.result.sourceObjects.end() && exit != ctx.result.sourceObjects.end()) {
+                for (const char* section : {"outbounds", "endpoints"}) {
+                    auto& entries = config[section];
+                    const auto original = std::ranges::find_if(entries, [&](const auto& outbound) {
+                        return outbound.value("tag", "") == exit->tag;
+                    });
+                    if (original == entries.end()) continue;
+                    auto chained = *original;
+                    const auto tag = unusedOutboundTag(config, "clash-flux-chain");
+                    chained["tag"] = tag;
+                    chained["detour"] = via->tag;
+                    entries.push_back(std::move(chained));
+                    rule["outbound"] = tag;
+                    chainOutbound = tag;
+                    ctx.result.rulePlan.outboundLabels[tag] = chain.name;
+                    return target.connectionId;
+                }
+                ctx.result.error = "代理链最终节点不存在于运行配置：" + chain.name;
+                return {};
+            }
+            ctx.warn("代理链「" + chain.name + "」的节点不可用");
+        } else if (target.connectionId == vpn::DirectConnectionId() &&
             target.targetKind == vpn::TargetKind::Default) {
             rule["outbound"] = directTag;
             return std::string(vpn::DirectConnectionId());
-        }
+        } else {
         const auto native = nativeTags.find(target.connectionId);
         if (native != nativeTags.end() && target.targetKind == vpn::TargetKind::Default) {
             if (!native->second.empty()) { rule["outbound"] = native->second; return target.connectionId; }
@@ -1465,6 +1496,7 @@ bool applyConnectionRules(Context& ctx, ProfileFormat format) {
                 if (object.sourceId == target.connectionId && object.kind == target.targetKind &&
                     object.objectId == target.targetObject) { rule["outbound"] = object.tag; return target.connectionId; }
             }
+        }
         }
         if (unavailableWarnings.insert(target.connectionId + "/" + target.targetObject).second)
             ctx.warn("目标「" + target.connectionId + "/" + target.targetObject +
@@ -1540,6 +1572,7 @@ bool applyConnectionRules(Context& ctx, ProfileFormat format) {
     }
     std::stable_sort(rules.begin(), rules.end(), vpn::RulePrecedes);
     bool usesManagedVpn = false;
+    nlohmann::json chainDnsRules = nlohmann::json::array();
     for (const auto& item : rules) {
         if (!item.enabled) continue;
         usesManagedVpn = usesManagedVpn || nativeTags.contains(item.connectionId);
@@ -1550,7 +1583,41 @@ bool applyConnectionRules(Context& ctx, ProfileFormat format) {
         }
         auto rule = globalRuleMatch(ctx, item);
         if (!rule) return false;
-        const auto actualSource = applyTarget(*rule, item);
+        if (item.chain) {
+            if (item.chain->port != 0) (*rule)["port"] = item.chain->port;
+            if (!item.chain->process.empty()) {
+#if defined(__ANDROID__)
+                (*rule)["package_name"] = item.chain->process;
+#else
+                (*rule)["process_name"] = item.chain->process;
+#endif
+            }
+        }
+        std::string chainOutbound;
+        const auto actualSource = applyTarget(*rule, item, chainOutbound);
+        if (!ctx.result.error.empty()) return false;
+        if (item.chain && !item.chain->dnsServer.empty()) {
+            const auto& address = item.chain->dnsServer;
+            if (address.find('/') != std::string::npos || !addressCidr(address, false, false) ||
+                (item.match != vpn::MatchKind::ExactDomain && item.match != vpn::MatchKind::DomainSuffix)) {
+                ctx.result.error = "代理链的私有 DNS 需要域名规则和有效的 IP 地址：" + item.chain->name;
+                return false;
+            }
+            const auto key = item.match == vpn::MatchKind::ExactDomain ? "domain" : "domain_suffix";
+            nlohmann::json dnsRule{{key, rule->at(key)}, {"action", "reject"}};
+            if (!chainOutbound.empty()) {
+                auto& servers = config["dns"]["servers"];
+                std::string tag = chainOutbound + "-dns";
+                while (std::ranges::any_of(servers, [&](const auto& server) {
+                    return server.value("tag", "") == tag;
+                })) tag += "-";
+                servers.push_back({{"type", "tcp"}, {"tag", tag}, {"server", address},
+                    {"server_port", 53}, {"detour", chainOutbound}});
+                dnsRule["action"] = "route";
+                dnsRule["server"] = std::move(tag);
+            }
+            chainDnsRules.push_back(std::move(dnsRule));
+        }
         std::string sourceName = actualSource == ctx.opt.mainConnectionId ? ctx.opt.mainSourceName : "";
         if (actualSource == vpn::DirectConnectionId()) sourceName = "DIRECT";
         for (const auto& source : ctx.opt.auxiliarySources)
@@ -1558,6 +1625,10 @@ bool applyConnectionRules(Context& ctx, ProfileFormat format) {
         ctx.result.rulePlan.origins.push_back({precedence.size(), item.id, actualSource, std::move(sourceName),
             item.tier == vpn::RuleTier::UserOverride ? "user-override" : "source-policy"});
         precedence.push_back(std::move(*rule));
+    }
+    if (!chainDnsRules.empty()) {
+        for (auto& rule : config["dns"]["rules"]) chainDnsRules.push_back(std::move(rule));
+        config["dns"]["rules"] = std::move(chainDnsRules);
     }
     precedence.push_back({{"clash_mode", "direct"}, {"outbound", directTag}});
     nlohmann::json globalMode{{"clash_mode", "global"}};

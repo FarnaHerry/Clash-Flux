@@ -4,11 +4,14 @@
 #include "text_document.h"
 #include <huxerui/camera.h>
 
+#include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <tuple>
 #include <vector>
@@ -25,6 +28,7 @@
 #include "settings_group_layout.h"
 #include "profile_file_picker.h"
 #include "task_bridge.h"
+#include "ssh_profile_config.h"
 #if defined(__ANDROID__)
 #include <huxerui/media_library.h>
 #include "qr_photo_decoder.h"
@@ -61,12 +65,56 @@ struct ProfileFormDialog {
 auto ProfileCreateSnapshot(const ProfileCreateFields& fields) {
     const auto& picked = fields.picked_file.Get();
     const auto localFile = picked ? picked->AsFile() : std::nullopt;
+    const auto& ssh = fields.ssh.Get();
     return std::tuple{fields.name.Get().text, fields.url.Get().text, fields.qr_content.Get().text,
         fields.desc.Get().text, fields.timeout.Get().text, fields.interval.Get().text,
         fields.system_proxy.Get(), fields.core_proxy.Get(),
         fields.pptp_server.Get().text, fields.pptp_username.Get().text, fields.pptp_password.Get().text,
         fields.pptp_timeout.Get().text, fields.pptp_routes.Get().text, fields.pptp_mppe.Get(),
-        localFile ? localFile->Path() : std::string{}};
+        localFile ? localFile->Path() : std::string{}, ssh.server.text, ssh.port.text, ssh.username.text,
+        ssh.password.text, ssh.hostKey.text, ssh.privateKey, ssh.passphrase.text, ssh.auth};
+}
+
+bool IsSshPrivateKey(std::string_view key) {
+    return key.find("-----BEGIN ") != std::string_view::npos &&
+        key.find("PRIVATE KEY-----") != std::string_view::npos;
+}
+
+std::optional<SshProfileConfig> ReadSshProfile(const SshProfileDraft& draft, FluxToastHandle toast) {
+    SshProfileConfig config;
+    config.server = trim(draft.server.text);
+    if (config.server.starts_with('[') && config.server.ends_with(']'))
+        config.server = config.server.substr(1, config.server.size() - 2);
+    config.username = draft.username.text;
+    if (config.server.empty() || config.server.find_first_of(" /?#@[]\r\n\t") != std::string::npos ||
+        std::ranges::count(config.server, ':') == 1 || trim(config.username).empty()) {
+        toast.Show(Localized("请填写有效的 SSH 服务器地址和用户名"));
+        return std::nullopt;
+    }
+    const auto port = trim(draft.port.text);
+    const auto [end, error] = std::from_chars(port.data(), port.data() + port.size(), config.port);
+    if (error != std::errc{} || end != port.data() + port.size() || config.port < 1 || config.port > 65535) {
+        toast.Show(Localized("端口无效"));
+        return std::nullopt;
+    }
+    config.hostKey = trim(draft.hostKey.text);
+    const auto separator = config.hostKey.find_first_of(" \t");
+    const auto keyType = std::string_view(config.hostKey).substr(0, separator);
+    if (separator == std::string::npos || config.hostKey.find_first_of("\r\n") != std::string::npos ||
+        !(keyType.starts_with("ssh-") || keyType.starts_with("ecdsa-") || keyType.starts_with("sk-"))) {
+        toast.Show(Localized("请填写 SSH 服务器的主机公钥"));
+        return std::nullopt;
+    }
+    if (draft.auth == 0) config.password = draft.password.text;
+    else {
+        config.privateKey = draft.privateKey;
+        config.passphrase = draft.passphrase.text;
+    }
+    if (config.password.empty() && !IsSshPrivateKey(config.privateKey)) {
+        toast.Show(Localized("请输入 SSH 密码或有效的私钥"));
+        return std::nullopt;
+    }
+    return config;
 }
 
 std::function<void()> UseProfileCreateClose(ProfileCreateFields fields, std::function<void()> close,
@@ -110,6 +158,14 @@ huxerui::Task<std::pair<std::int64_t, std::string>> ImportProfileContent(
                 profiles.importContent(name, content, options);
             return std::pair{id, profiles.lastError()};
         });
+}
+
+huxerui::Task<ProfileImportResult> ImportSshProfile(
+    std::string name, SshProfileConfig config, model::Profile options) {
+    if (name.empty()) name = "SSH · " + config.server;
+    auto yaml = MakeSshProfileYaml(config);
+    if (yaml.empty()) co_return ProfileImportResult{};
+    co_return co_await ImportProfileContent(std::move(name), std::move(yaml), std::move(options));
 }
 
 } // namespace
@@ -239,6 +295,59 @@ huxerui::View ProfileDescriptionField(huxerui::State<huxerui::TextEditingValue> 
               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
+huxerui::TextField SshField(huxerui::State<SshProfileDraft> draft,
+                            huxerui::TextEditingValue SshProfileDraft::* value, huxerui::StringVariant label) {
+    return huxerui::TextField(draft.Get().*value).Label(label).Variant(huxerui::TextFieldVariant::Outlined)
+        .OnChanged([draft, value](const huxerui::TextEditingValue& nextValue) {
+            auto next = draft.Get();
+            next.*value = nextValue;
+            draft = std::move(next);
+        });
+}
+
+[[huxerui::composable]] huxerui::View SshOptionsForm(huxerui::State<SshProfileDraft> draft) {
+    const auto auth = draft.Get().auth;
+    const auto clipboard = huxerui::UseApplication().Clipboard();
+    const auto tasks = huxerui::UseTaskScope();
+    const auto toast = UseFluxToast();
+    const auto pasteKey = [clipboard, tasks, toast, draft] {
+        tasks.Launch([clipboard, toast, draft]() -> huxerui::Task<void> {
+            if (clipboard) {
+                auto key = co_await clipboard->ReadTextAsync();
+                if (key.Succeeded() && IsSshPrivateKey(key.Value())) {
+                    auto next = draft.Get();
+                    next.privateKey = std::move(key).Value();
+                    draft = std::move(next);
+                    co_return;
+                }
+            }
+            toast.Show(Localized("剪贴板中没有有效的 SSH 私钥"));
+        });
+    };
+    return huxerui::Column {
+      SshField(draft, &SshProfileDraft::server, Localized("SSH 服务器")).Placeholder("192.168.1.10"),
+      SshField(draft, &SshProfileDraft::port, Localized("SSH 端口"))
+          .InputConfiguration({.type = huxerui::TextInputType::Number}),
+      SshField(draft, &SshProfileDraft::username, Localized("用户名")),
+      SshField(draft, &SshProfileDraft::hostKey, Localized("SSH 主机公钥"))
+          .Placeholder("ssh-ed25519 AAAA…"),
+      huxerui::SegmentedButton({Localized("密码"), Localized("SSH 私钥")}, auth)
+          .OnChanged([draft](std::size_t choice) {
+              auto next = draft.Get();
+              next.auth = choice;
+              draft = std::move(next);
+          }).Key("profile-ssh-auth"),
+      auth == 0
+          ? huxerui::View{SshField(draft, &SshProfileDraft::password, Localized("密码")).Secure()}
+          : huxerui::View{huxerui::Column {
+              huxerui::Button(Localized(draft.Get().privateKey.empty()
+                  ? "粘贴 SSH 私钥" : "替换已粘贴的 SSH 私钥")).OnClick(pasteKey),
+              SshField(draft, &SshProfileDraft::passphrase, Localized("私钥口令（可选）")).Secure(),
+            }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))},
+    }.With(huxerui::Spacing(16.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))
+        .Key("profile-ssh-fields");
+}
+
 // Android 端的编辑入口使用完整页面，避免弹窗被软键盘和窄视口挤压；桌面
 // 仍由调用方使用 Dialog。表单 State 由 ProfilesPage 持有，页面与弹窗共用一份
 // 数据和保存逻辑。
@@ -281,12 +390,12 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
     const auto typeIndex = fields.type_index.Get();
     const bool remote = typeIndex == 0;
     const bool local = typeIndex == 1;
-    // 配置文本粘贴入口已并入「本地文件」：内容按 DetectProfileFormat 识别，
-    // 选择器过滤同样接受 .ovpn。
-    const bool pptp = !remote && !local;
+    const bool pptp = pptp_supported && typeIndex == 2;
+    const bool ssh = typeIndex == (pptp_supported ? 3 : 2);
     std::vector<huxerui::StringVariant> types{
         Localized("远程订阅"), Localized("本地文件")};
     if (pptp_supported) types.push_back(Localized("PPTP 内网"));
+    types.push_back(Localized("SSH 节点"));
 
     huxerui::View typeFields;
     if (remote) {
@@ -302,6 +411,8 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                                   Localized("拖入或点击选择配置文件"),
                                   fields.picked_file, tasks, toast, picker,
                                   configFileFilter, "profile-file-drop-zone");
+    } else if (ssh) {
+        typeFields = SshOptionsForm(fields.ssh);
     } else {
         typeFields = PptpOptionsForm(
             fields.pptp_server, fields.pptp_username, fields.pptp_password,
@@ -323,6 +434,11 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         }
         std::string configError;
         std::optional<std::string> nativeConfig;
+        std::optional<SshProfileConfig> sshConfig;
+        if (ssh) {
+            sshConfig = ReadSshProfile(fields.ssh.Get(), toast);
+            if (!sshConfig) return;
+        }
         if (pptp) {
             nativeConfig = makePptpConfig(
                 fields.pptp_server.Get(), fields.pptp_username.Get(),
@@ -335,7 +451,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         }
         model::Profile options;
         options.description = fields.desc.Get().text;
-        if (!pptp) {
+        if (remote || local) {
             options.timeoutSecs = parseNumber(fields.timeout.Get(), 60);
             const auto minutes = ParseProfileUpdateInterval(fields.interval.Get().text);
             if (!minutes) { toast.Show(ProfileUpdateIntervalError()); return; }
@@ -343,7 +459,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
             options.autoUpdate = *minutes > 0;
             options.useSystemProxy = fields.system_proxy.Get();
             options.useCoreProxy = fields.core_proxy.Get();
-        } else {
+        } else if (pptp) {
             options.type = "pptp";
             options.nativeConfig = *nativeConfig;
             options.nativeRoutes = joinRoutes(parseRouteField(
@@ -354,7 +470,10 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
             .name = fields.name.Get().text, .url = url,
             .picked_path = localFile ? localFile->Path() : std::string{}, .options = std::move(options)};
         const auto ticket = origin->Advance();
-        LaunchProfileImport(importing, [http, picked, request = std::move(request)]() mutable -> huxerui::Task<ProfileImportResult> {
+        LaunchProfileImport(importing, [http, picked, request = std::move(request),
+            sshConfig = std::move(sshConfig)]() mutable -> huxerui::Task<ProfileImportResult> {
+            if (sshConfig)
+                co_return co_await ImportSshProfile(std::move(request.name), std::move(*sshConfig), std::move(request.options));
             static_cast<void>(picked); // Retain access until the path-based import completes.
             co_return co_await ImportProfileForPlatform(http, std::move(request));
         }, [=](ProfileImportResult result) {
@@ -380,7 +499,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
           .Key("profile-create-name"),
       ProfileDescriptionField(fields.desc).Key("profile-create-description"),
       typeFields,
-      pptp ? huxerui::View{} : ProfileDownloadOptions(fields.timeout, fields.interval,
+      (pptp || ssh) ? huxerui::View{} : ProfileDownloadOptions(fields.timeout, fields.interval,
           fields.system_proxy, fields.core_proxy),
     }.With(huxerui::Spacing(16.0F),
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
@@ -412,7 +531,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         compact ? action : ProfileImportAction(
             importing, Localized("导入订阅"), importProfile),
         std::move(content),
-        std::move(go_back), false, false, true);
+        ssh ? cancel : std::move(go_back), false, false, true);
 }
 
 [[huxerui::composable]] huxerui::View ProfileFlowPage(
@@ -865,9 +984,13 @@ void PushProfileQrScanner(
             chooseFile),
         ProfileAddMethodRow(
             app::images::link, "URL", Localized("输入订阅链接并自动获取配置"),
-            "profile-add-url", pptp_supported,
+            "profile-add-url", true,
             [openMethod] { openMethod(ProfileAddMethod::Url); }),
-        // 配置文本粘贴入口已并入「文件」；直接配置只剩原生 VPN 表单。
+        ProfileAddMethodRow(
+            app::images::manual_config, Localized("SSH 节点"),
+            Localized("填写内网或远程 SSH 服务器"),
+            "profile-add-ssh", pptp_supported,
+            [openMethod] { openMethod(ProfileAddMethod::Ssh); }),
         pptp_supported
             ? huxerui::View{ProfileAddMethodRow(
                   app::images::manual_config, Localized("PPTP 内网"),
@@ -940,8 +1063,9 @@ void PushProfileQrScanner(
     const bool isFile = method == ProfileAddMethod::File;
     const bool isQr = method == ProfileAddMethod::Qr;
     const bool isDirect = method == ProfileAddMethod::Direct;
-    // 直接配置页只剩原生 VPN 表单（文本粘贴并入「文件」入口）。
+    const bool isSsh = method == ProfileAddMethod::Ssh;
     const bool directPptp = isDirect && pptp_supported;
+    const auto cancel = UseProfileCreateClose(fields, go_back, importing);
 
     const auto import_profile = [=] {
         if (importing) return;
@@ -990,6 +1114,11 @@ void PushProfileQrScanner(
         }
 
         model::Profile options;
+        std::optional<SshProfileConfig> sshConfig;
+        if (isSsh) {
+            sshConfig = ReadSshProfile(fields.ssh.Get(), toast);
+            if (!sshConfig) return;
+        }
         options.description = fields.desc.Get().text;
         if (remote) {
             options.timeoutSecs = parseNumber(fields.timeout.Get(), 60);
@@ -1021,7 +1150,9 @@ void PushProfileQrScanner(
         LaunchProfileImport(importing, [=, picked = picked]() mutable -> huxerui::Task<ProfileImportResult> {
             static_cast<void>(picked);
             std::pair<std::int64_t, std::string> result;
-            if (!inlineConfig.empty()) {
+            if (sshConfig) {
+                result = co_await ImportSshProfile(name, std::move(*sshConfig), options);
+            } else if (!inlineConfig.empty()) {
                 result = co_await ImportProfileContent(
                     name.empty() ? manualConfigName
                                  : name,
@@ -1098,6 +1229,8 @@ void PushProfileQrScanner(
         typeFields = PptpOptionsForm(
             fields.pptp_server, fields.pptp_username, fields.pptp_password,
             fields.pptp_timeout, fields.pptp_routes, fields.pptp_mppe);
+    } else if (isSsh) {
+        typeFields = SshOptionsForm(fields.ssh);
     }
 
     huxerui::View commonFields;
@@ -1108,7 +1241,7 @@ void PushProfileQrScanner(
             fields.system_proxy, fields.core_proxy);
         hasCommonFields = true;
     } else if (method == ProfileAddMethod::Url || isFile ||
-               (isQr && !qrRemote) || isDirect) {
+               (isQr && !qrRemote) || isDirect || isSsh) {
         commonFields = huxerui::TextField(fields.desc.Get())
                            .Label(Localized("描述（可选）"))
                            .Variant(huxerui::TextFieldVariant::Outlined)
@@ -1133,6 +1266,7 @@ void PushProfileQrScanner(
         method == ProfileAddMethod::Qr ? "扫码导入"
         : isFile                         ? "从文件导入"
         : method == ProfileAddMethod::Url ? "从 URL 导入"
+        : isSsh                          ? "SSH 节点"
                                           : "PPTP 内网");
     huxerui::View content = ProfileFormScroll(
         huxerui::Column(std::move(formFields))
@@ -1144,7 +1278,7 @@ void PushProfileQrScanner(
         !importing, importing);
     return ProfileFlowPage(huxerui::Text(title, huxerui::TextRole::Title),
                            ProfileImportAction(importing, Localized("导入配置"), import_profile),
-                           std::move(content), std::move(go_back), true,
+                           std::move(content), isSsh ? cancel : std::function<void()>{go_back}, true,
                            std::move(action),
                            DialogAction(Localized("创建"), import_profile, true, !importing))
         .With(ProfileSecondaryTransition(theme.motion));
@@ -1166,7 +1300,8 @@ static ProfileCreateFields UseExternalProfileFields(std::string name, std::strin
         huxerui::UseState(huxerui::TextEditingValue{"30"}),
         huxerui::UseState(huxerui::TextEditingValue{}),
         huxerui::UseState(true),
-        huxerui::UseState(std::optional<huxerui::FileReference>{})};
+        huxerui::UseState(std::optional<huxerui::FileReference>{}),
+        huxerui::UseState(SshProfileDraft{})};
 }
 
 #if defined(__ANDROID__)

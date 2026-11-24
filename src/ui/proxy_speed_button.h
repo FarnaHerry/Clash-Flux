@@ -51,13 +51,20 @@ inline huxerui::View SpeedTestButton(huxerui::StringVariant label, huxerui::Stri
     });
 }
 
-inline huxerui::View ProxySpeedButton(const ProxyTestModel& tests, std::string_view group,
+inline huxerui::View ProxySpeedButton(ProxyTestModel& tests, std::string_view group,
                                      std::function<void()> start) {
-    const bool busy = tests.progress.Get().busy;
-    const bool testing = tests.preparing.Get() || (busy && tests.group.Get() == group);
-    const bool enabled = !busy && tests.singlePending.Get() == 0;
+    const bool testing = tests.GetGroup(group)->ticket.Get() != 0;
     return SpeedTestButton(Localized("测速"), Localized("测试当前分组延迟"), std::move(start),
-        testing, enabled, kProxySpeedButtonSize);
+        testing, !testing, kProxySpeedButtonSize);
+}
+
+inline huxerui::View ProxyAllSpeedButton(std::shared_ptr<ProxyTestModel> tests, std::vector<std::string> groups,
+    std::function<void(const std::string&)> start) {
+    return huxerui::Scope([tests, groups = std::move(groups), start = std::move(start)] {
+        const auto label = Localized("测试所有分组延迟");
+        return SpeedTestButton(label, label, [tests, groups, start] { tests->StartAllGroups(groups, start); },
+            tests->AllGroupsTesting(), !groups.empty(), kProxySpeedButtonSize);
+    }).Key("proxy-test-all");
 }
 
 } // namespace clashflux::ui

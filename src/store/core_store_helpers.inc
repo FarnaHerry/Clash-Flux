@@ -391,7 +391,7 @@
             if (profile.selected || profile.type == "pptp") continue;
             const auto id = routing::ConnectionId(profile.id);
             if (!std::ranges::any_of(policy.rules, [&](const auto& rule) {
-                    return rule.enabled && rule.connectionId == id;
+                    return rule.enabled && rule.ReferencesSource(id);
                 })) continue;
             if (updated && updated->id == id) {
                 options.auxiliarySources.push_back({id, profile.name, updated->content}); continue;
@@ -433,6 +433,13 @@
         if (!policy) return true;
         for (const auto& rule : policy->rules) {
             if (!rule.enabled) continue;
+            if (rule.chain && !std::ranges::any_of(compiled.sourceObjects, [&](const auto& object) {
+                return object.sourceId == rule.chain->sourceId && object.kind == rule.chain->kind &&
+                    object.objectId == rule.chain->object;
+            })) {
+                error = "代理链前置出口不可用：" + rule.chain->name;
+                return false;
+            }
             if (rule.targetKind != vpn::TargetKind::Default) {
                 if (!std::ranges::any_of(compiled.sourceObjects, [&](const auto& object) {
                     return object.sourceId == rule.connectionId && object.kind == rule.targetKind &&
