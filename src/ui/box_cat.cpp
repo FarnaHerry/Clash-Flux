@@ -15,6 +15,8 @@ constexpr double kFailureDuration = 2.4;
 constexpr double kTransitionDuration = 1.2;
 constexpr double kLoopFrameInterval = 1.0 / 30.0;
 constexpr float kCatRiseEnd = 0.63F;
+constexpr float kRestartDozePose = 0.74F;
+constexpr double kRestartMotionDuration = 0.55;
 
 float Segment(float value, float start, float end) {
     const float t = std::clamp((value - start) / (end - start), 0.0F, 1.0F);
@@ -55,6 +57,8 @@ float PhaseProgress(BoxCatPhase phase) {
             return 0.0F;
         case BoxCatPhase::Starting:
             return 0.30F;
+        case BoxCatPhase::Restarting:
+            return kRestartDozePose;
         case BoxCatPhase::Running:
             return 1.0F;
     }
@@ -119,6 +123,7 @@ public:
             // A returning card mounts a new button. Preserve its outgoing
             // pose while SharedBounds moves it, then reconcile to real state.
             phase_ = value.initialPose.value_or(value.phase);
+            restartPose_ = phase_ == BoxCatPhase::Restarting;
             failureConsumed_ = phase_ == BoxCatPhase::Failed;
             handAllowed_ = phase_ == BoxCatPhase::Starting;
             SetProgress(PhaseProgress(phase_));
@@ -315,11 +320,14 @@ private:
         ++*readyRevision_;
         runningReadySent_ = false;
         phase_ = next;
+        const bool wasRestarting = restartPose_;
+        restartPose_ = next == BoxCatPhase::Restarting ||
+            (previous == BoxCatPhase::Restarting && next == BoxCatPhase::Running);
         if (next == BoxCatPhase::Failed) {
             failurePlaying_ = true;
             failureConsumed_ = false;
             handAllowed_ = false;
-            if (progress_ >= 0.9999F) SetProgress(0.0F);
+            if (wasRestarting || progress_ >= 0.9999F) SetProgress(0.0F);
             StartTransition(1.0F, kFailureDuration, false);
         } else {
             failurePlaying_ = false;
@@ -327,7 +335,10 @@ private:
             handAllowed_ = next == BoxCatPhase::Starting ||
                 (next == BoxCatPhase::Running &&
                     (previous == BoxCatPhase::Starting || progress_ < kCatRiseEnd));
-            StartTransition(PhaseProgress(next), kTransitionDuration);
+            if (restartPose_)
+                StartTransition(PhaseProgress(next), kRestartMotionDuration, false);
+            else
+                StartTransition(PhaseProgress(next), kTransitionDuration);
         }
     }
 
@@ -337,6 +348,7 @@ private:
             runningReadySent_ = false;
         }
         phase_ = next;
+        restartPose_ = next == BoxCatPhase::Restarting;
         transitioning_ = false;
         failurePlaying_ = false;
         failureConsumed_ = next == BoxCatPhase::Failed;
@@ -380,13 +392,32 @@ private:
             paint.DrawImage(asset, full);
             paint.PopTransform();
         };
+        const float doze = restartPose_ ? 1 - Segment(progress_, kRestartDozePose, 1.0F) : 0;
+        const float wake = restartPose_ && phase_ == BoxCatPhase::Running
+            ? Segment(progress_, 0.86F, 0.93F) * (1 - Segment(progress_, 0.94F, 1.0F)) : 0;
         paint.DrawImage(spec_.rear, full);
         paint.DrawImage(spec_.interior, full);
-        hinged(spec_.tail, {92, 74}, idlePose_.tail);
-        hinged(spec_.earLeft, {47, 40}, idlePose_.leftEar);
-        hinged(spec_.earRight, {80, 40}, idlePose_.rightEar);
+        hinged(spec_.tail, {92, 74}, idlePose_.tail - 0.10F * doze);
+        // The original Doze gesture closes the eyes and tilts only the head.
+        // Keep the box anchored and use a small ear flick as the cat wakes.
+        const float tilt = 0.12F * doze - 0.07F * wake;
+        const float c = std::cos(tilt);
+        const float s = std::sin(tilt);
+        paint.PushTransform(huxerui::Transform2D{.m11 = c, .m12 = s, .m21 = -s, .m22 = c,
+            .translate_x = 64 - c * 64 + s * 76,
+            .translate_y = 6 * doze - 2 * wake + 76 - s * 64 - c * 76});
+        hinged(spec_.earLeft, {47, 40}, idlePose_.leftEar - 0.20F * wake);
+        hinged(spec_.earRight, {80, 40}, idlePose_.rightEar + 0.20F * wake);
         paint.DrawImage(spec_.catRunning, full);
+        paint.DrawImage(spec_.eyeLeft, full, {}, 1 - doze);
+        paint.DrawImage(spec_.eyeOpen, full, {}, 1 - doze);
+        paint.DrawImage(spec_.eyesSleeping, full, {}, doze);
+        paint.PopTransform();
         paint.DrawImage(spec_.front, full);
+        if (spec_.probe) {
+            spec_.probe->restartDoze = doze;
+            spec_.probe->restartWake = wake;
+        }
     }
 
     void PaintPeek(huxerui::PaintContext& paint, float p, float cat, float alpha) const {
@@ -455,7 +486,11 @@ private:
 
     void PaintMark(huxerui::PaintContext& paint, huxerui::Rect rect) const {
         const float p = progress_;
-        if (spec_.probe) spec_.probe->handVisible = false;
+        if (spec_.probe) {
+            spec_.probe->handVisible = false;
+            spec_.probe->restartDoze = 0.0F;
+            spec_.probe->restartWake = 0.0F;
+        }
         const float petting = handAllowed_ ? 1 - Segment(p, 0.55F, kCatRiseEnd) : 0;
         const float wake = failurePlaying_
             ? Segment(p, 0.31F, 0.50F) * (1 - Segment(p, 0.71F, 0.87F))
@@ -467,6 +502,11 @@ private:
         paint.PushTransform(huxerui::Transform2D{.m11 = rect.width / 128, .m22 = rect.height / 128,
             .translate_x = rect.x, .translate_y = rect.y - 6.5F * rect.height / 128});
         const huxerui::Rect full{0, 0, 128, 128};
+        if (restartPose_) {
+            PaintRunning(paint);
+            paint.PopTransform();
+            return;
+        }
         if (!failurePlaying_ && petting <= 0 && p >= 0.7199F) {
             if (idleActive_ && phase_ == BoxCatPhase::Running && spec_.visible && !staticFrame_)
                 PaintRunning(paint);
@@ -513,6 +553,7 @@ private:
     bool failurePlaying_ = false;
     bool failureConsumed_ = false;
     bool handAllowed_ = false;
+    bool restartPose_ = false;
     float progress_ = 0.0F;
     float transitionStart_ = 0.0F;
     float transitionTarget_ = 0.0F;

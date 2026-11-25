@@ -11,5 +11,10 @@ else
   demo_cmake_args+=(-U HUXERUI_HOST_TOOL_ROOT)
 fi
 cmake -S "$demo_dir" -B "$demo_dir/build" -G Ninja -DCMAKE_BUILD_TYPE=Debug "${demo_cmake_args[@]}"
-cmake --build "$demo_dir/build" --target box_cat_demo --parallel 2
-exec "$demo_dir/build/box_cat_demo" "$@"
+demo_target=box_cat_demo
+if [[ "${1:-}" == --restart-preview ]]; then
+  demo_target=box_cat_restart_demo
+  shift
+fi
+cmake --build "$demo_dir/build" --target "$demo_target" --parallel 2
+exec "$demo_dir/build/$demo_target" "$@"

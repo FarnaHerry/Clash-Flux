@@ -50,6 +50,23 @@
         stream::logApplication("info", std::format("主计划准备完成，用时 {} ms（原内核保持运行）",
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - preparationBegan).count()));
         const auto handoffBegan = std::chrono::steady_clock::now();
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+        const bool restartingProxy = before.state == core::CoreState::Running &&
+            before.proxyListening && candidate->options.proxyListening;
+        if (restartingProxy) {
+            std::lock_guard lock(mutex_);
+            snap_.proxyRestartSince = before.connectedSince;
+        }
+        struct ClearProxyRestart {
+            CoreStore& store;
+            bool active;
+            ~ClearProxyRestart() {
+                if (!active) return;
+                std::lock_guard lock(store.mutex_);
+                store.snap_.proxyRestartSince.reset();
+            }
+        } clearProxyRestart{*this, restartingProxy};
+#endif
         if (!stopCore()) return false;
         preparedStart_ = std::move(candidate);
         startCore(profileYaml, false, before.tunEnabled,

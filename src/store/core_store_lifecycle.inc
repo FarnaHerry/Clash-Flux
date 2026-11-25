@@ -1246,7 +1246,8 @@ public:
     }
 
     bool restartCore(const std::string& profileYaml, bool skipUnchanged = false,
-                     std::stop_token cancel = {}, const singbox::ProfileRuleEdits* ruleEdits = nullptr) {
+                     std::stop_token cancel = {}, const singbox::ProfileRuleEdits* ruleEdits = nullptr,
+                     const std::function<void()>& onPrepared = {}) {
         std::lock_guard operationLock(lifecycleMutex_);
         if (cancel.stop_requested()) return false;
         auto healthPause = streams_.pauseHealth();
@@ -1266,6 +1267,8 @@ public:
                 if (cancel.stop_requested()) return false;
                 std::lock_guard lock(mutex_); snap_.lastError = "候选计划被拒绝：" + error; return false;
             }
+            // A saved rule edit can complete before stopping the previous core.
+            if (onPrepared) onPrepared();
         } catch (const std::exception& e) {
             if (cancel.stop_requested()) return false;
             std::lock_guard lock(mutex_); snap_.lastError = e.what(); return false;

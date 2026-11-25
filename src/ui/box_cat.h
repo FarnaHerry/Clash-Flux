@@ -8,7 +8,7 @@
 
 namespace clashflux::ui {
 
-enum class BoxCatPhase { Sleeping, Starting, Running, Stopping, Failed };
+enum class BoxCatPhase { Sleeping, Starting, Running, Restarting, Stopping, Failed };
 
 // UI-thread-only instrumentation; these fields are not observable composition State.
 struct BoxCatProbe {
@@ -20,6 +20,8 @@ struct BoxCatProbe {
     bool sawPetting = false;
     bool sawContent = false;
     bool sawWink = false;
+    float restartDoze = 0.0F;
+    float restartWake = 0.0F;
     std::uint64_t sleepTicks = 0;
     bool sleepLooping = false;
     bool handVisible = false;

@@ -759,6 +759,26 @@ huxerui::Task<wire::PublicIpLookup> FetchPublicIp(std::shared_ptr<AppHttpClient>
 
 // ---- 平台专属卡片（整个函数由编译宏在调用点选择）---------------------------
 
+BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
+                                CoreAction presented = CoreAction::Idle) {
+    // A Start presentation now means the successful cat is merging into its
+    // card, rather than a kernel command that is still waiting to finish.
+    if (presented == CoreAction::Start) return BoxCatPhase::Running;
+    const CoreAction action = presented == CoreAction::Idle
+        ? control.ConnectionAction() : presented;
+    if (action == CoreAction::Start) return BoxCatPhase::Starting;
+    if (action == CoreAction::Stop) return BoxCatPhase::Stopping;
+    const auto& view = control.model->home.Get();
+    if (view.RestartingProxy(action)) return BoxCatPhase::Restarting;
+    switch (view.coreState) {
+    case core::CoreState::Starting: return BoxCatPhase::Sleeping;
+    case core::CoreState::Running: return view.proxyActive ? BoxCatPhase::Running : BoxCatPhase::Sleeping;
+    case core::CoreState::Failed: return BoxCatPhase::Failed;
+    case core::CoreState::Stopped: return BoxCatPhase::Sleeping;
+    }
+    return BoxCatPhase::Sleeping;
+}
+
 #if !defined(__ANDROID__)
 
 [[huxerui::composable]] huxerui::View DesktopModeSwitchRow(
@@ -836,24 +856,6 @@ void RunDesktopHomeCoreAction(const CoreControl& control,
     control.Run({.action = action});
 }
 
-BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
-                                CoreAction presented = CoreAction::Idle) {
-    // A Start presentation now means the successful cat is merging into its
-    // card, rather than a kernel command that is still waiting to finish.
-    if (presented == CoreAction::Start) return BoxCatPhase::Running;
-    const CoreAction action = presented == CoreAction::Idle
-        ? control.ConnectionAction() : presented;
-    if (action == CoreAction::Start) return BoxCatPhase::Starting;
-    if (action == CoreAction::Stop) return BoxCatPhase::Stopping;
-    switch (control.model->view.Get().core.state) {
-    case core::CoreState::Starting: return BoxCatPhase::Sleeping;
-    case core::CoreState::Running: return control.ProxyActive() ? BoxCatPhase::Running : BoxCatPhase::Sleeping;
-    case core::CoreState::Failed: return BoxCatPhase::Failed;
-    case core::CoreState::Stopped: return BoxCatPhase::Sleeping;
-    }
-    return BoxCatPhase::Sleeping;
-}
-
 [[huxerui::composable]] huxerui::View DesktopHomeStatusCard(
     huxerui::State<bool> cardShown,
     huxerui::State<HomeControlMotion> motion,
@@ -889,11 +891,13 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     // retained clocks resume as soon as the outer transition finishes.
     const bool changing = !entering && (action == CoreAction::Start ||
                                         action == CoreAction::Stop);
+    const auto phase = DesktopHomeCatPhase(control, motion.Get().action);
     const huxerui::StringVariant status = Localized(
-        action == CoreAction::Start ? "正在启动"
+        phase == BoxCatPhase::Restarting ? "正在重启"
+        : action == CoreAction::Start ? "正在启动"
         : returning || action == CoreAction::Stop ? "正在停止"
                                      : "运行中");
-    const auto runningSince = control.model->view.Get().core.connectedSince;
+    const auto runningSince = control.model->home.Get().ProxySessionSince();
     const auto elapsed = runningSince == std::chrono::steady_clock::time_point{}
         ? std::chrono::seconds{0}
         : std::max(std::chrono::seconds{0},
@@ -901,9 +905,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
                        clock.Get() - runningSince));
     const auto seconds = elapsed.count();
     const std::string uptime = FormatHomeUptime(seconds);
-    huxerui::View icon = BoxCatStatusIcon(
-        DesktopHomeCatPhase(control, motion.Get().action),
-        motion.Get().action == CoreAction::Idle);
+    huxerui::View icon = BoxCatStatusIcon(phase, motion.Get().action == CoreAction::Idle);
     huxerui::View content = huxerui::Row {
         std::move(icon)
             .With(huxerui::Scale(huxerui::AnimateTo(
@@ -931,7 +933,8 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
         .With(huxerui::Scale(huxerui::AnimateTo(
                   motion.Get().collapsing ? kHomeControlCollapsedScale : 1.0F,
                   kHomeControlCollapseMotion)),
-              huxerui::Enabled(!control.ConnectionBusy() && !entering && !returning),
+              huxerui::Enabled(!control.ConnectionBusy() && !entering && !returning &&
+                  phase != BoxCatPhase::Restarting),
               huxerui::Tooltip(Localized("断开连接")),
               huxerui::Indication{},
               huxerui::SharedBounds("home-core-control")
@@ -953,8 +956,9 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     huxerui::View base = page;
     const bool returning = motion.Get().action == CoreAction::Stop;
     const bool active = returning ? false : control.ProxyActive();
-    const bool enabled = !control.ConnectionBusy() && !returning;
     const CoreAction command = control.ConnectionAction();
+    const bool enabled = !control.ConnectionBusy() && !returning &&
+        !control.model->home.Get().RestartingProxy(command);
     const bool changing = !returning && (command == CoreAction::Start ||
                                         command == CoreAction::Stop);
     const auto toggle = [control, active, cardShown, motion, transition,
@@ -1061,7 +1065,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     auto state = huxerui::UseState<HomeState>({});
     const auto scrollOffset = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     auto homeView = coreModel->home.Get();
-    auto controlCardShown = huxerui::UseState(static_cast<bool>(homeView.proxyActive));
+    auto controlCardShown = huxerui::UseState(homeView.proxyActive || homeView.proxyRestartSince.has_value());
     auto controlMotion = huxerui::UseState<HomeControlMotion>({});
     auto controlCardSynced = huxerui::UseState<bool>(false);
     auto controlCatReady = huxerui::UseState<bool>(false);
@@ -1071,23 +1075,17 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
     const auto vpnStatus = kDesktopHomeControl
         ? HomeVpnStatus{BoxCatPhase::Sleeping, "", false, false, false}
         : ResolveHomeVpnStatus(homeView.vpnState, coreModel->operations.command.Get());
-    const auto action = kDesktopHomeControl ? control.ConnectionAction()
-                                          : coreModel->operations.command.Get().action;
-    const auto headerPhase = kDesktopHomeControl
-        ? (action == CoreAction::Stop ? BoxCatPhase::Stopping
-            : action == CoreAction::Start || action == CoreAction::Restart ? BoxCatPhase::Starting
-            : homeView.proxyActive ? BoxCatPhase::Running
-            : homeView.coreState == core::CoreState::Failed ? BoxCatPhase::Failed : BoxCatPhase::Sleeping)
-        : vpnStatus.phase;
+    const auto headerPhase = kDesktopHomeControl ? DesktopHomeCatPhase(control) : vpnStatus.phase;
     const auto headerControl = UseHomeHeaderControl(HomeHeaderSnapshot{
         .ready = homeView.ready && (kDesktopHomeControl || homeView.vpnSnapshotReady),
         .active = active && headerControlEnabled,
         .running = kDesktopHomeControl ? homeView.proxyActive : vpnStatus.connected,
-        .busy = kDesktopHomeControl ? control.ConnectionBusy() : control.Busy(),
+        .busy = kDesktopHomeControl
+            ? control.ConnectionBusy() || headerPhase == BoxCatPhase::Restarting : control.Busy(),
         .canStart = kDesktopHomeControl || state.Get().profileId != 0,
         .phase = headerPhase,
         .elapsedSeconds = homeView.vpnElapsedMs / 1000,
-        .runningSince = kDesktopHomeControl ? homeView.connectedSince
+        .runningSince = kDesktopHomeControl ? homeView.ProxySessionSince()
             : std::chrono::steady_clock::time_point{},
     });
     const auto toggleHeader = [control] {
@@ -1118,17 +1116,18 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
             [coreModel, controlCardShown, controlCardSynced, controlCatReady,
              controlMotion, controlTransition, tasks, active, compact,
              reducedMotion = theme.motion.reduced_motion] {
-                const CoreView& view = coreModel->view.Get();
+                const auto& view = coreModel->home.Get();
                 if (view.ready) {
-                    const bool running = view.ProxyActive();
+                    const bool running = view.proxyActive;
+                    const auto command = coreModel->operations.command.Get().action;
+                    const bool restarting = view.RestartingProxy(command);
                     if (!controlCardSynced.Get() || !active || compact) {
                         controlCardSynced = true;
-                        controlCardShown = running;
-                        controlCatReady = running;
-                    } else {
-                        const auto command = coreModel->operations.command.Get().action;
+                        controlCardShown = running || restarting;
+                        controlCatReady = running || restarting;
+                    } else if (!restarting) {
                         if (!running || command == CoreAction::Connect ||
-                            command == CoreAction::Disconnect || command == CoreAction::Stop || command == CoreAction::Restart)
+                            command == CoreAction::Disconnect || command == CoreAction::Stop)
                             controlCatReady = false;
                         if (!coreModel->operations.Busy() &&
                             controlCardShown.Get() != running &&
@@ -1140,7 +1139,7 @@ BoxCatPhase DesktopHomeCatPhase(const CoreControl& control,
                 }
                 return [] {};
             },
-            coreModel->view, coreModel->operations.command, controlCatReady,
+            coreModel->home, coreModel->operations.command, controlCatReady,
             active, compact, theme.motion.reduced_motion);
     }
 

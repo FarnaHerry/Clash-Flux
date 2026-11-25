@@ -3,6 +3,7 @@
 #include <huxerui/huxerui.h>
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -16,7 +17,9 @@ template<class Rule> struct GlobalRulesModel {
     huxerui::State<std::vector<Rule>> accepted{std::vector<Rule>{}};
     huxerui::State<bool> loaded{false};
     huxerui::State<bool> saving{false};
+    huxerui::State<bool> saveInFlight{false}; // Includes any runtime handoff and rollback.
     huxerui::State<bool> pending{false};
+    huxerui::State<std::function<void()>> editorSaveClose{std::function<void()>{}};
     huxerui::State<bool> dirty{false};
     huxerui::State<std::uint64_t> revision{0};
     huxerui::State<std::uint64_t> loadGeneration{0};
@@ -50,6 +53,12 @@ template<class Rule> struct GlobalRulesModel {
         }
         loaded = true;
         ++revision;
+        ++loadGeneration;
+        saving = pending.Get();
+    }
+    void PublishApplyRollback(const std::vector<Rule>& previous) {
+        Replace(accepted, previous);
+        dirty = !std::ranges::equal(rules.Get(), previous);
         ++loadGeneration;
     }
 };

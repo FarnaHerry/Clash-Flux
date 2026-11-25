@@ -104,6 +104,8 @@ export struct CoreSnapshot {
     bool proxyListening = false; // accepted traffic inbounds; independent of controller readiness
     std::uint64_t networkRevision = 0; // settings revision in the accepted plan
     std::chrono::steady_clock::time_point connectedSince{};
+    // The prior session clock survives the stop/start gap for presentation.
+    std::optional<std::chrono::steady_clock::time_point> proxyRestartSince;
     // Android sing-box libbox status stream.  Desktop continues to use the
     // sing-box clash_api WebSocket streams below.
     std::int64_t uploadRate = 0;

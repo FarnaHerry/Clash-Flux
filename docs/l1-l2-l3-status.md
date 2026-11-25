@@ -1,5 +1,107 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-25 代理分组短滚动位移与行高缓存
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。父布局在两种宽度下测量时共用行高缓存，常规滚动按输入偏移布局，开合锚点在几何提交后清除。专项覆盖单次滚轮、短触控板输入和停住后抬手的触摸拖动。20pt 触控板输入的测量调用从 110 次降至 39 次，复现条件和测量边界见[纵向代理分组短滚动](scroll-performance.md#2026-11-25-纵向代理分组短滚动)。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`build/test_page_transition --proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口帧率和 Android 真机手感。
+
+## 2026-11-25 代理分组开合保留上方行高
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。下方分组开合时保留所点击组头及之前的行高，按滚动范围挂载节点。128 行上方分组的无窗口回归复现了旧逻辑约 108pt 的滚动偏移变化，修复后核对了下方开合时的偏移、上方可见节点位置与冻结状态。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`build/test_page_transition --proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 代理分组开合与组内冻结分离
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。冻结组头随滚动活动选定，开合重新测量时只更新已有冻结组头在所属卡片中的位置。专项复现了点击下方分组使上方半露组头吸到顶部的问题，验证下方连续开合时上方组头原位，以及下一次滚动恢复组内冻结。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`build/test_page_transition --proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 代理分组开合保持上方卡片位置
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。收起后若内容不足以维持滚动位置，复用虚拟列表的滚动范围临时保留末尾空间，向上滚动时收回。专项已复现旧逻辑带动上方卡片的位移，修复后核对了末组开合、上方组头和节点行位置，以及真实尾部留白恢复。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`build/test_page_transition --proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 代理分组原位开合
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。开合时以当前组头在视口中的位置为锚点。专项复现并覆盖了组尾收起时的跳位，核对普通开合、部分滑出后的原位开合、相邻组顺序和继续滚动后恢复冻结。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`build/test_page_transition --proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 代理组头合拢保留组底圆角
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。组头停在现有 12pt 组底内边距上方，末行保留卡片底色和原有圆角。专项使用生产卡片布局核对合拢与滑出阶段的底部留白、相邻组间距和末组边界。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 代理组头跟随本组卡片
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。展开组头在卡片范围内跟随视口，到组尾时贴住底边并随组滚出。专项覆盖到达组底前、合拢、继续滑出、组间留白、末组和反向滚动，并保留对测速、展开及收起的回归。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 代理分组按节点可见范围解除冻结
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。冻结组头以下仍有本组节点可见时保留组头，节点全部被盖住时解除冻结。专项覆盖最后一排部分露出、完全遮盖、组底内边距与组间留白、下一组接替和反向滚动恢复冻结。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 仅冻结展开的代理分组
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。分组有展开的节点行时才允许组头冻结。专项验证折叠的组头和状态点随列表滚动，重新展开后恢复冻结，并继续覆盖组头替换、测速和收起锚点。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-25 代理分组冻结完整组头
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。纵向虚拟列表保留并移动当前组的原组头，使显示、测速与展开动作一起冻结。专项覆盖原位置离开缓存、独立测速和忙态、下一组顶替、触摸拖动、被覆盖节点的点击保护，以及收起后的状态预览、滚动位置记录和再次展开。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-24 首页选择器箭头与代理分组冻结标题
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。首页两个选择器的箭头在浮层和原位输入框之间交接，展开时随列表位置朝上或朝下，收起转回朝右。无窗口专项覆盖开合中间帧、窗口尺寸变化导致的列表换边及输入框位置。
+- 纵向代理列表依据已挂载行冻结当前组名。无窗口专项覆盖原组头被回收、下一组顶替、从冻结标题起拖、拒绝点击被覆盖的节点和恢复首项留白。
+- Linux 主目标及 `test_page_transition` 构建、`./run.sh --version`（v0.3.129）、`git diff --check`、`--home-proxy-pickers`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口及 Android 真机显示。
+
+## 2026-11-24 代理分组整条涟漪
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。点击组名侧和箭头侧共用同一个展开动作与整条组头的涟漪。绘制回归检查按下坐标、整条裁切、控件下方的绘制顺序、快速点击的扩散范围和悬停无高亮，并覆盖徽标、测速忙态与无障碍激活。
+- Linux 主目标及 `test_page_transition` 构建、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未验证原生窗口和 Android 真机显示。
+
+## 2026-11-24 HuxerUI fork 0.5.5
+
+- 基于 `3ed4df5` 与当前工作区。本地依赖与 CI 同步到已发布的 `b581978c9412baf49dedaded38b7e0d55757d579`，包含官方 `3d0be837` 和 0.5.5 的移动端键盘避让。Clash-Flux 采用默认 Resize。
+- Linux `cmake --build build --target clash-flux`、`cmake --build build`、`./run.sh --version`（v0.3.129）、`git diff --check` 通过。CTest `-L clashflux-required` 38/38 通过，耗时 130.15 秒。隔离 Linux 窗口确认首页与流量圆环正常渲染。
+- Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过，Java/native 同源。Android 真机软键盘、Windows 和 macOS 原生验收待验证。
+
+## 2026-11-24 代理分组组头点击范围
+
+- 基于 `3ed4df5` 工作区和 HuxerUI `e53ac6ab`。节点数左侧的组名、类型和留白共用展开动作，箭头也可切换。无窗口专项覆盖 960pt 与 380pt、数字左侧边缘、组名、箭头、数字徽标、状态预览和独立测速。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过，真机交互待验证。
+
+## 2026-11-24 代理分组投影和测速等待
+
+- 基于 `3ed4df5` 工作区与 HuxerUI `e53ac6ab`。代理页横滑和纵向视图共用组快照。纵向列表按组保存首行位置，无搜索时按需计算行内节点索引。重叠测速等待当前阻塞节点，释放后在一次应用线程更新内重新核对并占用整批叶子。
+- 36 组 × 1,000 个成员的独立投影对照中，跨组搜索耗时中位数 8.48 → 3.91 ms。另核对不同列数、空组、无搜索命中时的组头和节点顺序。数字仅覆盖投影，见[滚动性能检查](scroll-performance.md#2026-11-24-纵向代理分组投影)。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`--proxy-probe-lifetime`、`--proxy-speed-loading`、`--native-proxy-node-card` 与 CTest 的 `page_transition`、`ui_resources`、`group_expansion_runtime` 通过。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。原生帧率和真机测速待验证。
+
+## 2026-11-24 首页猫咪原地重启
+
+- 基于 `3ed4df5` 工作区和 HuxerUI `e53ac6ab`。桌面已有代理会话交接期间，宽窗运行卡片和 Compact 标题卡片保持原位及原会话计时。猫咪等待时低头闭眼，监听就绪后睁眼抖耳；失去代理会话时跟随实际失败或停止状态。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）、`git diff --check`、`--home-restart` 和 CTest 的 `page_transition`、`ui_resources`、`singbox`、`proxy_standby_runtime` 通过。回归覆盖慢交接、失败、卡片几何、会话时长和减少动态效果。
+- `./demos/box-cat-demo/run-demo.sh --restart-preview` 在隔离 Linux 原生窗口通过普通和慢速模拟，录制了生产猫咪组件的动作。Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。真实 VPN 交接、Windows/macOS 和 Android 真机待验证。
+
+## 2026-11-24 全局规则保存反馈
+
+- 基于 `3ed4df5` 工作区、HuxerUI `e53ac6ab` 和 sing-box `1.14.4`。规则状态写入并通过候选检查后结束编辑器忙态，内核在后台交接。应用失败时恢复上一份策略、提示原因并保留草稿。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.129）和 `git diff --check` 通过。CTest 的 `page_transition`、`ui_resources`、`persistence`、`routing`、`vpn`、`compensation`、`singbox`、`proxy_standby_runtime`、`personal_rule_sets_runtime` 和 `resource_management_runtime` 全部通过。页面回归模拟延迟交接及失败，核对提前解除忙态和保留后续编辑。
+- Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。实际 VPN 下的重启时延、Android 真机及 Windows 应用待验证。
+
+## 2026-11-24 代理分组间距
+
+- 基于 `3ed4df5` 工作区和 HuxerUI `e53ac6ab`。相邻代理分组大卡片之间使用独立的透明留白，宽窄屏均与外圆角共用 `IslandTheme::nested_radius`（14pt）。渲染回归在仅使用内边距时失败，改用独立留白后通过。Linux 隔离窗口通过五个折叠分组确认露出的页面底色。
+- 分组顶部的首个虚拟列表空白项也取 14pt。Linux 隔离窗口核对首卡位置，窄屏回归从空白处开始拖动，验证留白随列表滚走。
+- Linux 主目标与 `test_page_transition` 构建通过。版本检查（v0.3.129）、`git diff --check`、`--proxy-group-panel`、`page_transition` 和 `ui_resources` 通过。Android ARM64 Debug APK 构建通过，真机布局待验证。
+
+## 2026-11-24 嵌套代理组测速排队
+
+- 基于 `3ed4df5` 工作区、HuxerUI `e53ac6ab` 和 sing-box `1.14.4`。测速从共享出站快照递归展开子组，每个叶子节点只占用一次。共享节点的后续请求等待占用释放，结果提前到达时仍保留占用，节点不重叠的组可并行。
+- Linux 主目标与 `test_page_transition` 经 codegen 构建。版本检查（v0.3.129）、`git diff --check`、`--proxy-probe-lifetime`、`--proxy-speed-loading`、`--native-proxy-node-card` 和 38 项 `clashflux-required` 回归通过。回归覆盖父子组排队、多路径去重、提前发布结果及独立组并行。
+- Android ARM64 `./gradlew :app:assembleDebug --console=plain --max-workers=3` 通过。未运行 Android 真机测速或 Windows、macOS 应用。
+
 ## 2026-11-24 代理分组组头与全局测速
 
 - 基于 `a204053` 工作区和 HuxerUI `e53ac6a`。组头左侧显示组名与类型，右侧按节点数、分组测速和展开箭头排列。计数按内容测量。分组视图顶栏闪电测试当前出站模式下的全部组，合并在途请求，保留各组独立忙态。

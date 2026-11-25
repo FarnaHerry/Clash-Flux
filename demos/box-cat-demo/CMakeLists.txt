@@ -31,3 +31,19 @@ huxerui_configure_project_app(box_cat_demo)
 if (MSVC AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     target_compile_options(box_cat_demo PRIVATE /utf-8)
 endif ()
+
+if (NOT HUXERUI_LIBRARY_GRAPH_ONLY AND NOT ANDROID AND NOT IOS AND NOT EMSCRIPTEN)
+    set(CLASHFLUX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+    huxerui_add_app(box_cat_restart_demo
+        SOURCES restart_preview.cpp "${CLASHFLUX_ROOT}/src/ui/box_cat.cpp"
+        RESOURCES "${CLASHFLUX_ROOT}/resources"
+        RESOURCE_NAMESPACE app
+        BUNDLE_NAME "box-cat-restart-demo"
+        BUNDLE_IDENTIFIER "dev.farna.clashflux.boxcatrestartdemo"
+    )
+    target_include_directories(box_cat_restart_demo PRIVATE "${CLASHFLUX_ROOT}/src/ui")
+    huxerui_configure_project_app(box_cat_restart_demo)
+    if (MSVC)
+        target_compile_options(box_cat_restart_demo PRIVATE /utf-8)
+    endif ()
+endif ()

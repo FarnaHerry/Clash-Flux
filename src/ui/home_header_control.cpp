@@ -39,9 +39,11 @@ void MoveHeader(bool show, HomeHeaderControl control, huxerui::TaskScope tasks, 
         : std::chrono::duration_cast<std::chrono::seconds>(
               std::chrono::steady_clock::now() - snapshot.runningSince).count();
     return huxerui::Row {
-      BoxCatStatusIcon(BoxCatPhase::Running, animate),
+      BoxCatStatusIcon(snapshot.phase == BoxCatPhase::Restarting
+          ? BoxCatPhase::Restarting : BoxCatPhase::Running, animate),
       huxerui::Column {
-        huxerui::Text(Localized(snapshot.phase == BoxCatPhase::Stopping ? "正在停止"
+        huxerui::Text(Localized(snapshot.phase == BoxCatPhase::Restarting ? "正在重启"
+            : snapshot.phase == BoxCatPhase::Stopping ? "正在停止"
             : snapshot.phase == BoxCatPhase::Starting ? "正在启动" : "运行中"))
             .Style(huxerui::TextStyle{
                 huxerui::Font::System(font_size::kCaption).WithWeight(huxerui::FontWeight::SemiBold),
@@ -90,13 +92,14 @@ HomeHeaderControl UseHomeHeaderControl(HomeHeaderSnapshot snapshot) {
         control.latest = snapshot;
         const bool active = snapshot.active && foreground;
         if (!snapshot.ready) return [] {};
+        const bool restarting = snapshot.phase == BoxCatPhase::Restarting;
         if (!synced.Get() || !active || !wasActive.Get() || reduced) {
             if (control.motion.Get().action != CoreAction::Idle)
                 control.motion = HomeControlMotion{CoreAction::Idle, control.motion.Get().serial + 1};
-            control.shown = snapshot.running;
-            control.catReady = snapshot.running;
+            control.shown = snapshot.running || restarting;
+            control.catReady = snapshot.running || restarting;
             synced = true;
-        } else {
+        } else if (!restarting) {
             if (!snapshot.running || snapshot.phase == BoxCatPhase::Starting || snapshot.phase == BoxCatPhase::Stopping)
                 control.catReady = false;
             if (snapshot.phase == BoxCatPhase::Stopping || !snapshot.running) {

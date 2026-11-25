@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <stop_token>
 
@@ -70,6 +71,12 @@ struct CoreHomeView {
     std::int64_t vpnElapsedMs = 0;
     core::CoreState coreState = core::CoreState::Stopped;
     std::chrono::steady_clock::time_point connectedSince{};
+    std::optional<std::chrono::steady_clock::time_point> proxyRestartSince;
+
+    bool RestartingProxy(CoreAction action) const {
+        return proxyRestartSince.has_value() || (action == CoreAction::Restart && proxyActive);
+    }
+    auto ProxySessionSince() const { return proxyRestartSince.value_or(connectedSince); }
     bool operator==(const CoreHomeView&) const = default;
 };
 
@@ -82,6 +89,7 @@ inline CoreHomeView MakeCoreHomeView(const CoreView& view) {
         .vpnElapsedMs = view.vpnElapsedMs,
         .coreState = view.core.state,
         .connectedSince = view.core.connectedSince,
+        .proxyRestartSince = view.core.proxyRestartSince,
     };
 }
 

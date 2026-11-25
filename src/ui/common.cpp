@@ -576,8 +576,6 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     core.checkAlive();
     core.captureHealthEvidence(slowProbes);
     CoreView view;
-    view.core = core.snapshot();
-    view.health = core.runtimeHealthSnapshot(view.core);
     view.ready = clashflux::data::session().ready();
     view.tunIntent = core.tunEnabled();
     view.modeIntent = core.mode();
@@ -596,6 +594,10 @@ CoreView ReadCoreView(bool slowProbes, bool previousSystemProxyActive) {
     // 内核没跑时运行时快照不含本次意图，写透后会被这一拍打回去。
     view.allowLan = core.setting("core.allow_lan", "false") == "true";
     view.serviceInstalled = service::installed();
+    // A slow system proxy probe can wait out a handoff. Sample its final state
+    // afterwards so an in-flight restart is never published after that wait.
+    view.core = core.snapshot();
+    view.health = core.runtimeHealthSnapshot(view.core);
     return view;
 }
 

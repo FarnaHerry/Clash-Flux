@@ -1390,72 +1390,87 @@ enum class RulesPageMode { ReadOnly, SubscriptionEditor, GlobalEditor };
     auto loadGeneration = policyModel->globalRules.loadGeneration;
     auto loaded = policyModel->globalRules.loaded;
 
-    const auto editorSaveClose = huxerui::UseState(std::function<void()>{});
+    const auto editorSaveClose = policyModel->globalRules.editorSaveClose;
     auto policySavePending = policyModel->globalRules.pending;
-    // 一次保存要「编译 + 内核 check + 重启内核」，耗时数秒；期间用户可能继续
-    // 编辑（新增/开关/删除都会触发保存）。在途时只标 pending，完成后用最新
-    // 列表补一次保存——直接丢弃会让刚写的规则在下一次重载时被存储值覆盖。
+    const auto saveInFlight = policyModel->globalRules.saveInFlight;
+    // The editor waits for the saved setting and checked candidate. Keep the
+    // worker serialized through handoff so a rollback cannot undo a newer save.
     auto dispatchPolicySave = std::make_shared<std::function<void()>>();
     const std::weak_ptr<std::function<void()>> weakDispatch = dispatchPolicySave;
     *dispatchPolicySave = [applicationTasks, globalRules, toast, refreshTick, policySaving,
-                           policySavePending, loadGeneration, coreModel, policyModel,
-                           weakDispatch, editorSaveClose] {
+                           policySavePending, saveInFlight, loadGeneration, coreModel,
+                           policyModel, weakDispatch, editorSaveClose] {
         const auto keepAlive = weakDispatch.lock();
         if (!keepAlive) return;
+        saveInFlight = true;
         policySaving = true;
-        loadGeneration = loadGeneration.Get() + 1;
+        ++loadGeneration;
         vpn::VpnPolicy policy;
-        policy.rules.reserve(globalRules.Get().size());
-        for (const vpn::RouteRule& rule : globalRules.Get()) {
-            policy.rules.push_back(rule);
-        }
-        applicationTasks.Launch([policy = std::move(policy), toast, refreshTick, policySaving,
-                      policySavePending, coreModel, policyModel, keepAlive, editorSaveClose]() mutable
-                         -> huxerui::Task<void> {
-            std::string error;
-            bool ok = false;
-            try { const auto outcome = co_await RunOnTaskThread([policy = std::move(policy)]() mutable {
-                std::string saveError;
-                // 未命中的流量始终跟随当前启用的代理订阅；PPTP
-                // 通过全局规则接管自己的目标网段。
-                for (const model::Profile& profile : store::profilesStore().list()) {
-                    if (profile.selected && profile.type != "pptp") {
-                        policy.defaultMainId =
-                            store::ProfileConnectionId(profile.id);
-                        break;
-                    }
-                }
-                const bool saved = store::vpnStore().saveGlobalPolicy(std::move(policy), saveError);
-                auto accepted = saved ? store::vpnStore().globalPolicy() : vpn::VpnPolicy{};
-                return std::tuple{saved, store::coreStore().snapshot(), std::move(saveError), std::move(accepted)};
-            });
-            ok = std::get<0>(outcome);
-            error = std::get<2>(outcome);
-            coreModel->Update([&](CoreView& view) { view.core = std::get<1>(outcome); });
-            if (ok) policyModel->globalRules.PublishSaved(std::get<3>(outcome).rules);
-            } catch (const std::exception& e) { error = e.what(); }
-            policySaving = false;
-            if (!ok || !policySavePending.Get()) {
+        policy.rules = globalRules.Get();
+        const auto saved = [policyModel, policySavePending, editorSaveClose, toast]
+                           (const std::vector<vpn::RouteRule>& rules) {
+            policyModel->globalRules.PublishSaved(rules);
+            if (!policySavePending.Get()) {
                 const auto close = editorSaveClose.Get();
                 editorSaveClose = std::function<void()>{};
-                if (ok && close) close();
+                if (close) close();
             }
-            toast.Show(ok ? Localized("编排规则已保存")
-                          : LocalizedFormat("全局规则保存失败：{}", error));
-            // 失败不触发重载：列表保留用户编辑（含失败规则），修正后可重试；
-            // 成功才从存储回读，拿到落库后的规则 ID 与顺序。
-            if (ok) refreshTick = refreshTick.Get() + 1;
+            toast.Show(Localized("编排规则已保存"));
+        };
+        applicationTasks.Launch([policy = std::move(policy), applicationTasks, saved, toast,
+                      refreshTick, policySaving, policySavePending, saveInFlight, coreModel,
+                      policyModel, keepAlive, editorSaveClose]() mutable -> huxerui::Task<void> {
+            std::string error;
+            std::optional<std::vector<vpn::RouteRule>> rollback;
+            bool ok = false;
+            try {
+                auto outcome = co_await RunOnTaskThread([policy = std::move(policy), applicationTasks, saved]() mutable {
+                    std::string saveError;
+                    std::optional<std::vector<vpn::RouteRule>> previousRules;
+                    // Unmatched traffic follows the selected ordinary profile.
+                    for (const model::Profile& profile : store::profilesStore().list()) {
+                        if (profile.selected && profile.type != "pptp") {
+                            policy.defaultMainId = store::ProfileConnectionId(profile.id);
+                            break;
+                        }
+                    }
+                    const bool applied = store::vpnStore().saveGlobalPolicy(std::move(policy), saveError,
+                        [&](const vpn::VpnPolicy& accepted, const vpn::VpnPolicy& previous) {
+                            auto rulesToRestore = previous.rules;
+                            applicationTasks.Post([saved, rules = accepted.rules] { saved(rules); });
+                            previousRules.emplace(std::move(rulesToRestore));
+                        });
+                    if (applied) previousRules.reset();
+                    return std::tuple{applied, std::move(saveError), std::move(previousRules)};
+                });
+                std::tie(ok, error, rollback) = std::move(outcome);
+            } catch (const std::exception& e) { error = e.what(); }
+
+            saveInFlight = false;
+            if (rollback) {
+                policyModel->globalRules.PublishApplyRollback(*rollback);
+                toast.Show(LocalizedFormat("全局规则应用失败：{}", error));
+            } else if (!ok) {
+                if (!policySavePending.Get()) {
+                    policySaving = false;
+                    editorSaveClose = std::function<void()>{};
+                }
+                toast.Show(LocalizedFormat("全局规则保存失败：{}", error));
+            }
+            coreModel->RequestRefresh();
+            if (ok) ++refreshTick;
             if (policySavePending.Get()) {
                 policySavePending = false;
                 (*keepAlive)();
             }
         });
     };
-    auto persistGlobalPolicy = [policyModel, policySaving, policySavePending,
+    auto persistGlobalPolicy = [policyModel, policySaving, policySavePending, saveInFlight,
                                 dispatchPolicySave] {
         policyModel->globalRules.Edited();
-        if (policySaving.Get()) {
+        if (saveInFlight.Get()) {
             policySavePending = true;
+            policySaving = true;
             return;
         }
         (*dispatchPolicySave)();

@@ -105,3 +105,32 @@ gdb -q -batch -x tests/scroll_work_counts.gdb ./build/test_page_transition
 - **流合并与稳定标识**：日志条目分配单调递增 `LogEntry::id` 作为 `VirtualList` 行键；流增量按 120ms 批处理合入。
 - **平台段落排版缓存（方案 A）**：首帧未获知真实行内容宽度（`widthPx == 0`）时不按猜测宽度入缓存，直接由框架 `huxerui::Text` 排版并挂载每行共享去重（`postedPx`）的 `ObserveLogTextWidth`；获知真实宽度后通过 `TextMeasurer::CreateTextLayout` 生成 `LogParagraph`，仅当 `line_count > 0` 且测量高度不小于 `font.Size() * 0.8F`（有效高度，排除无窗口或异常 0 度量）时按 `(entryId, widthPx, fontSize, resolvedLineHeight)` 写入每 UI 线程最多 2,048 条缓存，由 `LogParagraphPaint` 调用 `PaintContext::DrawText(Point, const TextLayout&)` 绘制；无头测试或度量异常时自动回落到框架 `Text` 且不缓存无效高度。
 - **结构一致与预渲染边界**：缓存命中与未命中行共用同一 `Column -> Row` 节点骨架（不包裹额外的 `huxerui::Scope`），避免后续批次刷新撕裂重建可见行；`EstimatedItemExtent` 按减半卡片内边距 ×2 + 实测单行字高 + 底部间距估算，`CacheExtent(180pt)` 控制预创建范围。
+
+## 2026-11-24 纵向代理分组投影
+
+基于 `3ed4df5` 加本轮前的工作区，Linux / Clang 21 / `-O2`，分别从优化前后源码
+提取分组投影函数。数据为 36 组、每组 1,000 个成员、4 列。无搜索时展开 24 组，
+搜索时每组命中 200 项。输入快照预先构建，前后版本交替执行 5 次，每次取 51 次投影
+的耗时中位数，表中再取 5 次的中位数。分配统计为单次投影中的 `operator new` 调用。
+
+| 场景 | 分配调用 前 → 后 | 投影耗时 前 → 后 |
+| --- | ---: | ---: |
+| 展开分组 | 72,999 → 1 | 2.28 ms → 约 0.001 ms |
+| 跨组搜索 | 108,301 → 325 | 8.48 ms → 3.91 ms |
+
+优化后展开只保留每组的首行位置，搜索只保存实际命中的成员索引。另用空组、尾部不满一行、
+无匹配和 1/2/4/7/11 列对照组头与节点顺序，结果一致。测量范围仅为列表投影，
+未包括网络、快照解码、卡片挂载、布局或原生绘制。
+
+## 2026-11-25 纵向代理分组短滚动
+
+基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。Linux / Clang 21 / Debug 的 `build/test_page_transition --proxy-group-panel` 在 960 × 360pt 无窗口视口测试 128 行展开组。外层 Column 使正文先按宽松约束测量，再为滚动条让位后重新测量。两个版本从相同的 `ScrollTo(1650)` 请求出发，再依次发出 36pt 滚轮和 20pt 的触控板 Begin/End。用 GDB 在 `ProxyGroupRowMetrics::Measure` 和行高缓存重建处计数。
+
+| 检查 | 修复前 | 修复后 |
+| --- | ---: | ---: |
+| 单次 36pt 滚轮位移 | 24.57pt | 36pt |
+| 单次 20pt 触控板位移 | 36pt | 20pt |
+| 单次触控板行高测量调用 | 110 | 39 |
+| 单次触控板行高缓存重建 | 2 | 0 |
+
+统计为此输入的应用层调用次数。原生帧率和真机手感未测量。

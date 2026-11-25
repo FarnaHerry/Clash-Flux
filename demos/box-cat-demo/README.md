@@ -19,7 +19,7 @@
 动作分为准备、主体与回落，配合独立闭眼/弯眼、耳朵、尾巴及地面投影；非等比缩放和旋转共用正确的支点变换，首尾回到相同待机姿势。
 `src/cat_tricks.cpp` 无快照捕获、不逐帧写 State；播放期间 30fps，播完或 reduced motion 停帧。
 实验室提供单独点播、随机选择不同动作、点击预览重播、0.25–2 倍速度及逐帧滑杆；拖动滑杆暂停时间轴，重播恢复播放。
-尚未接入主程序首页，保持隔离演示。
+完整猫身的实验室动作保持隔离预览，首页使用下文的箱内重启动作。
 默认使用与主程序相同的 `third_party/huxerui` 固定源码；不链接 Clash-Flux 的领域模块，不访问数据库、订阅、内核、
 系统代理或 TUN。时长和连接统计均为固定示例数据，不代表真实运行状态。
 
@@ -115,6 +115,16 @@ cmake --build demos/box-cat-demo/build --target box_cat_demo
 `--tricks --smoke-test` 单独验证八个动作实际启动、到达终态后停帧、快速重播、减少动态效果及静态逐帧预览。
 仓库要求的主目标编译与 `./run.sh --version` 仍需执行；不需要打开主程序 GUI。
 
+
+## 原地重启预览
+
+预览使用首页的同一个猫咪组件，同时展示放大动作和 36pt 卡片图标。「原地重启」和「慢速重启」分别模拟 1.5 秒与 3.5 秒后收到就绪确认。
+
+```bash
+./demos/box-cat-demo/run-demo.sh --restart-preview
+```
+
+Windows 可在配置 Demo 构建目录后构建 `box_cat_restart_demo` 目标，再运行 `demos/box-cat-demo/build-windows/box_cat_restart_demo.exe`。
 
 ## 正式项目 Logo 预览
 

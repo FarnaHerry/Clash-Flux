@@ -133,32 +133,61 @@ inline huxerui::TextField HomeProxyField(const huxerui::TextEditingValue& value,
     return huxerui::TextField(value)
         .Placeholder(current.empty() ? label : std::string{current})
         .Variant(huxerui::TextFieldVariant::Outlined)
-        .InputConfiguration({.read_only = !searchEnabled})
-        .TrailingIcon(app::images::chevron_down);
+        .InputConfiguration({.read_only = !searchEnabled});
 }
 
 inline huxerui::View HomeProxyFieldSurface(huxerui::View field, huxerui::TextFieldStyle style,
-                                         const std::optional<ProxyNameFlag>& flag) {
+    const std::optional<ProxyNameFlag>& flag, huxerui::State<std::optional<bool>> direction,
+    bool enabled, bool covered, std::optional<bool> listOpensUp = {}) {
     huxerui::View leading;
     if (flag) {
         leading = huxerui::Row {UseCountryFlagTile(flag->index)}
             .With(huxerui::Padding(huxerui::EdgeInsets{.left = style.padding.left}));
         style.padding.left += kCountryFlagWidth + kCountryFlagTextGap;
     }
+    huxerui::View trailing;
+    if (!covered) {
+        const float size = style.trailing_icon_size;
+        const float inset = style.padding.right;
+        const auto tint = !enabled ? style.disabled_trailing_icon :
+            listOpensUp.has_value() ? style.focused_trailing_icon : style.trailing_icon;
+        trailing = huxerui::Scope([direction, listOpensUp, size, inset, tint] {
+            const auto previous = direction.Get();
+            const auto start = huxerui::UseState(!listOpensUp && previous
+                ? (*previous ? -180.0F : 0.0F) : -90.0F);
+            const auto ready = huxerui::UseState(false);
+            huxerui::Lifecycle([direction, listOpensUp, ready] {
+                if (listOpensUp.has_value()) direction = listOpensUp;
+                ready = true;
+                return [] {};
+            }, listOpensUp);
+            const float target = !listOpensUp ? -90.0F : *listOpensUp ? -180.0F : 0.0F;
+            const float angle = ready.Get() ? target : start.Get();
+            return huxerui::Stack {
+              huxerui::Image(app::images::chevron_down).Tint(tint)
+                  .With(huxerui::Frame{.width = size, .height = size},
+                        huxerui::Rotation(huxerui::AnimateTo(angle, huxerui::TweenSpec{0.16, huxerui::Easing::EaseOut})))
+                  .Key("home-proxy-chevron"),
+            }.With(huxerui::Padding(huxerui::EdgeInsets{.right = inset}),
+                   huxerui::Align(huxerui::HorizontalAlignment::End, huxerui::VerticalAlignment::Center));
+        });
+    }
+    style.padding.right += style.trailing_icon_size + style.icon_spacing;
     return huxerui::Stack {
       huxerui::ProvideEnvironment(style, field),
       leading,
+      trailing,
     }.With(huxerui::Align(huxerui::HorizontalAlignment::Stretch, huxerui::VerticalAlignment::Center));
 }
 
 inline huxerui::View HomeProxyPanel(
     std::vector<HomeProxyChoice> choices, std::string current, std::string label,
     huxerui::StringVariant noMatches, std::string id, bool searchEnabled, huxerui::State<huxerui::Rect> anchorBounds,
-    huxerui::State<huxerui::Rect> viewportBounds,
+    huxerui::State<huxerui::Rect> viewportBounds, huxerui::State<std::optional<bool>> direction,
     huxerui::State<huxerui::TextEditingValue> edit, std::function<void()> close,
     std::function<void(std::string)> onSelect) {
     return huxerui::Scope([choices = std::move(choices), current = std::move(current), label = std::move(label),
-                          noMatches, id = std::move(id), searchEnabled, anchorBounds, viewportBounds, edit,
+                          noMatches, id = std::move(id), searchEnabled, anchorBounds, viewportBounds, direction, edit,
                           close = std::move(close), onSelect = std::move(onSelect)] {
         auto active = huxerui::UseState(std::optional<std::size_t>{});
         const auto editor = huxerui::UseViewHandle();
@@ -272,7 +301,10 @@ inline huxerui::View HomeProxyPanel(
                       .Offset({0.0F, opensUp ? 8.0F : -8.0F}, {}).Opacity(0.0F, 1.0F)),
             }.With(huxerui::ClipChildren(), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         }).Key("home-proxy-suggestions");
-        auto panel = HomeProxyPanelLayout {HomeProxyFieldSurface(field, fieldStyle, flag), suggestions}
+        auto panel = HomeProxyPanelLayout {
+          HomeProxyFieldSurface(field, fieldStyle, flag, direction, true, false, opensUp),
+          suggestions,
+        }
             .LayoutValue<HomeProxyOpensUp>(opensUp)
             .With(huxerui::Frame{.width = anchor.width},
                huxerui::Background(listStyle.popup_background),
@@ -331,6 +363,7 @@ inline huxerui::View HomeProxyCombo(
         const auto popup = huxerui::UsePopup();
         auto anchorBounds = huxerui::UseState(huxerui::Rect{});
         auto viewportBounds = huxerui::UseState(huxerui::Rect{});
+        const auto direction = huxerui::UseState(std::optional<bool>{});
         auto layer = huxerui::UseState(huxerui::LayerId{});
         auto edit = huxerui::UseState(huxerui::TextEditingValue{});
         const auto close = [popup, layer, edit, expandedPicker, id, viewportBounds] {
@@ -344,9 +377,9 @@ inline huxerui::View HomeProxyCombo(
         };
         const std::string label = huxerui::UseString(fieldLabel);
         const huxerui::ViewFactory panel = [choices, current, label, noMatches, id, searchEnabled, anchorBounds,
-                                           viewportBounds, edit, close, onSelect] {
+                                           viewportBounds, direction, edit, close, onSelect] {
             return HomeProxyPanel(choices, current, label, noMatches, id, searchEnabled, anchorBounds, viewportBounds,
-                                  edit, close, onSelect);
+                                  direction, edit, close, onSelect);
         };
         const auto open = [anchor, popup, panel, layer, anchorBounds, enabled, expandedPicker, id, close] {
             if (!enabled || layer.Get() != 0 || anchorBounds.Get().width <= 0.0F) return;
@@ -383,7 +416,8 @@ inline huxerui::View HomeProxyCombo(
             .OnClick(open);
         const auto fieldStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
         return huxerui::Column {
-          HomeProxyFieldSurface(field, fieldStyle, flag).With(huxerui::Opacity(expanded ? 0.0F : 1.0F)),
+          HomeProxyFieldSurface(field, fieldStyle, flag, direction, enabled, expanded)
+              .With(huxerui::Opacity(expanded ? 0.0F : 1.0F)),
         }
             .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::Enabled(enabled))
             .On<huxerui::ViewEvents::KeyIntercept>([open](const huxerui::KeyEvent& key) {

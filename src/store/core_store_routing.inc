@@ -40,17 +40,18 @@
     // tearing one down. Suspend unavailable destinations before the interface
     // can disappear or be reused by another connection.
     inline bool updateNativeRouting(std::vector<singbox::NativeConnection> sessions,
-                                    std::string& error) {
+                                    std::string& error,
+                                    const std::function<void()>& onPrepared = {}) {
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
         nativeSessions_ = std::move(sessions);
-        return refreshRouting(error);
+        return refreshRouting(error, onPrepared);
     }
 
     // Recompile saved global rules on every policy/session change. Core
     // lifecycle operations are serialized so a TUN toggle cannot race a VPN
     // connect/disconnect and restore an obsolete configuration.
-    inline bool refreshRouting(std::string& error) {
+    inline bool refreshRouting(std::string& error, const std::function<void()>& onPrepared) {
         std::lock_guard operationLock(lifecycleMutex_);
         auto healthPause = streams_.pauseHealth();
         ensureOpen();
@@ -68,7 +69,7 @@
                 }
                 return true;
             }
-            if (restartCore(content, true)) return true;
+            if (restartCore(content, true, {}, nullptr, onPrepared)) return true;
             error = snapshot().lastError;
             if (error.empty()) error = "应用路由计划后主 VPN 未能启动";
             // Never leave the old core using an interface that is being

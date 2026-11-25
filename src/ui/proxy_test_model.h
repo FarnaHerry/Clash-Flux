@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../wire_codec.h"
+
 #include <huxerui/huxerui.h>
 #include <algorithm>
 #include <chrono>
@@ -12,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -225,6 +228,62 @@ struct ProxyProbeTarget {
     std::shared_ptr<ProxyProbe> probe;
     NativeProxyHistory nativeHistory{};
 };
+
+inline std::vector<ProxyProbeTarget> CollectProxyGroupTargets(
+    ProxyTestModel& model, const wire::Proxies& proxies, const std::string& group) {
+    const auto root = proxies.entries.find(group);
+    if (root == proxies.entries.end() || !root->second.members) return {};
+
+    // sing-box tests the leaves of nested groups. A leaf can be reachable
+    // through several paths but has only one history record.
+    std::unordered_set<std::string_view> visited{root->first};
+    std::vector<const std::vector<std::string>*> pending{&*root->second.members};
+    std::vector<ProxyProbeTarget> targets;
+    while (!pending.empty()) {
+        const auto& members = *pending.back();
+        pending.pop_back();
+        for (const auto& tag : members) {
+            if (!visited.insert(tag).second) continue;
+            const auto entry = proxies.entries.find(tag);
+            if (entry == proxies.entries.end()) continue;
+            const auto& proxy = entry->second;
+            if (proxy.members) {
+                pending.push_back(&*proxy.members);
+            } else {
+                targets.push_back({tag, model.Get(tag, proxy.delay, false, proxy.testTime)});
+            }
+        }
+    }
+    return targets;
+}
+
+template<class Valid, class Poll>
+huxerui::Task<bool> ClaimProxyGroupTargets(ProxyGroupTest& batch, int ticket,
+    std::vector<ProxyProbeTarget>& targets, bool native, Valid valid, Poll poll) {
+    while (batch.Current(ticket) && valid()) {
+        const auto occupied = std::ranges::find_if(targets, [](const auto& target) {
+            return target.probe->owner != 0;
+        });
+        if (occupied == targets.end()) break;
+        // One occupied node is enough to hold this batch. Check the whole set
+        // again only when that node is released, immediately before claiming.
+        do {
+            co_await huxerui::Delay(std::chrono::milliseconds{100});
+        } while (occupied->probe->owner != 0 && batch.Current(ticket) && valid());
+    }
+    if (!batch.Current(ticket) || !valid()) co_return false;
+
+    // Claim the entire set before yielding so an overlapping batch or single
+    // test cannot start between the availability check and the claim.
+    batch.claimed.reserve(targets.size());
+    for (auto& target : targets) {
+        const auto previous = poll(target.tag);
+        if (native) target.nativeHistory = NativeProxyHistory::Capture(*target.probe, previous);
+        const auto baseline = native ? target.nativeHistory.baselineTime : (previous ? previous->second : 0);
+        batch.Start(target.probe, ticket, baseline);
+    }
+    co_return true;
+}
 
 // One kernel-side group test supplies delays for every target. This replaces
 // UI-side per-node fan-out so the kernel owns the group URL, concurrency and

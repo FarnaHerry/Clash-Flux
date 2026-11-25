@@ -2292,6 +2292,8 @@ void testHomeProxyPickers() {
     const auto nodeInput = node.Find(UiSelector::Type<huxerui::TextField>());
     const auto panel = ui.Find(UiSelector::Key("home-proxy-panel"));
     const auto panelInput = panel.Find(UiSelector::Type<huxerui::TextField>());
+    const auto chevron = UiSelector::Key("home-proxy-chevron");
+    const auto panelChevron = panel.Find(chevron);
     const auto suggestions = panel.Find(UiSelector::Key("home-proxy-suggestions"));
     const auto card = ui.Find(UiSelector::Key("home-proxy-card-fixture"));
     const auto nextCard = ui.Find(UiSelector::Key("home-next-card-fixture"));
@@ -2309,6 +2311,15 @@ void testHomeProxyPickers() {
     const auto nodeBounds = nodeInput.One().bounds;
     const auto cardBounds = card.One().bounds;
     const auto nextCardBounds = nextCard.One().bounds;
+    const auto isTurning = [](const huxerui::testing::UiNodeQuery& arrow) {
+        const auto info = arrow.One();
+        return info.bounds.width > info.size.width + 1.0F;
+    };
+    const auto pointsUp = [&] {
+        static const std::regex halfTurn{
+            R"(transform\s+\{\s+m11=-1\.000000\s+m12=-?0\.000000\s+m21=-?0\.000000\s+m22=-1\.000000)"};
+        return std::regex_search(ui.CaptureSnapshot().ToString(), halfTurn);
+    };
     const auto checkLayout = [&] {
         check(card.One().bounds == cardBounds && nextCard.One().bounds == nextCardBounds &&
                   groupInput.One().bounds == groupBounds && nodeInput.One().bounds == nodeBounds,
@@ -2316,7 +2327,9 @@ void testHomeProxyPickers() {
     };
     check(groupInput.One().value == "" && nodeInput.One().value == "",
           "home pickers show both fields without a subscription");
-    group.Tap(); ui.Pump(kSettle);
+    group.Find(chevron).Tap();
+    ui.PumpUntil([&] { return panel.Exists() && isTurning(panelChevron); });
+    ui.Pump(kSettle);
     check(focusedCombo.One().expanded == true && !options.Exists(),
           "the group opens an empty list without a subscription");
     ui.TapAt(outside); ui.Pump(kSettle);
@@ -2399,21 +2412,29 @@ void testHomeProxyPickers() {
     checkLayout();
     ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 112.0F}});
     ui.PumpUntil([&] { return suggestions.One().bounds.y < groupBounds.y; });
+    ui.Pump();
+    ui.Pump(kSettle);
     const auto aboveGroup = suggestions.One().bounds;
     check(panelInput.One().bounds == groupBounds &&
               aboveGroup.y >= 0.0F && aboveGroup.y + aboveGroup.height == groupBounds.y &&
               aboveGroup.height < 3.0F * clashflux::ui::kHomeProxyOptionHeight,
           "when neither side fits all groups, the list scrolls above the stationary input in the larger space");
+    check(pointsUp(), "the group arrow points up when the list opens above its field");
     panelInput.EnterText("BACK"); ui.Pump(kSettle);
     check(panelInput.One().bounds == groupBounds && focusedCombo.One().expanded == true &&
               suggestions.One().bounds.height == clashflux::ui::kHomeProxyOptionHeight,
           "filtering the upward list keeps the input pinned and focused");
     ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 480.0F}});
     ui.PumpUntil([&] { return suggestions.One().bounds.y == groupBounds.y + groupBounds.height; });
+    ui.Pump();
+    ui.Pump(kSettle);
     check(panelInput.One().bounds == groupBounds && panelInput.One().value == "BACK" &&
               focusedCombo.One().expanded == true,
           "growing the viewport flips the list below without moving the input or resetting its session");
-    panelInput.Tap({.device_kind = huxerui::PointerDeviceKind::Mouse}); ui.Pump(kSettle);
+    check(!pointsUp(), "changing the list placement below the field turns the group arrow back down");
+    panelChevron.Tap({.device_kind = huxerui::PointerDeviceKind::Mouse});
+    ui.PumpUntil([&] { return !panel.Exists() && isTurning(group.Find(chevron)); });
+    ui.Pump(kSettle);
     check(!panel.Exists() && focusedCombo.One().expanded == false,
           "clicking the expanded editor closes the popup and returns focus to the input");
     checkLayout();
@@ -2452,6 +2473,9 @@ void testHomeProxyPickers() {
               aboveNode.y + aboveNode.height == insetNodeBounds.y &&
               aboveNode.height == 2.0F * clashflux::ui::kHomeProxyOptionHeight,
           "the full node list fits above the stationary editor inside the safe area");
+    ui.Pump();
+    ui.Pump(kSettle);
+    check(pointsUp(), "the node arrow also points up with an upward list");
     ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 480.0F}});
     ui.PumpUntil([&] { return panelInput.One().bounds == nodeBounds &&
         suggestions.One().bounds.y == nodeBounds.y + nodeBounds.height; });
@@ -5287,11 +5311,14 @@ huxerui::View GlobalRuleSharingRoot() {
                 TestGlobalRules::Replace(model->rules, {"SAVED-new"});
                 model->Edited();
                 model->saving = true;
+                model->saveInFlight = true;
                 ++model->loadGeneration;
                 tasks.Launch([model]() -> huxerui::Task<void> {
                     co_await huxerui::Delay(std::chrono::milliseconds{400});
                     model->PublishSaved({"SAVED-new"});
-                    model->saving = false;
+                    co_await huxerui::Delay(std::chrono::seconds{5});
+                    model->PublishApplyRollback({"SAVED-old"});
+                    model->saveInFlight = false;
                 });
             })} : huxerui::View{huxerui::Text("EDITOR-unmounted")},
         };
@@ -5309,21 +5336,31 @@ void testGlobalRuleSharing() {
     const auto model = globalRuleFixture;
     ui.Find(UiSelector::Text("Save shared rule")).Tap();
     ui.Find(UiSelector::Text("Unmount global editor")).Tap();
-    ui.Pump(std::chrono::milliseconds{600}); ui.PumpAndSettle();
+    ui.Pump(std::chrono::milliseconds{600});
+    ui.Pump(); // Inspect this frame while the simulated handoff is still pending.
     check(ui.Find(UiSelector::Text("EDITOR-unmounted")).Exists() &&
-          ui.Find(UiSelector::Text("SAVED-new")).Exists() && !model->saving.Get(),
-          "global rule save publishes to the retained reader after the editor unmounts");
+          ui.Find(UiSelector::Text("SAVED-new")).Exists() && !model->saving.Get() && model->saveInFlight.Get(),
+          "global rule save releases the editor and publishes while the runtime handoff is still in flight");
+    TestGlobalRules::Replace(model->rules, {"NEXT-draft"});
+    model->Edited();
+    const auto beforeRollback = model->loadGeneration.Get();
+    ui.Pump(std::chrono::seconds{5}); ui.PumpAndSettle();
+    check(ui.Find(UiSelector::Text("SAVED-old")).Exists() && !model->saveInFlight.Get() &&
+          model->rules.Get() == std::vector<std::string>{"NEXT-draft"} && model->dirty.Get() &&
+          !model->PublishLoaded(beforeRollback, {"SAVED-new"}),
+          "a failed runtime handoff restores the accepted rules and preserves a newer draft");
     const auto stale = model->loadGeneration.Get();
     TestGlobalRules::Replace(model->rules, {"FAILED-draft"}); model->Edited();
     check(!model->PublishLoaded(stale, {"STALE-rule"}) && model->rules.Get()[0] == "FAILED-draft" &&
-          model->accepted.Get()[0] == "SAVED-new", "late loads cannot overwrite edits or leak failed drafts into the saved list");
+          model->accepted.Get()[0] == "SAVED-old", "late loads cannot overwrite edits or leak failed drafts into the saved list");
     const auto current = model->loadGeneration.Get();
     check(model->PublishLoaded(current, {"SAVED-external"}) && model->rules.Get()[0] == "FAILED-draft" &&
           model->accepted.Get()[0] == "SAVED-external", "a failed draft survives navigation and a fresh saved-policy read");
     model->pending = true;
     TestGlobalRules::Replace(model->rules, {"QUEUED-newest"}); model->Edited();
     model->PublishSaved({"SAVED-inflight"});
-    check(model->rules.Get()[0] == "QUEUED-newest" && model->accepted.Get()[0] == "SAVED-inflight" && model->dirty.Get(),
+    check(model->rules.Get()[0] == "QUEUED-newest" && model->accepted.Get()[0] == "SAVED-inflight" &&
+          model->dirty.Get() && model->saving.Get(),
           "an in-flight save preserves newer pending edits while publishing only its accepted policy");
     model->pending = false;
     model->PublishSaved({"SAVED-canonical-id"});
@@ -5823,21 +5860,34 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
     if (ticket == 0) return;
     batch->bound = true;
     const int result = 137 + 100 * fixture->requests++;
-    std::vector<ProxyProbeTarget> targets;
+    clashflux::wire::Proxies snapshot;
+    auto& members = snapshot.entries[group].members.emplace();
     for (int index = 0; index < count; ++index) {
         const auto tag = nodePrefix + std::to_string(index);
-        const auto entry = model->Get(tag, 0, false, 0);
-        const auto history = native ? NativeProxyHistory::Capture(
-            *entry, std::pair{fixture->nativeDelay.Get(), fixture->nativeTime.Get()}) : NativeProxyHistory{};
-        batch->Start(entry, ticket, history.baselineTime);
-        targets.push_back({tag, entry, history});
+        snapshot.entries.try_emplace(tag);
+        members.push_back(tag);
     }
-    if (native) {
-        LaunchNativeProxyProbeBatch(tasks, batch, std::move(targets), ticket, [] { return true; },
-            [fixture](const std::string&) -> std::optional<std::pair<int, std::int64_t>> {
-                return std::pair{fixture->nativeDelay.Get(), fixture->nativeTime.Get()};
-            });
-    } else {
+    if (group == "parent-group") {
+        snapshot.entries["fixture-group"].members = std::move(members);
+        snapshot.entries["nested-group"].members =
+            std::vector<std::string>{"fixture-group", "parent-group", "missing-node"};
+        members = {"nested-group", "fixture-group"};
+    }
+    auto targets = CollectProxyGroupTargets(*model, snapshot, group);
+    tasks.Launch([fixture, tasks, batch, ticket, targets = std::move(targets), fail, native,
+                  result, count, group = std::move(group), nodePrefix = std::move(nodePrefix)]() mutable
+                 -> huxerui::Task<void> {
+        const auto valid = [] { return true; };
+        const auto poll = [fixture, native](const std::string& tag) -> std::optional<std::pair<int, std::int64_t>> {
+            if (native) return std::pair{fixture->nativeDelay.Get(), fixture->nativeTime.Get()};
+            if (tag != "node-0" || fixture->pollTime.Get() == 0) return std::nullopt;
+            return std::pair{fixture->pollDelay.Get(), fixture->pollTime.Get()};
+        };
+        if (!(co_await ClaimProxyGroupTargets(*batch, ticket, targets, native, valid, poll))) co_return;
+        if (native) {
+            LaunchNativeProxyProbeBatch(tasks, batch, std::move(targets), ticket, valid, poll);
+            co_return;
+        }
         huxerui::State<bool> release{false};
         fixture->releases.push_back(release);
         LaunchProxyGroupProbeBatch(tasks, batch, group, std::move(targets), ticket,
@@ -5854,12 +5904,8 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
                     delays[nodePrefix + std::to_string(index)] = result;
                 }
                 co_return delays;
-            }, [] { return true; },
-            [fixture](const std::string& tag) -> std::optional<std::pair<int, std::int64_t>> {
-                if (tag != "node-0" || fixture->pollTime.Get() == 0) return std::nullopt;
-                return std::pair{fixture->pollDelay.Get(), fixture->pollTime.Get()};
-            });
-    }
+            }, valid, poll);
+    });
 }
 [[huxerui::composable]] huxerui::View ProxyProbeOrigin() {
     const auto fixture = huxerui::UseService<ProxyProbeFixture>();
@@ -5873,6 +5919,9 @@ void StartProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture, huxerui::Task
       huxerui::Button("Native probe").OnClick([fixture, tasks] { StartProbeFixture(fixture, tasks, false, true); }),
       huxerui::Button("Other group probe").OnClick([fixture, tasks] {
           StartProbeFixture(fixture, tasks, false, false, 1, "other-group", "other-node-");
+      }),
+      huxerui::Button("Parent group probe").OnClick([fixture, tasks] {
+          StartProbeFixture(fixture, tasks, false, false, 1, "parent-group");
       }),
       huxerui::Text(probe.testing ? "PROBE-TESTING" : probe.timeout ? "PROBE-TIMEOUT" :
           "PROBE:" + std::to_string(probe.delay)),
@@ -5968,6 +6017,32 @@ void testProxyProbesSurvivePageRetirement() {
     fixture->releases[releaseIndex] = true; settle();
     check(batch->ticket.Get() == 0 && fixture->model->probes.at("node-0")->value.Get().delay == 137 + 100 * requests,
           "the first group finishes against its own target after the other group");
+
+    const auto nestedRelease = fixture->releases.size();
+    const auto nestedStarted = fixture->started;
+    ui.Find(UiSelector::Text("Parent group probe")).Tap(); ui.Pump();
+    ui.Find(UiSelector::Text("Probe")).Tap(); settle();
+    const auto parent = fixture->model->groups.at("parent-group");
+    const auto sharedNode = fixture->model->probes.at("node-0");
+    check(parent->pending == 1 && sharedNode->owner == parent->ticket.Get() &&
+          !fixture->model->probes.contains("missing-node"),
+          "parent claims each reachable leaf once despite repeated paths, missing tags and back edges");
+    check(batch->ticket.Get() != 0 && batch->pending == 0 && fixture->started == nestedStarted + 1,
+          "a nested child stays queued while its parent measures the shared leaf");
+    fixture->pollDelay = 88;
+    fixture->pollTime = std::int64_t{8};
+    settle();
+    check(parent->pending == 0 && sharedNode->owner == parent->ticket.Get() &&
+          fixture->started == nestedStarted + 1,
+          "an early result keeps the leaf reserved until the kernel finishes the parent request");
+    fixture->pollTime = 0;
+    fixture->releases[nestedRelease] = true; settle();
+    check(parent->ticket.Get() == 0 && batch->pending == 1 &&
+          sharedNode->owner == batch->ticket.Get() && fixture->started == nestedStarted + 2,
+          "the child dispatches once the parent has released the shared leaf");
+    fixture->releases[nestedRelease + 1] = true; settle();
+    check(batch->ticket.Get() == 0 && sharedNode->value.Get().delay == 137 + 100 * (requests + 3),
+          "the child publishes its own delay after the parent completes");
 }
 
 
@@ -6036,11 +6111,24 @@ void StartSingleProbeFixture(std::shared_ptr<ProxyProbeFixture> fixture,
 huxerui::View SingleProbeFixtureRoot() { return huxerui::FlatTheme{SingleProbeFixtureContent()}; }
 const huxerui::Application kSingleProbeFixtureApplication{SingleProbeFixtureRoot,
     {.show_debug_overlay = false, .application_hooks = {InstallProxyProbeFixture}}};
+
+struct PaintedCard {
+    huxerui::Rect bounds;
+    float outlineWidth;
+    float cornerRadius;
+};
+
+std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
+    std::optional<float> width, std::optional<float> height, std::optional<float> top = {});
+
 void testProxyGroupPanelLayout() {
     using namespace clashflux::ui;
+    using namespace std::chrono_literals;
     std::shared_ptr<ProxyTestModel> tests;
     const huxerui::Application app{[]() -> huxerui::View {
-        return huxerui::FlatTheme{huxerui::Scope([] {
+        auto theme = huxerui::FlatLightThemeSpec();
+        ApplyFluxInteractionTheme(theme);
+        return huxerui::FlatTheme{theme, huxerui::Scope([] {
             const auto tests = huxerui::UseService<ProxyTestModel>();
             const auto expanded = huxerui::UseState(false);
             const auto measured = huxerui::UseState<std::size_t>(2);
@@ -6082,7 +6170,8 @@ void testProxyGroupPanelLayout() {
                 const bool last = index == rows;
                 return ProxyGroupPanelPart(ProxyGroupNodeRow(std::move(cards), columns, last), false, last, last)
                     .Key("panel-row-" + std::to_string(index));
-            }).EstimatedItemExtent(56.0F).With(MeasureProxyGroupColumns{measured, tasks, compact});
+            }).EstimatedItemExtent(56.0F).With(MeasureProxyGroupColumns{measured, tasks, compact})
+                .Key("group-panel-list");
             return huxerui::Column {
               SearchPageHeader(huxerui::UseTheme(), {}, PageSearchToolbar(search, searchExpanded,
                   "Proxies", "Search nodes", ProxyAllSpeedButton(tests, {"first", "second"}, start))),
@@ -6102,10 +6191,16 @@ void testProxyGroupPanelLayout() {
     const auto row = [&](std::size_t index) { return ui.Find(UiSelector::Key("panel-row-" + std::to_string(index))); };
     const auto group = ui.Find(UiSelector::Key("first-group-panel"));
     const auto second = ui.Find(UiSelector::Key("second-group-panel"));
+    const auto headerAction = group.Find(UiSelector::Key("proxy-group-header"));
     const auto toggle = group.Find(UiSelector::Key("proxy-group-expand"));
     const auto allSpeed = ui.Find(UiSelector::Key("proxy-test-all"));
     const auto speedAction = UiSelector::Key("speed-test-action");
     const auto loading = UiSelector::Key("speed-test-loading");
+    const float groupRadius = ResolveIslandTheme(huxerui::FlatLightThemeSpec()).nested_radius;
+    const auto checkGroupGap = [&](float panelBottom) {
+        check(std::abs(second.One().bounds.y - panelBottom - groupRadius) < 1.0F,
+              "adjacent group panels are separated by their outer corner radius");
+    };
     const auto checkHeader = [&](const auto& panel) {
         const auto title = panel.Find(UiSelector::Key("proxy-group-title")).One().bounds;
         const auto badge = panel.Find(UiSelector::Key("proxy-group-count")).One().bounds;
@@ -6121,6 +6216,82 @@ void testProxyGroupPanelLayout() {
     checkHeader(group);
     checkHeader(second);
     check(overview.Exists() && !node(0).Exists(), "collapsed panel shows its overview in place of node cards");
+    const auto overviewBounds = overview.One().bounds;
+    checkGroupGap(overviewBounds.y + overviewBounds.height);
+    const auto checkPaintedGap = [&] {
+        const auto firstBounds = group.One().bounds;
+        const auto secondBounds = second.One().bounds;
+        const auto firstCard = paintedCard(ui, firstBounds.width, {}, firstBounds.y);
+        const auto secondCard = paintedCard(ui, secondBounds.width, {}, secondBounds.y);
+        check(firstCard && secondCard && firstCard->cornerRadius == groupRadius &&
+              secondCard->cornerRadius == groupRadius &&
+              std::abs(secondCard->bounds.y - firstCard->bounds.y - firstCard->bounds.height - groupRadius) < 1.0F,
+              "collapsed group backgrounds leave a visible gap equal to their rounded corners");
+    };
+    checkPaintedGap();
+    const auto center = [](huxerui::Rect bounds) -> huxerui::Point {
+        return {bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
+    };
+    const auto mouse = [&](huxerui::PointerEventType type, huxerui::Point position) {
+        ui.SendPointer({.type = type, .pointer_id = 144, .position = position,
+            .device_kind = huxerui::PointerDeviceKind::Mouse});
+    };
+    const auto checkRipple = [&](huxerui::Point point, bool opens) {
+        const auto header = headerAction.One().bounds;
+        mouse(huxerui::PointerEventType::Down, point);
+        mouse(huxerui::PointerEventType::Up, point);
+        ui.Pump();
+        check(node(0).Exists() == opens, "both sides of the header use the same disclosure action");
+        for (int frame = 0; frame < 4; ++frame) ui.Pump(60ms);
+        const auto scene = ui.CaptureSnapshot().ToString();
+        static const std::regex ripple{
+            R"(content\s+\{\s+push-clip\s+\{\s+bounds\s+\{\s+x=0\.000000\s+y=0\.000000)"
+            R"(\s+width=([\d.]+)\s+height=([\d.]+)\s+\}[^}]*\}\s+circle\s+\{)"
+            R"(\s+center\s+\{\s+x=([\d.]+)\s+y=([\d.]+)\s+\}\s+radius=([\d.]+))"};
+        std::smatch wave;
+        check(std::regex_search(scene, wave, ripple) && std::abs(std::stof(wave[1]) - header.width) < 0.1F &&
+              std::abs(std::stof(wave[2]) - header.height) < 0.1F &&
+              std::abs(std::stof(wave[3]) - (point.x - header.x)) < 0.1F &&
+              std::abs(std::stof(wave[4]) - (point.y - header.y)) < 0.1F &&
+              std::stof(wave[5]) >= std::max(point.x - header.x, header.x + header.width - point.x),
+              "a quick click ripples from the pointer across the full header behind its controls");
+        ui.PumpAndSettle();
+    };
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.PumpAndSettle();
+    const auto titleCenter = center(group.Find(UiSelector::Key("proxy-group-title")).One().bounds);
+    const auto idle = ui.CaptureSnapshot();
+    mouse(huxerui::PointerEventType::Move, titleCenter);
+    ui.Pump(180ms);
+    check(ui.CaptureSnapshot() == idle, "hovering the disclosure region adds no visual highlight");
+    checkRipple(titleCenter, true);
+    checkRipple(center(toggle.One().bounds), false);
+    using huxerui::testing::UiSemanticSelector;
+    const auto disclosure = ui.FindSemantics(UiSemanticSelector::AllOf({
+        UiSemanticSelector::Label("First group"), UiSemanticSelector::Role(huxerui::SemanticRole::Button)}));
+    check(disclosure.One().expanded == false, "the group exposes one collapsed accessibility action");
+    disclosure.PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}});
+    ui.PumpAndSettle();
+    check(disclosure.One().expanded == true && node(0).Exists(), "accessible activation expands the same group");
+    disclosure.PerformSemanticAction({huxerui::SemanticActionKind::Activate, {}});
+    ui.PumpAndSettle();
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+    ui.PumpAndSettle();
+    const auto tapBeforeBadge = [&] {
+        const auto badge = group.Find(UiSelector::Key("proxy-group-count")).One().bounds;
+        const auto region = group.Find(UiSelector::Key("proxy-group-title-region")).One().bounds;
+        check(std::abs(region.x + region.width - badge.x) < 0.1F,
+              "the group title action reaches the left edge of the count badge");
+        ui.TapAt({badge.x - 1.0F, badge.y + badge.height * 0.5F});
+        ui.PumpAndSettle();
+    };
+    group.Find(UiSelector::Key("proxy-group-count")).Tap(); ui.PumpAndSettle();
+    overview.Tap(); ui.PumpAndSettle();
+    check(overview.Exists() && !node(0).Exists(), "badge and overview taps leave the group collapsed");
+    group.Find(UiSelector::Key("proxy-group-title")).Tap(); ui.PumpAndSettle();
+    check(node(0).Exists(), "tapping the group name expands the group");
+    tapBeforeBadge();
+    check(overview.Exists() && !node(0).Exists(), "blank space immediately left of the count collapses the group");
     group.Find(speedAction).Tap(); ui.PumpAndSettle();
     const auto firstTest = tests->GetGroup("first");
     const auto secondTest = tests->GetGroup("second");
@@ -6128,6 +6299,9 @@ void testProxyGroupPanelLayout() {
     check(firstTicket != 0 && group.Find(loading).Exists() && second.Find(speedAction).Exists() &&
           allSpeed.Find(speedAction).Exists() && overview.Exists(),
           "group lightning starts its own request without toggling the panel or blocking the toolbar");
+    group.Find(UiSelector::Key("speed-test-button")).Tap(); ui.PumpAndSettle();
+    check(overview.Exists() && firstTest->ticket.Get() == firstTicket,
+          "tapping the group lightning while busy does not trigger disclosure or another test");
     allSpeed.Find(speedAction).Tap(); ui.PumpAndSettle();
     const int secondTicket = secondTest->ticket.Get();
     check(firstTest->ticket.Get() == firstTicket && secondTicket != 0 && allSpeed.Find(loading).Exists(),
@@ -6146,14 +6320,407 @@ void testProxyGroupPanelLayout() {
     check(node(3).One().bounds.y == first.y && last.y > first.y &&
           std::abs(last.width - first.width) < 1.0F && std::abs(last.x - first.x) < 1.0F,
           "wide group uses four equal tracks and keeps the partial last row aligned");
+    checkGroupGap(last.y + last.height + kProxyGroupInset);
     ui.SetWindowMetrics({.viewport = {380.0F, 480.0F}}); ui.PumpAndSettle();
     checkHeader(group);
     checkHeader(second);
     check(node(1).One().bounds.y == node(0).One().bounds.y && node(2).One().bounds.y > node(1).One().bounds.y &&
           std::abs(node(4).One().bounds.width - node(0).One().bounds.width) < 1.0F,
           "resizing to compact keeps the panel expanded and switches to two aligned columns");
+    const auto compactLast = node(4).One().bounds;
+    checkGroupGap(compactLast.y + compactLast.height + kProxyGroupInset);
+    tapBeforeBadge();
+    check(overview.Exists(), "compact title region collapses the group from the count boundary");
+    tapBeforeBadge();
+    check(node(0).Exists(), "compact title region expands the group again");
     toggle.Tap(); ui.PumpAndSettle();
     check(overview.Exists() && !node(0).Exists(), "closing the panel restores the overview");
+    checkPaintedGap();
+
+    toggle.Tap(); ui.PumpAndSettle();
+    ui.SetWindowMetrics({.viewport = {380.0F, 225.0F}}); ui.PumpAndSettle();
+    const auto viewport = ui.Find(UiSelector::Key("group-panel-list")).One().bounds;
+    const auto top = group.One().bounds.y;
+    check(std::abs(top - viewport.y - groupRadius) < 1.0F,
+          "the leading blank sits inside the scroll viewport and matches the group radius");
+    const float x = viewport.x + viewport.width * 0.5F;
+    ui.Drag({x, viewport.y + groupRadius * 0.5F}, {x, viewport.y - 30.0F});
+    ui.PumpAndSettle();
+    check(!group.Exists() || group.One().bounds.y < viewport.y,
+          "a drag starting in the leading blank scrolls it away");
+}
+
+void testStickyProxyGroupHeader() {
+    using namespace clashflux::ui;
+    static constexpr std::size_t rowsPerGroup = 16;
+    static constexpr std::size_t longGroupRows = 128;
+    static constexpr float rowHeight = 48.0F;
+    static constexpr float groupGap = 14.0F;
+    struct Fixture {
+        huxerui::ScrollController controller;
+        std::shared_ptr<PinnedProxyGroup> pinned =
+            std::make_shared<PinnedProxyGroup>(PinnedProxyGroup{.remembered = std::make_shared<PageScrollOffset>()});
+        ProxyTestModel tests;
+        huxerui::State<bool> open{true};
+        huxerui::State<bool> longFirstGroup{false};
+        huxerui::State<float> footerAvoidance{0.0F};
+        huxerui::State<std::optional<bool>> lastDisclosure{std::optional<bool>{}};
+        int selections = 0;
+    };
+    std::shared_ptr<Fixture> fixture;
+    const huxerui::Application app{[]() -> huxerui::View {
+        return huxerui::FlatTheme{huxerui::Scope([] {
+            const auto fixture = huxerui::UseService<Fixture>();
+            const bool open = fixture->open.Get();
+            const bool longFirstGroup = fixture->longFirstGroup.Get();
+            const auto lastDisclosure = fixture->lastDisclosure.Get();
+            const std::size_t secondIndex = open ? (longFirstGroup ? longGroupRows : rowsPerGroup) : 2;
+            const std::size_t end = secondIndex + (lastDisclosure.value_or(true) ? rowsPerGroup : 2);
+            auto list = MakeStickyProxyGroupList(end,
+                [fixture, open, longFirstGroup, lastDisclosure, secondIndex, end](std::size_t index) -> huxerui::View {
+                    const bool first = index < secondIndex;
+                    const auto header = first ? 0 : secondIndex;
+                    ProxyGroupRow::Value row{.headerIndex = header + 1, .expanded = first ? open : lastDisclosure.value_or(true)};
+                    if (index == header) {
+                        const std::string tag = first ? "first" : "second";
+                        const auto speed = huxerui::Scope([fixture, tag] {
+                            return ProxySpeedButton(fixture->tests, tag, [fixture, tag] {
+                                fixture->tests.Begin(*fixture->tests.GetGroup(tag));
+                            });
+                        });
+                        std::function<void()> toggle;
+                        if (first) toggle = [fixture] {
+                            fixture->pinned->AnchorBeforeToggle(1, "first");
+                            fixture->open = !fixture->open.Get();
+                        };
+                        else if (lastDisclosure) toggle = [fixture, header = header + 1] {
+                            fixture->pinned->AnchorBeforeToggle(header, "second");
+                            fixture->lastDisclosure = !fixture->lastDisclosure.Get().value();
+                        };
+                        return ProxyGroupPanelPart(ProxyGroupHeader(first ? "First sticky group" : "Second sticky group",
+                            "Selector", rowsPerGroup, first, row.expanded, "", speed, toggle), true, false, false)
+                            .LayoutValue<ProxyGroupRow>(row)
+                            .LayoutValue<ProxyGroupHeaderName>(tag)
+                            .Key(first ? "first-sticky-header" : "second-sticky-header");
+                    }
+                    const bool last = index + 1 == (first ? secondIndex : end);
+                    const float gap = first && last ? groupGap : 0.0F;
+                    if (last && row.expanded) row.trailingGap = gap;
+                    float height = rowHeight - gap;
+                    if (longFirstGroup) {
+                        if (!row.expanded) height = 19.0F;
+                        else if (first) height = 56.0F + static_cast<float>(index % 3) * 4.0F;
+                    }
+                    const auto body = huxerui::Row {huxerui::Text(row.expanded ? "Node" : "Overview")}
+                        .With(huxerui::Frame{.height = height},
+                              huxerui::Padding(huxerui::EdgeInsets{.bottom = last ? kProxyGroupInset : kSectionCardSpacing}))
+                        .OnClick([fixture] { ++fixture->selections; });
+                    return ProxyGroupPanelPart(body, false, last, first && last)
+                        .LayoutValue<ProxyGroupRow>(row)
+                        .Key(row.expanded ? "sticky-node-" + std::to_string(index)
+                                          : first ? "sticky-overview" : "last-overview");
+                }, fixture->pinned).Key("sticky-fixture-list");
+            const auto scroll = ScrollArea(list, fixture->controller, {}, {},
+                {.bottom_avoidance = lastDisclosure ? fixture->footerAvoidance.Get() : 240.0F});
+            if (!longFirstGroup) return scroll;
+            return huxerui::View{huxerui::Column {scroll}.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
+        })};
+    }, {.show_debug_overlay = false, .application_hooks = {
+        [&fixture](huxerui::ApplicationContext& context) {
+            fixture = std::make_shared<Fixture>();
+            context.Provide(fixture);
+        },
+    }}};
+    huxerui::testing::UiTest ui(app, {.viewport = {380.0F, 240.0F}, .resource_provider = AppResources()});
+    const auto& controller = fixture->controller;
+    ui.PumpAndSettle();
+    const auto viewport = ui.Find(UiSelector::Key("sticky-fixture-list")).One().bounds;
+    const auto first = ui.Find(UiSelector::Key("first-sticky-header"));
+    const auto second = ui.Find(UiSelector::Key("second-sticky-header"));
+    const float initialY = first.One().bounds.y;
+    check(initialY > viewport.y && !fixture->pinned->index, "the first header starts below the scrolling whitespace");
+    first.Find(UiSelector::Key("proxy-group-title-region")).Tap();
+    ui.PumpAndSettle();
+    check(!fixture->open.Get() && first.One().bounds.y == initialY &&
+          second.One().bounds.y > first.One().bounds.y,
+          "a normal collapse keeps the clicked header under the leading whitespace and preserves group order");
+    first.Find(UiSelector::Key("proxy-group-title-region")).Tap();
+    ui.PumpAndSettle();
+    check(fixture->open.Get() && first.One().bounds.y == initialY && !fixture->pinned->index,
+          "a normal expansion keeps the same header position and leading whitespace");
+
+    static_cast<void>(controller.ScrollTo(520.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y == viewport.y && fixture->pinned->index == 1 &&
+          first.Find(UiSelector::Key("proxy-group-count")).Exists(),
+          "the original group header and controls stay mounted beyond their normal cache range");
+    first.Find(UiSelector::Key("proxy-group-count")).Tap();
+    check(fixture->open.Get() && fixture->selections == 0, "the pinned badge stays passive and shields covered nodes");
+    first.Find(UiSelector::Key("speed-test-action")).Tap();
+    const auto test = fixture->tests.GetGroup("first");
+    const int ticket = test->ticket.Get();
+    check(ticket != 0 && first.Find(UiSelector::Key("speed-test-loading")).Exists() && fixture->open.Get(),
+          "the pinned lightning starts the current group's own test without changing disclosure");
+    first.Find(UiSelector::Key("speed-test-button")).Tap();
+    check(test->ticket.Get() == ticket && fixture->open.Get(), "the pinned busy indicator remains passive");
+    test->End(ticket);
+    ui.PumpAndSettle();
+
+    const float x = viewport.x + viewport.width / 2.0F;
+    ui.TapAt({x, viewport.y + rowHeight + 16.0F});
+    check(fixture->selections == 1, "nodes below the pinned header remain clickable");
+    const float beforeDrag = controller.Offset();
+    ui.Drag({x, viewport.y + 32.0F}, {x, viewport.y + 4.0F});
+    ui.PumpAndSettle();
+    check(controller.Offset() > beforeDrag && fixture->open.Get(), "dragging from the pinned header scrolls without toggling");
+
+    static_cast<void>(controller.ScrollToItem(rowsPerGroup + 1, huxerui::ScrollAlignment::Start));
+    ui.PumpAndSettle();
+    const float secondStart = controller.Offset();
+    const float firstEnd = secondStart - groupGap;
+    const float joinedAt = firstEnd - kProxyGroupInset - rowHeight;
+    static_cast<void>(controller.ScrollTo(joinedAt - 2.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y == viewport.y && fixture->pinned->index == 1,
+          "the header follows the viewport until it reaches its own panel bottom");
+    static_cast<void>(controller.ScrollTo(joinedAt));
+    ui.PumpAndSettle();
+    const auto lastFirstRow = ui.Find(UiSelector::Key("sticky-node-" + std::to_string(rowsPerGroup - 1)));
+    const auto checkJoined = [&] {
+        const auto header = first.One().bounds;
+        const auto tail = lastFirstRow.One().bounds;
+        const float panelBottom = tail.y + tail.height - groupGap;
+        check(std::abs(panelBottom - (header.y + header.height) - kProxyGroupInset) < 0.1F &&
+              std::abs(second.One().bounds.y - panelBottom - groupGap) < 0.1F,
+              "the joined header leaves the rounded bottom padding and the next group gap intact");
+    };
+    checkJoined();
+    static_cast<void>(controller.ScrollTo(joinedAt + 8.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y < viewport.y && fixture->pinned->index == 1,
+          "the joined header moves out with its own panel instead of disappearing when nodes are covered");
+    checkJoined();
+    static_cast<void>(controller.ScrollTo(firstEnd - kProxyGroupInset * 0.5F));
+    ui.PumpAndSettle();
+    const auto paddingRow = lastFirstRow.One().bounds;
+    check(!first.Exists() && !fixture->pinned->index &&
+          std::abs(paddingRow.y + paddingRow.height - groupGap - viewport.y - kProxyGroupInset * 0.5F) < 0.1F,
+          "the last bit of rounded bottom padding remains after the header has left the viewport");
+    static_cast<void>(controller.ScrollTo(joinedAt - 2.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y == viewport.y && fixture->pinned->index == 1,
+          "reverse scrolling moves the header back from the panel bottom to the viewport edge");
+    static_cast<void>(controller.ScrollTo(secondStart + 100.0F));
+    ui.PumpAndSettle();
+    check(!first.Exists() && second.One().bounds.y == viewport.y && fixture->pinned->index == rowsPerGroup + 1,
+          "the next section takes over the frozen header");
+    ui.TapAt({x, viewport.y + 16.0F});
+    check(fixture->selections == 1, "a pinned read-only header also shields covered nodes");
+
+    static_cast<void>(controller.ScrollToItem(2 * rowsPerGroup, huxerui::ScrollAlignment::Start));
+    ui.PumpAndSettle();
+    const auto lastRow = ui.Find(UiSelector::Key("sticky-node-" + std::to_string(2 * rowsPerGroup - 1))).One().bounds;
+    const auto lastHeader = second.One().bounds;
+    check(fixture->pinned->index == rowsPerGroup + 1 &&
+          std::abs(lastRow.y + lastRow.height - lastHeader.y - lastHeader.height - kProxyGroupInset) < 0.1F,
+          "the last group keeps its bottom padding even without an incoming group");
+    static_cast<void>(controller.ScrollBy(lastRow.height * 0.5F));
+    ui.PumpAndSettle();
+    check(std::abs(second.One().bounds.y - (lastHeader.y - lastRow.height * 0.5F)) < 0.1F,
+          "the last header scrolls out with its panel instead of sticking above the footer");
+
+    static_cast<void>(controller.ScrollTo(520.0F));
+    ui.PumpAndSettle();
+    first.Find(UiSelector::Key("proxy-group-expand")).Tap();
+    ui.PumpAndSettle();
+    check(!fixture->open.Get() && std::abs(first.One().bounds.y - viewport.y) < 0.1F &&
+          ui.Find(UiSelector::Key("sticky-overview")).Exists(),
+          "the frozen arrow collapses its group and returns to that header with its overview visible");
+    check(std::abs(fixture->pinned->remembered->value - controller.Offset()) < 0.1F,
+          "the collapse anchor is remembered when the grouped view is remounted");
+    static_cast<void>(controller.ScrollBy(rowHeight * 0.5F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y < viewport.y && !fixture->pinned->index,
+          "a collapsed header scrolls past the top without pinning");
+    static_cast<void>(controller.ScrollBy(rowHeight * 0.75F));
+    ui.PumpAndSettle();
+    const auto overview = ui.Find(UiSelector::Key("sticky-overview")).One().bounds;
+    check(overview.y < viewport.y && overview.y + overview.height > viewport.y && !fixture->pinned->index,
+          "a collapsed overview at the top does not pin its header");
+    static_cast<void>(controller.ScrollToItem(1, huxerui::ScrollAlignment::Start));
+    ui.PumpAndSettle();
+    first.Find(UiSelector::Key("proxy-group-title-region")).Tap();
+    ui.PumpAndSettle();
+    check(fixture->open.Get() && !ui.Find(UiSelector::Key("sticky-overview")).Exists(),
+          "the same group can be reopened from its title area");
+    static_cast<void>(controller.ScrollTo(520.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y == viewport.y && fixture->pinned->index == 1,
+          "reopening a group makes its header eligible for pinning again");
+
+    static_cast<void>(controller.ScrollToItem(rowsPerGroup + 1, huxerui::ScrollAlignment::Start));
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollBy(8.0F - groupGap - kProxyGroupInset - rowHeight));
+    ui.PumpAndSettle();
+    const float departingY = first.One().bounds.y;
+    check(departingY < viewport.y && fixture->pinned->index == 1, "the group header is departing at its tail");
+    first.Find(UiSelector::Key("proxy-group-expand")).Tap();
+    ui.PumpAndSettle();
+    const auto collapsedOverview = ui.Find(UiSelector::Key("sticky-overview")).One().bounds;
+    check(!fixture->open.Get() && !fixture->pinned->index && std::abs(first.One().bounds.y - departingY) < 0.1F,
+          "collapsing a departing header keeps its visible position");
+    check(std::abs(second.One().bounds.y - collapsedOverview.y - collapsedOverview.height) < 0.1F,
+          "the next group follows the collapsed overview in the original order");
+    first.Find(UiSelector::Key("proxy-group-expand")).Tap();
+    ui.PumpAndSettle();
+    check(fixture->open.Get() && std::abs(first.One().bounds.y - departingY) < 0.1F &&
+          !fixture->pinned->index && !ui.Find(UiSelector::Key("sticky-overview")).Exists(),
+          "reopening a partially clipped header preserves its position until scrolling resumes");
+    static_cast<void>(controller.ScrollBy(8.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y == viewport.y && fixture->pinned->index == 1,
+          "scrolling a group opened in place restores its standard pinned header");
+
+    static_cast<void>(controller.ScrollTo(0.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y == initialY && !fixture->pinned->index,
+          "scrolling back restores the natural header and initial whitespace");
+
+    fixture->lastDisclosure = true;
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollToItem(rowsPerGroup + 1, huxerui::ScrollAlignment::Start));
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollBy(-90.0F));
+    ui.PumpAndSettle();
+    const auto earlierHeader = first.One().bounds;
+    const auto earlierRow = lastFirstRow.One().bounds;
+    const auto clickedHeader = second.One().bounds;
+    check(earlierRow.y > viewport.y && clickedHeader.y > earlierRow.y, "the earlier group is visible above the last header");
+    const auto toggleLast = [&] {
+        second.Find(UiSelector::Key("proxy-group-expand")).Tap();
+        ui.PumpAndSettle();
+        check(std::abs(first.One().bounds.y - earlierHeader.y) < 0.1F &&
+              std::abs(lastFirstRow.One().bounds.y - earlierRow.y) < 0.1F &&
+              std::abs(second.One().bounds.y - clickedHeader.y) < 0.1F,
+              "changing the last group keeps both the preceding group and the clicked header still");
+    };
+    toggleLast();
+    check(fixture->lastDisclosure.Get() == false && ui.Find(UiSelector::Key("last-overview")).Exists(),
+          "the last group collapses to its overview in place even when content no longer fills the viewport");
+    toggleLast();
+    check(fixture->lastDisclosure.Get() == true, "the last group reopens from the same position");
+    toggleLast();
+    const float retainedEnd = controller.MaxOffset();
+    static_cast<void>(controller.ScrollBy(-10.0F));
+    ui.PumpAndSettle();
+    check(std::abs(lastFirstRow.One().bounds.y - earlierRow.y - 10.0F) < 0.1F &&
+          std::abs(controller.MaxOffset() - retainedEnd + 10.0F) < 0.1F,
+          "scrolling toward the start retracts the temporary space by the distance scrolled");
+    static_cast<void>(controller.ScrollTo(0.0F));
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollToItem(rowsPerGroup + 3, huxerui::ScrollAlignment::End));
+    ui.PumpAndSettle();
+    const auto lastOverview = ui.Find(UiSelector::Key("last-overview")).One().bounds;
+    check(std::abs(lastOverview.y + lastOverview.height + groupGap - viewport.y - viewport.height) < 0.1F,
+          "returning to the end after scrolling up shows the normal footer spacing");
+
+    fixture->lastDisclosure = true;
+    fixture->footerAvoidance = 80.0F;
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollToItem(rowsPerGroup + 1, huxerui::ScrollAlignment::Start));
+    ui.PumpAndSettle();
+    ui.SetWindowMetrics({.viewport = {380.0F, controller.Offset() + 24.0F}});
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollTo(0.0F));
+    ui.PumpAndSettle();
+    first.Find(UiSelector::Key("proxy-group-expand")).Tap();
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollTo(initialY - viewport.y + 8.0F));
+    ui.PumpAndSettle();
+    const float clippedY = first.One().bounds.y;
+    first.Find(UiSelector::Key("proxy-group-expand")).Tap();
+    ui.PumpAndSettle();
+    check(clippedY < viewport.y && fixture->open.Get() && !fixture->pinned->index &&
+          std::abs(first.One().bounds.y - clippedY) < 0.1F,
+          "opening a clipped first group does not pin it during layout");
+    for (const bool expanded : {false, true}) {
+        second.Find(UiSelector::Key("proxy-group-expand")).Tap();
+        ui.PumpAndSettle();
+        check(fixture->lastDisclosure.Get() == expanded && !fixture->pinned->index &&
+              std::abs(first.One().bounds.y - clippedY) < 0.1F,
+              "changing the lower group cannot pin the clipped group above it");
+    }
+    static_cast<void>(controller.ScrollBy(8.0F));
+    ui.PumpAndSettle();
+    check(first.One().bounds.y == viewport.y && fixture->pinned->index == 1,
+          "the next scroll pins the original expanded group inside its card");
+
+    fixture->longFirstGroup = true;
+    fixture->footerAvoidance = 0.0F;
+    ui.SetWindowMetrics({.viewport = {380.0F, 240.0F}});
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollToItem(longGroupRows + 1, huxerui::ScrollAlignment::Start));
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollBy(-190.0F));
+    ui.PumpAndSettle();
+    const auto upperTail = ui.Find(UiSelector::Key("sticky-node-" + std::to_string(longGroupRows - 1)));
+    const float steadyUpperY = upperTail.One().bounds.y;
+    const float steadyLowerY = second.One().bounds.y;
+    const float steadyOffset = controller.Offset();
+    check(fixture->pinned->index == 1 && steadyUpperY > viewport.y && steadyLowerY > steadyUpperY &&
+          !ui.Find(UiSelector::Key("sticky-node-1")).Exists(),
+          "the already expanded upper group has a frozen header and visible nodes");
+    for (const bool expanded : {false, true}) {
+        second.Find(UiSelector::Key("proxy-group-expand")).Tap();
+        check(fixture->lastDisclosure.Get() == expanded && fixture->open.Get() && fixture->pinned->index == 1 &&
+              std::abs(upperTail.One().bounds.y - steadyUpperY) < 0.1F &&
+              std::abs(second.One().bounds.y - steadyLowerY) < 0.1F &&
+              std::abs(controller.Offset() - steadyOffset) < 0.1F,
+              "disclosing the lower group preserves the measured prefix and scroll offset of the open upper group");
+        ui.PumpAndSettle();
+    }
+
+    ui.SetWindowMetrics({.viewport = {960.0F, 360.0F}});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    ui.PumpAndSettle();
+    static_cast<void>(controller.ScrollTo(1650.0F));
+    ui.PumpAndSettle();
+    const float wheelStart = controller.Offset();
+    const auto wideViewport = ui.Find(UiSelector::Key("sticky-fixture-list")).One().bounds;
+    const huxerui::Point scrollPoint{wideViewport.x + wideViewport.width * 0.5F, wideViewport.y + 150.0F};
+    static_cast<void>(ui.SendScroll({.position = scrollPoint, .delta_y = 36.0F}));
+    ui.PumpAndSettle();
+    check(std::abs(controller.Offset() - wheelStart - 36.0F) < 0.1F,
+          "one wheel tick moves the wide grouped list only by the requested distance");
+    const float touchpadStart = controller.Offset();
+    static_cast<void>(ui.SendScroll({.position = scrollPoint, .delta_y = 20.0F,
+        .kind = huxerui::ScrollInputKind::Touchpad, .phase = huxerui::ScrollInputPhase::Begin}));
+    ui.Pump();
+    static_cast<void>(ui.SendScroll({.position = scrollPoint, .kind = huxerui::ScrollInputKind::Touchpad,
+        .phase = huxerui::ScrollInputPhase::End}));
+    ui.PumpAndSettle();
+    check(std::abs(controller.Offset() - touchpadStart - 20.0F) < 0.1F,
+          "a short touchpad gesture does not keep moving after release");
+
+    const float dragStart = controller.Offset();
+    huxerui::PointerEvent touch{.type = huxerui::PointerEventType::Down, .pointer_id = 45,
+        .position = scrollPoint, .device_kind = huxerui::PointerDeviceKind::Touch,
+        .changed_button = huxerui::PointerButton::Primary, .pressed_buttons = huxerui::PointerButton::Primary};
+    ui.SendPointer(touch);
+    ui.Pump(std::chrono::milliseconds(120));
+    touch.type = huxerui::PointerEventType::Move;
+    touch.position.y -= 30.0F;
+    touch.changed_button = huxerui::PointerButton::None;
+    ui.SendPointer(touch);
+    ui.Pump(std::chrono::milliseconds(250));
+    const float dragEnd = controller.Offset();
+    touch.type = huxerui::PointerEventType::Up;
+    touch.changed_button = huxerui::PointerButton::Primary;
+    touch.pressed_buttons = huxerui::PointerButton::None;
+    ui.SendPointer(touch);
+    ui.PumpAndSettle();
+    check(dragEnd > dragStart && dragEnd <= dragStart + 30.1F && std::abs(controller.Offset() - dragEnd) < 0.1F,
+          "a short touch drag with a stationary release stops at its dragged offset");
 }
 
 void testProxySpeedLoading() {
@@ -7747,6 +8314,53 @@ void checkBoxCatButton(huxerui::testing::UiTest& ui, const huxerui::ThemeSpec& t
           "sleep symbols change actual paint at button size, not just the clock probe");
 }
 
+void testBoxCatRestart() {
+    using clashflux::ui::BoxCatPhase;
+    boxCatInitialPhase = BoxCatPhase::Running;
+    huxerui::testing::UiTest ui(kDarkBoxCatApplication, {
+        .viewport = {500.0F, 700.0F}, .resource_provider = AppResources()});
+    boxCatInitialPhase = BoxCatPhase::Sleeping;
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+    const auto model = boxCatFixture;
+    const auto advance = [&ui](int milliseconds) {
+        for (int elapsed = 0; elapsed < milliseconds; elapsed += 25)
+            ui.Pump(std::chrono::milliseconds(25));
+    };
+    advance(100);
+    const auto bounds = ui.Find(UiSelector::Key("box-cat-artwork")).One().bounds;
+    const auto before = ui.CaptureSnapshot();
+    const auto readyBeforeRestart = model->readyCount;
+    model->phase = BoxCatPhase::Restarting;
+    advance(700);
+    check(model->probe->restartDoze > 0.99F && !model->probe->sleepLooping &&
+          !model->probe->loadingLooping && !model->probe->looping && before != ui.CaptureSnapshot() &&
+          ui.Find(UiSelector::Key("box-cat-artwork")).One().bounds == bounds,
+          "restart closes the eyes in place without returning to the dock or replaying startup");
+    const auto dozing = ui.CaptureSnapshot();
+    advance(2200);
+    check(dozing == ui.CaptureSnapshot() && model->readyCount == readyBeforeRestart,
+          "a slow restart holds a static doze until the runtime confirms readiness");
+
+    model->phase = BoxCatPhase::Running;
+    float wake = 0.0F;
+    for (int frame = 0; frame < 30; ++frame) {
+        advance(25);
+        wake = std::max(wake, model->probe->restartWake);
+    }
+    check(wake > 0.8F && model->probe->restartDoze == 0 && model->probe->looping &&
+          model->readyCount == readyBeforeRestart + 1 &&
+          ui.Find(UiSelector::Key("box-cat-artwork")).One().bounds == bounds,
+          "confirmed readiness wakes the cat in place, flicks its ears and resumes the running loop once");
+
+    model->phase = BoxCatPhase::Restarting;
+    advance(700);
+    model->phase = BoxCatPhase::Failed;
+    advance(2600);
+    check(model->probe->failurePlays == 1 && model->probe->restartDoze == 0 &&
+          model->probe->sleepLooping && model->readyCount == readyBeforeRestart + 1,
+          "a failed restart follows the normal failure pose without a success notification");
+}
+
 void testBoxCat() {
     using clashflux::ui::BoxCatPhase;
     boxCatInitialPhase = BoxCatPhase::Sleeping;
@@ -7983,12 +8597,6 @@ std::optional<huxerui::Rect> paintedCatCard(huxerui::testing::UiTest& ui) {
     return result;
 }
 
-struct PaintedCard {
-    huxerui::Rect bounds;
-    float outlineWidth;
-    float cornerRadius;
-};
-
 std::vector<huxerui::Rect> paintedHomeCats(huxerui::testing::UiTest& ui) {
     std::istringstream input(ui.CaptureSnapshot().ToString());
     std::string line;
@@ -8023,7 +8631,7 @@ std::vector<huxerui::Rect> paintedHomeCats(huxerui::testing::UiTest& ui) {
 }
 
 std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
-    std::optional<float> width, std::optional<float> height) {
+    std::optional<float> width, std::optional<float> height, std::optional<float> top) {
     std::istringstream input(ui.CaptureSnapshot().ToString());
     std::string line;
     std::getline(input, line); std::getline(input, line);
@@ -8043,6 +8651,8 @@ std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
                 const auto* bounds = command.Find("bounds");
                 if (!bounds || (width ? bounds->Number("width") != *width : bounds->Number("width") <= 200.0F) ||
                     (height && bounds->Number("height") != *height)) continue;
+                const float y = world.m22 * bounds->Number("y") + world.translate_y;
+                if (top && std::abs(y - *top) >= 0.1F) continue;
                 if (command.name == "border") {
                     const auto* style = command.Find("style");
                     outlineWidth = style ? style->Number("width") : 0.0F;
@@ -8050,7 +8660,7 @@ std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
                 if (command.name == "rect") {
                     result = PaintedCard{
                         {world.m11 * bounds->Number("x") + world.translate_x,
-                         world.m22 * bounds->Number("y") + world.translate_y,
+                         y,
                          world.m11 * bounds->Number("width"),
                          world.m22 * bounds->Number("height")},
                         0.0F,
@@ -8497,6 +9107,33 @@ void testHomeHeaderControl() {
     model->snapshot.Update([](HomeHeaderSnapshot& value) { value.elapsedSeconds = 754; });
     advance(100);
     check(ui.Find(UiSelector::Text("00:12:34")).Exists(), "session time refreshes without replaying the merge");
+    const auto runningCardBounds = ui.Find(UiSelector::Key("home-header-running")).One().bounds;
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.phase = BoxCatPhase::Restarting;
+        value.running = false;
+        value.busy = true;
+    });
+    advance(2200);
+    check(model->control->motion.Get().action == CoreAction::Idle &&
+          ui.Find(UiSelector::Key("home-header-running")).One().bounds == runningCardBounds &&
+          !ui.Find(UiSelector::Key("home-header-floating-cat")).Exists() &&
+          ui.Find(UiSelector::Text("00:12:34")).Exists() &&
+          ui.Find(UiSelector::Text("Restarting")).Exists(),
+          "compact restart keeps the card and uptime in place through the offline handoff");
+    model->reduced = true;
+    advance(100);
+    check(model->control->shown.Get() && model->control->motion.Get().action == CoreAction::Idle,
+          "reduced motion keeps the restart card without triggering a dock transition");
+    model->reduced = false;
+    model->snapshot.Update([](HomeHeaderSnapshot& value) {
+        value.phase = BoxCatPhase::Running;
+        value.running = true;
+        value.busy = false;
+    });
+    advance(750);
+    check(ui.Find(UiSelector::Key("home-header-running")).One().bounds == runningCardBounds &&
+          !ui.Find(UiSelector::Text("Restarting")).Exists(),
+          "confirmed restart restores the running status without replaying the header entrance");
     ui.Find(UiSelector::Key("home-header-running")).Tap();
     advance(150);
     check(model->toggles == 2 && model->control->motion.Get().collapsing,
@@ -10205,6 +10842,11 @@ int main(int argc, char** argv) {
         std::printf("home-easter-egg %s\n", failures == 0 ? "passed" : "failed");
         return failures == 0 ? 0 : 1;
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--home-restart") {
+        testBoxCatRestart();
+        testHomeHeaderControl();
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--home-card-surface") {
         testHomeHeaderControl();
         testHomeCardPress();
@@ -10244,7 +10886,7 @@ int main(int argc, char** argv) {
         testProxySpeedLoading(); return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-group-panel") {
-        try { testProxyGroupPanelLayout(); }
+        try { testProxyGroupPanelLayout(); testStickyProxyGroupHeader(); }
         catch (const std::exception& error) {
             std::fprintf(stderr, "FAIL: proxy group panel: %s\n", error.what());
             return 1;
@@ -10473,6 +11115,7 @@ int main(int argc, char** argv) {
               "第一张拖到第二槽时两张卡对向滑动");
     }
     testBoxCat();
+    testBoxCatRestart();
     testBoxCatMorphAfterSuccess();
     testHomeHeaderControl();
     testHomeHeaderColdStart();
@@ -10619,7 +11262,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
         ++failures;
     }
-    try { testProxySpeedLoading(); testProxyGroupPanelLayout(); }
+    try { testProxySpeedLoading(); testProxyGroupPanelLayout(); testStickyProxyGroupHeader(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: proxy speed loading: %s\n", error.what());
         ++failures;

@@ -11,8 +11,8 @@ AAR 混装，否则 Java 层可能调用 native 层已经移除或改变的入�
 例如 `HuxerUI Android application has not been initialized`。
 
 框架源码来自 `FarnaHerry/HuxerUI` 的 `farna/main`，当前与 CI 固定到
-`e53ac6ab43e3ee1347833856820101f6ff889443`（2026-11-24），基于 HuxerUI 0.5.0 源码。
-Android 11 及以上的键盘避让按当前动画 Insets 更新，保留手势和三键导航各自的底部安全区。Android 10 及以下沿用旧系统的 Insets 路径。Android Java 与 native 使用同一提交。
+`b581978c9412baf49dedaded38b7e0d55757d579`（2026-11-24），基于 HuxerUI 0.5.5 源码。
+应用使用默认 Resize 键盘避让。Android 11 及以上读取类型化与动画 Insets，Android 10 及以下沿用旧系统的 Insets 路径。Android Java 与 native 使用同一提交。
 框架真机 instrumentation 仍待完成，
 不能把 Linux 回归或 APK 编译成功记作 Android 真机测试通过。维护流程见 [HuxerUI fork](huxerui-fork.md)。
 

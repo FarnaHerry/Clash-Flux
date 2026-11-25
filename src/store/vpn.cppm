@@ -99,13 +99,20 @@ public:
         return manager_.policy();
     }
 
-    bool saveGlobalPolicy(vpn::VpnPolicy policy, std::string& error) {
+    // Notify the caller after the setting and candidate are accepted. The
+    // return value also covers runtime handoff and any required rollback.
+    bool saveGlobalPolicy(vpn::VpnPolicy policy, std::string& error,
+                          const std::function<void(const vpn::VpnPolicy&, const vpn::VpnPolicy&)>& onSaved) {
         ensureLoaded();
         std::lock_guard lock(operationMutex_);
         auto planLock = coreStore().lockPlanLifecycle();
         const auto previous = manager_.policy();
         policy.revision = previous.revision;
-        if (previous == policy) { error.clear(); return true; }
+        if (previous == policy) {
+            onSaved(policy, previous);
+            error.clear();
+            return true;
+        }
         if (!routing::ValidatePlatformPolicy(policy, clashflux::data::session().listProfiles(), error)) return false;
         if (!singbox::ValidateGlobalRuleSetReferences(coreStore().ruleSetLibrary(), policy.rules, error)) return false;
         if (previous.revision == std::numeric_limits<std::uint64_t>::max()) { error = "计划修订号超出范围"; return false; }
@@ -133,7 +140,12 @@ public:
             clashflux::data::session().setSetting("vpn.global_policy",
                                        detail::EncodePolicy(policy));
             coreStore().invalidateProxyGroupsSnapshot();
-            if (!publishRouting(error)) {
+            bool notified = false;
+            const auto notifySaved = [&] {
+                onSaved(policy, previous);
+                notified = true;
+            };
+            if (!publishRouting(error, {}, notifySaved)) {
                 const auto failure = error;
                 clashflux::data::session().setSetting("vpn.global_policy",
                                            detail::EncodePolicy(previous));
@@ -148,6 +160,7 @@ public:
                 error = failure;
                 return false;
             }
+            if (!notified) notifySaved(); // No running core to hand off.
             error.clear();
             return true;
         } catch (const std::exception& exception) {
@@ -474,7 +487,8 @@ private:
         }
     }
 
-    inline bool publishRouting(std::string& error, std::string_view unavailable = {}) {
+    inline bool publishRouting(std::string& error, std::string_view unavailable = {},
+                               const std::function<void()>& onPrepared = {}) {
         std::vector<singbox::NativeConnection> sessions;
         for (const auto& connection : manager_.connections()) {
             singbox::NativeConnection session;
@@ -489,7 +503,7 @@ private:
             session.transportAddress = session.connected ? connection.transportAddress : "";
             sessions.push_back(std::move(session));
         }
-        return coreStore().updateNativeRouting(std::move(sessions), error);
+        return coreStore().updateNativeRouting(std::move(sessions), error, onPrepared);
     }
 
     bool disconnectConfirmed(std::string_view id, std::string& error) {
