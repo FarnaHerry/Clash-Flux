@@ -226,7 +226,8 @@ inline huxerui::View HomeProxyFieldSurface(huxerui::View field, huxerui::TextFie
                    huxerui::Align(huxerui::HorizontalAlignment::End, huxerui::VerticalAlignment::Center),
                    HomeProxyChevronPresentation{chevronAngle});
             if (toggle) return huxerui::View{std::move(icon)
-                .With(huxerui::Focusable(false), huxerui::Semantics{.hidden = true}).OnClick(toggle)};
+                .With(huxerui::Focusable(false), huxerui::Indication{}, huxerui::Semantics{.hidden = true})
+                .OnClick(toggle).Key("home-proxy-chevron-toggle")};
             return huxerui::View{std::move(icon)};
         }).With(huxerui::Frame{.width = size + inset + style.icon_spacing,
                               .height = style.outlined.minimum_height});

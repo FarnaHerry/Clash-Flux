@@ -2288,6 +2288,8 @@ const huxerui::Application kHomeProxyPickerApplication{
     HomeProxyPickerRoot, {.show_debug_overlay = false, .application_hooks = {InstallHomeProxyPickerFixture}}};
 
 float paintedHomeProxyCardOutline(huxerui::testing::UiTest& ui);
+bool hasSettingsRowLayer(huxerui::testing::UiTest& ui, huxerui::Rect bounds, float opacity,
+                         std::optional<float> cornerRadius);
 
 void testHomeProxyPickers() {
     using huxerui::testing::UiSemanticSelector;
@@ -2361,6 +2363,12 @@ void testHomeProxyPickers() {
     check(focusedCombo.One().identifier == "home-proxy-node" && focusedCombo.One().expanded == true &&
               panel.Count() == 1 && panelInput.One().bounds == nodeBounds && !options.Exists(),
           "one tap on the other field switches the empty popup and its focus");
+    const auto toggleBounds = panel.Find(UiSelector::Key("home-proxy-chevron-toggle")).One().bounds;
+    hoverAt({toggleBounds.x + toggleBounds.width / 2.0F, toggleBounds.y + toggleBounds.height / 2.0F});
+    const float hoverAlpha = std::get<huxerui::Color>(std::get<huxerui::Brush>(
+        huxerui::MaterialLightThemeSpec().interactions.indication.hover->fill->Get()).Get()).alpha;
+    check(!hasSettingsRowLayer(ui, toggleBounds, hoverAlpha, std::nullopt),
+          "hovering the expanded picker chevron paints no hover overlay");
     panelChevron.Tap(); ui.Pump(kSettle);
     check(!panel.Exists() && focusedCombo.One().identifier == "home-proxy-node",
           "closing after a handoff restores focus to the active field");
@@ -7994,10 +8002,11 @@ void testVpnPublication() {
     auto mode = huxerui::UseState(0);
     auto selected = huxerui::UseState(0);
     auto added = huxerui::UseState(false);
+    const std::array<const char*, 4> accentIds{"gemini", "purple", "#336699", "#FF3366,#33AA55"};
+    const auto selectedAccent = ResolveFluxAccent(accentIds[static_cast<std::size_t>(selected.Get())]);
     std::vector<huxerui::View> cards;
     for (int index = 0; index < 4; ++index) {
-        const auto accent = ResolveFluxAccent(index == 0 ? "gemini"
-            : index == 1 ? "purple" : index == 2 ? "#336699" : "#FF3366,#33AA55");
+        const auto accent = ResolveFluxAccent(accentIds[static_cast<std::size_t>(index)]);
         const bool active = selected.Get() == index;
         cards.push_back(ThemeColorCardSurface(theme,
             IsDarkTheme(theme) ? accent.dark : accent.light,
@@ -8016,11 +8025,14 @@ void testVpnPublication() {
     for (int index = 0; index < 3; ++index)
         modes.push_back(ThemeModeCardSurface(theme, icons[index], mode.Get() == index,
             labels[index], [mode, index] { mode = index; }, modeWidth).Key("test-mode-" + std::to_string(index)));
-    return huxerui::Column {
+    huxerui::View content = huxerui::Column {
+      ThemePreviewSurface(theme, selectedAccent.id, compact),
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing)),
       huxerui::Flow(std::move(cards)).With(huxerui::Spacing(clashflux::ui::kSectionCardSpacing)),
       huxerui::Text(added.Get() ? "color-added" : "color-idle"),
-    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    }.With(huxerui::Spacing(theme.spacing.medium),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+    return ConstrainSettingsContentWidth(std::move(content), kPageTitlesInWindow && !compact);
 }
 
 huxerui::View ThemeColorSurfaceLightRoot() {
@@ -8042,28 +8054,74 @@ const huxerui::Application kThemeColorSurfaceDark{ThemeColorSurfaceDarkRoot, {.s
 
 void testThemeColorSurfaces() {
     for (const auto* application : {&kThemeColorSurfaceLight, &kThemeColorSurfaceDark}) {
-        for (float width : {320.0F, 800.0F}) {
+        for (float width : {320.0F, 800.0F, 1080.0F}) {
             huxerui::testing::UiTest ui(*application, {
-                .viewport = {width, 500.0F}, .resource_provider = AppResources()});
+                .viewport = {width, 640.0F}, .resource_provider = AppResources()});
             ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
             ui.PumpAndSettle();
             const auto color = ui.Find(UiSelector::Key("test-color-0")).One();
             const auto other = ui.Find(UiSelector::Key("test-color-1")).One();
+            const auto swatch2 = ui.Find(UiSelector::Key("test-color-2")).One();
             const auto add = ui.Find(UiSelector::Key("test-color-add")).One();
-            check(color.size.width > color.size.height && other.size == color.size && add.size == color.size,
-                  "color previews and add card use equal horizontal rectangles");
+            check(color.size.width == color.size.height && other.size == color.size && add.size == color.size,
+                  "color swatches and add card use equal square buttons");
             for (const char* caption : {"Gemini", "紫色", "#336699", "#FF3366,#33AA55"})
                 check(!ui.Find(UiSelector::Text(caption)).Exists(),
-                      "preset and custom previews do not show color names or hex captions");
-            const auto preview = ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key("theme-color-preview")).One().bounds;
-            for (const char* key : {"theme-preview-selection", "theme-preview-button"}) {
-                const auto item = ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key(key)).One().bounds;
-                const auto inactive = ui.Find(UiSelector::Key("test-color-1")).Find(UiSelector::Key(key)).One().bounds;
-                check(item.x >= preview.x && item.y >= preview.y && item.x + item.width <= preview.x + preview.width &&
-                      item.y + item.height <= preview.y + preview.height + 0.1F && item.width > preview.width * 0.5F,
-                      "miniature selection and primary button fill the content column within the preview in both themes");
-                check(std::abs(item.y - inactive.y) < 0.1F,
-                      "selection check does not shift miniature content vertically");
+                      "preset and custom swatches do not show color names or hex captions");
+            const auto preview = ui.Find(UiSelector::Key("theme-color-preview")).One().bounds;
+            const auto firstMode = ui.Find(UiSelector::Key("test-mode-0")).One().bounds;
+            check(preview.y + preview.height <= firstMode.y && firstMode.y + firstMode.height <= color.bounds.y,
+                  "single live preview sits above mode cards and color swatches");
+            if (width <= 320.0F) {
+                check(std::abs(preview.width / preview.height - 9.0F / 16.0F) < 0.02F &&
+                      preview.height <= clashflux::ui::kThemePreviewCompactMaxHeight + 0.5F &&
+                      std::abs(preview.x - (width - preview.width) * 0.5F) < 0.5F,
+                      "compact preview centers a 9:16 portrait frame capped at compact max height");
+            } else if (clashflux::ui::kPageTitlesInWindow) {
+                check(std::abs(preview.width - clashflux::ui::kSettingsContentMaxWidth) < 0.5F &&
+                      std::abs(preview.x - (width - preview.width) * 0.5F) < 0.5F &&
+                      std::abs(preview.width / preview.height - 16.0F / 9.0F) < 0.02F,
+                      "wide preview uses centered 720pt width with 16:9 widescreen aspect ratio");
+            }
+            check(!ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key("theme-color-preview")).Exists(),
+                  "color swatches no longer embed individual preview boards");
+            const auto selectionItem = ui.Find(UiSelector::Key("theme-preview-selection")).One().bounds;
+            const auto buttonItem = ui.Find(UiSelector::Key("theme-preview-button")).One().bounds;
+            check(selectionItem.x >= preview.x && selectionItem.y >= preview.y &&
+                  selectionItem.x + selectionItem.width <= preview.x + preview.width &&
+                  selectionItem.y + selectionItem.height <= preview.y + preview.height + 0.1F &&
+                  selectionItem.width > 0.0F && selectionItem.height > 0.0F,
+                  "top preview mode selection row sits cleanly within the preview bounds");
+            check(buttonItem.x >= preview.x && buttonItem.y >= preview.y &&
+                  buttonItem.x + buttonItem.width <= preview.x + preview.width &&
+                  buttonItem.y + buttonItem.height <= preview.y + preview.height + 0.1F,
+                  "top preview primary CTA button sits within the preview bounds");
+            const auto primaryCard = ui.Find(UiSelector::Key("theme-preview-card-primary")).One().bounds;
+            const auto secondaryCard = ui.Find(UiSelector::Key("theme-preview-card-secondary")).One().bounds;
+            const auto totalCard = ui.Find(UiSelector::Key("theme-preview-home-total")).One().bounds;
+            if (width <= 320.0F) {
+                const auto bottomNav = ui.Find(UiSelector::Key("theme-preview-bottom-nav")).One().bounds;
+                check(bottomNav.x >= preview.x && bottomNav.y >= selectionItem.y + selectionItem.height &&
+                      bottomNav.y + bottomNav.height <= preview.y + preview.height + 0.1F,
+                      "compact preview shows a floating bottom capsule navigation bar below Home grid content");
+                check(!ui.Find(UiSelector::Key("theme-preview-rail")).Exists(),
+                      "compact preview omits the desktop navigation rail");
+                check(buttonItem.y + buttonItem.height <= primaryCard.y + 0.1F,
+                      "compact preview places the connect action in the mobile top header");
+                check(std::abs(primaryCard.y - secondaryCard.y) < 0.1F &&
+                      secondaryCard.x >= primaryCard.x + primaryCard.width &&
+                      totalCard.y >= primaryCard.y + primaryCard.height - 0.1F,
+                      "compact preview mirrors the 2-column mobile HomeGrid layout");
+            } else {
+                const auto rail = ui.Find(UiSelector::Key("theme-preview-rail")).One().bounds;
+                check(rail.x >= preview.x && rail.x + rail.width <= primaryCard.x + 0.1F &&
+                      !ui.Find(UiSelector::Key("theme-preview-bottom-nav")).Exists(),
+                      "wide preview shows a left navigation rail without a bottom capsule bar");
+                check(std::abs(primaryCard.y - secondaryCard.y) < 0.1F &&
+                      std::abs(primaryCard.y - totalCard.y) < 0.1F &&
+                      secondaryCard.x >= primaryCard.x + primaryCard.width &&
+                      totalCard.x >= secondaryCard.x + secondaryCard.width,
+                      "wide preview mirrors the 3-column desktop HomeGrid layout");
             }
             for (const char* key : {"test-mode-0", "test-mode-1", "test-mode-2"}) {
                 const auto mode = ui.Find(UiSelector::Key(key)).One();
@@ -8082,8 +8140,10 @@ void testThemeColorSurfaces() {
                 const auto symbol = ui.Find(UiSelector::Key(key)).Find(UiSelector::Key("theme-color-symbol")).One().bounds;
                 check(symbol.x >= card.x && symbol.y >= card.y &&
                       symbol.x + symbol.width <= card.x + card.width &&
-                      symbol.y + symbol.height <= card.y + card.height,
-                      "selection check and add icon remain inside the preview card");
+                      symbol.y + symbol.height <= card.y + card.height &&
+                      std::abs((symbol.x + symbol.width / 2) - (card.x + card.width / 2)) < 0.1F &&
+                      std::abs((symbol.y + symbol.height / 2) - (card.y + card.height / 2)) < 0.1F,
+                      "selection check and add icon are centered inside the swatch card");
             };
             checkCenter("test-color-0");
             checkCenter("test-color-add");
@@ -8092,18 +8152,37 @@ void testThemeColorSurfaces() {
                 const auto scene = ui.CaptureSnapshot().ToString();
                 return std::distance(std::sregex_iterator(scene.begin(), scene.end(), stroke), std::sregex_iterator{});
             };
-            const auto restingStrokes = strokeCount();
+            const auto initialSnapshot = ui.CaptureSnapshot().ToString();
             ui.Find(UiSelector::Key("test-color-1")).Tap();
-            ui.Pump();
-            ui.Pump(std::chrono::milliseconds(180));
-            check(strokeCount() == restingStrokes + 1 &&
-                      ui.Find(UiSelector::Key("test-color-1")).One().bounds == other.bounds,
-                  "selecting a theme card adds a sweep stroke without moving the card");
             ui.PumpAndSettle();
-            check(strokeCount() == restingStrokes, "the selection sweep stops while the four-color outlines persist");
+            check(ui.CaptureSnapshot().ToString() != initialSnapshot &&
+                  ui.Find(UiSelector::Key("theme-color-preview")).One().bounds == preview,
+                  "selecting a color swatch immediately updates the top preview without shifting layout");
             check(!ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key("theme-color-symbol")).Exists(),
                   "previous selection mark clears after selecting another color");
             checkCenter("test-color-1");
+
+            const auto purpleSnapshot = ui.CaptureSnapshot().ToString();
+            const auto restingStrokes = strokeCount();
+            ui.Find(UiSelector::Key("test-color-2")).Tap();
+            ui.Pump();
+            ui.Pump(std::chrono::milliseconds(180));
+            check(strokeCount() == restingStrokes + 1 &&
+                      ui.Find(UiSelector::Key("test-color-2")).One().bounds == swatch2.bounds,
+                  "selecting a theme swatch adds a sweep stroke without moving the swatch");
+            ui.PumpAndSettle();
+            check(strokeCount() == restingStrokes && ui.CaptureSnapshot().ToString() != purpleSnapshot,
+                  "the selection sweep settles while the top preview reflects the monochrome swatch");
+            checkCenter("test-color-2");
+
+            const auto blueSnapshot = ui.CaptureSnapshot().ToString();
+            ui.Find(UiSelector::Key("test-color-3")).Tap();
+            ui.PumpAndSettle();
+            check(strokeCount() > restingStrokes && ui.CaptureSnapshot().ToString() != blueSnapshot &&
+                  ui.Find(UiSelector::Key("theme-color-preview")).One().bounds == preview,
+                  "selecting a multi-color swatch updates top preview gradients and outline strokes");
+            checkCenter("test-color-3");
+
             ui.Find(UiSelector::Key("test-color-add")).Tap();
             ui.PumpAndSettle();
             check(ui.Find(UiSelector::Text("color-added")).Exists(), "matching add card retains its click action");

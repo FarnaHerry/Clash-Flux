@@ -5367,3 +5367,12 @@ Windows Debug Demo codegen/原生构建、`box_cat_demo.exe --tricks --smoke-tes
 - Windows/MSVC Release 主目标与 `test_page_transition` 经 HuxerUI codegen 构建通过；定向 `page_transition` / `ui_resources` 2/2 通过，覆盖自动/手动退场、深浅主题、reduced motion、三条独立布局、第四条淘汰、连发保留最新三条、点击/触摸取消、计时独立与窗口清理。
 - 使用同一生产组件的独立 Windows 原生窗口检查三条显示、第四条淡出替换、点击移除中间条目、主题切换保持消息，以及提示外按钮仍可操作；主程序实际重新启动，首页正常。`./run.ps1 --version` 为 v0.3.75，`git diff --check` 通过。
 - 未重跑完整桌面服务/VPN 门禁，未验证其它原生平台、手机实机、安装/签名；未提交或推送。
+
+## 2026-11-26：主题页顶部实时预览板重构与首页选择框展开箭头悬停移除
+
+代码快照：应用 `f413186` 加当前工作区（版本 `v0.3.135`，Android `versionCode 212`），HUI 固定 `b581978c`；保留工作区未提交文件。
+
+- 主题页（[settings_page.cpp](../src/ui/settings_page.cpp)、[theme_color_card.h](../src/ui/theme_color_card.h)、[page_layout.h](../src/ui/page_layout.h)）由逐色卡预览重构为顶部单个实时界面预览板（`ThemePreviewSurface`，由 `ThemePreviewAspectBox` 按宽屏 `16:9`、窄屏居中 `9:16` 且最高 `384pt` 驱动）与下方紧凑方形色块（`ThemeColorCardSurface`，52pt / Compact 48pt）；预览区微缩还原首页布局（宽屏展示标题栏、带状态点的左侧导航栏与 3 列首页网格：下载/上传/统计/模式/订阅/IP/检测/系统代理/TUN/快捷控制；Compact 展示带连接按钮的移动顶栏、2 列首页网格与底部悬浮胶囊导航栏），并随下方模式或主题色同步重绘。通过共用 `ConstrainSettingsContentWidth` 将 `ThemePage` 内容区与 `SettingsPage` 对齐（桌面端居中限制最大 `720pt` 宽、`islands.nested_radius` 边距与 `scrollToContentEdges`）。多色色块显示多色径向渐变，单色显示深浅自适应实色，添加入口复用相同方形尺寸，右键编辑/删除与 HSB/HEX 编辑器入口保持不变；同步更新 [ui-development.md](ui-development.md) 与 [test_page_transition.cpp](../tests/test_page_transition.cpp)。
+- 首页节点/代理组合选择框展开后右上角折叠按钮（[home_proxy_picker.h](../src/ui/home_proxy_picker.h)）添加空 `huxerui::Indication{}` 与 `.Key("home-proxy-chevron-toggle")`，移除展开态下的白色悬停叠层，保留点击收起交互，并补充 `--home-proxy-pickers` 悬停校验。
+- Linux Clang Debug（`build`）经 HuxerUI codegen 构建 `clash-flux` 与 `test_page_transition` 通过；`./run.sh --version` 输出 `Clash-Flux v0.3.135（sing-box 客户端）`；`./build/test_page_transition --accent-roles`、`./build/test_page_transition --home-proxy-pickers`、`ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`（2/2 通过）与 `git diff --check` 通过。
+- 未运行真实 GUI 窗口视觉目检与完整服务/VPN 门禁，未覆盖 Windows/macOS 原生渲染与 Android 实机；未提交、打标签或推送。

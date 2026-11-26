@@ -11,6 +11,16 @@ namespace clashflux::ui {
 inline constexpr float kDesktopPageHorizontalInset = 24.0F;
 inline constexpr float kDesktopPageLeadingInset = 8.0F;
 inline constexpr float kPageHeaderHeight = 48.0F;
+inline constexpr float kSettingsContentMaxWidth = 720.0F;
+
+inline huxerui::View ConstrainSettingsContentWidth(huxerui::View content, bool constrain) {
+    if (!constrain) return content;
+    return huxerui::Row {
+      huxerui::Spacer(),
+      huxerui::View{std::move(content)}.With(huxerui::Frame{.max_width = kSettingsContentMaxWidth}),
+      huxerui::Spacer(),
+    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
+}
 
 // Put the inset around the full header slot rather than inside its min-height.
 inline huxerui::View PageHeaderWithInset(huxerui::View header, float inset) {

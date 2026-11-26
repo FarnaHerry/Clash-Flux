@@ -455,8 +455,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto navigation = huxerui::UseNavigation();
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const SettingsView settings = settingsModel->view.Get();
-    const float cardEdge = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact ?
-        kThemeColorCompactCardEdge : kThemeColorCardEdge;
+    const float cardEdge = compact ? kThemeColorCompactCardEdge : kThemeColorCardEdge;
     const auto selectedAccent = ResolveFluxAccent(settings.themeColor);
     std::vector<huxerui::View> colors;
     const auto hiddenColors = ReadHiddenThemeColors(settings.hiddenThemeColors);
@@ -495,22 +494,28 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
                     ThemeColorToHex(FluxPalette::water()), std::nullopt);
             });
         }, cardEdge).Key("theme-color-add"));
-    huxerui::View content = ScrollablePageContent(huxerui::Column {
+    const IslandTheme islands = ResolveIslandTheme(theme);
+    const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
+    huxerui::View body = huxerui::Column {
+      ThemePreviewSurface(theme, selectedAccent.id, compact),
       SectionTitle(Localized("模式")),
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing),
           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
       SectionTitle(Localized("主题色")),
       huxerui::Flow(std::move(colors)).With(huxerui::Spacing(kSectionCardSpacing)),
     }.With(huxerui::Spacing(theme.spacing.medium),
-           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("theme-content");
+    body = ConstrainSettingsContentWidth(std::move(body), kPageTitlesInWindow && !compact);
+    huxerui::View content = ScrollablePageContent(std::move(body), scroll).Key("theme-scroll");
     if (windowTitle) {
         huxerui::View back = PageBackButton(onBack);
         return PageScaffold(Localized("主题"), huxerui::View{}, content,
-                            true, false, true, std::nullopt, back)
+                            true, false, true, islands.nested_radius, back, {}, true, {}, true)
             .On<huxerui::ViewEvents::BackRequested>(onBack);
     }
     return SecondaryPageScaffold(
-        huxerui::Text(Localized("主题"), huxerui::TextRole::Title), huxerui::View{}, content, onBack);
+        huxerui::Text(Localized("主题"), huxerui::TextRole::Title), huxerui::View{}, content,
+        onBack, false, false, false, true, islands.nested_radius);
 }
 
 // 独立语言页与桌面选择框共用同一模型及写入口，选择立即更新全应用语言。
@@ -1066,11 +1071,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         .Key("settings-about"));
     huxerui::View content = huxerui::Column(sections).With(
         huxerui::Spacing(20.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
-    if (kPageTitlesInWindow && !compact) content = huxerui::Row {
-      huxerui::Spacer(),
-      huxerui::View{content}.With(huxerui::Frame{.max_width = 720.0F}),
-      huxerui::Spacer(),
-    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Start));
+    content = ConstrainSettingsContentWidth(std::move(content), kPageTitlesInWindow && !compact);
     return PageScaffold(
         Localized("设置"), huxerui::View{},
         ScrollablePageContent(content, scroll,
