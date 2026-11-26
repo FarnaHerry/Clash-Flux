@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "ui.h"
+#include "card_hover_outline.h"
 #include "empty_state.h"
 #include "page_loading.h"
 #include "search_text.h"

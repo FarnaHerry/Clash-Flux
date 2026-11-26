@@ -50,7 +50,7 @@ struct EditorDismissBinding {
     std::function<void()> action, bool primary, bool enabled, bool danger) {
     const auto& theme = huxerui::UseTheme();
     const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
-    auto style = ResolveFluxButtonStyle(theme, primary, gradient.enabled && !danger);
+    auto style = ResolveFluxButtonStyle(theme, primary, !danger ? gradient : FluxGradientStyle{});
     style.minimum_height = 40.0F;
     if (!primary) {
         style.background = huxerui::Color::Transparent();

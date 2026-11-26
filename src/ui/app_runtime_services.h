@@ -30,7 +30,7 @@ struct AppRuntimeServices {
     std::function<void()> installAppUpdate;
     bool startupSettingsLoaded = false;
     int startupThemeMode = 1;
-    std::string startupThemeColor = "blue";
+    std::string startupThemeColor = "gemini";
     std::string startupLanguage = "system";
     bool startupTrayEnabled = true;
     bool startupStartMinimized = false;

@@ -69,6 +69,7 @@
 #include "website_test_grid.h"
 #include "theme_colors.h"
 #include "theme_color_card.h"
+#include "navigation_gradient_icons.h"
 #include "vpn_snapshot_model.h"
 #include "global_rules_model.h"
 #include "task_bridge.h"
@@ -415,6 +416,10 @@ const huxerui::Application kWebsiteFixtureApplication{WebsiteFixtureRoot,
     huxerui::AppOptions{.application_hooks = {[](huxerui::ApplicationContext& context) {
         context.Provide(std::make_shared<clashflux::ui::WebsiteTestModel>());
     }}}};
+huxerui::Color paintedTextColor(huxerui::testing::UiTest& ui, const std::string& text,
+                                const std::string& channel);
+float colorDistance(huxerui::Color a, huxerui::Color b);
+
 void testWebsiteTests() {
     using namespace clashflux::ui;
     for (const auto width : {320.0F, 960.0F}) {
@@ -570,6 +575,9 @@ void testWebsiteTests() {
         ui.PumpAndSettle();
         check(ui.Find(UiSelector::Text("失败")).Exists() && !ui.Find(UiSelector::Text("HTTP 403")).Exists(),
               "HTTP rejection shows a failure without status/latency clutter");
+        check(colorDistance(paintedTextColor(ui, "失败", "content"),
+                            DelayLevelColor(huxerui::MaterialLightThemeSpec(), 0)) < 0.001F,
+              "website failure status uses the shared latency error color");
         check(websiteLayout() == idleLayout, "showing a failure preserves the card geometry");
         ui.SetWindowMetrics({.viewport = {width == 320.0F ? 960.0F : 320.0F, 640}});
         ui.PumpAndSettle();
@@ -3227,6 +3235,7 @@ struct SearchOutlineFixture {
     huxerui::State<bool> focused{false};
     huxerui::State<bool> reduced{false};
     huxerui::State<bool> dark{false};
+    huxerui::State<bool> fourColor{false};
     int compositions = 0;
 };
 std::shared_ptr<SearchOutlineFixture> searchOutlineFixture;
@@ -3244,7 +3253,8 @@ void InstallSearchOutlineFixture(huxerui::ApplicationContext& context) {
         clashflux::ui::WithSearchFocusOutline(huxerui::Row {huxerui::Text("SEARCH")}
             .With(huxerui::Frame{.width = 320.0F, .height = 34.0F},
                   huxerui::Border(theme.colors.outline, 1.0F), huxerui::CornerRadius(17.0F))
-            .Key("search-outline"), model->focused.Get(), theme.colors.primary, animated),
+            .Key("search-outline"), model->focused.Get(), theme.colors.primary, animated,
+            model->fourColor.Get(), theme.brightness),
         huxerui::Text("BELOW-SEARCH").Key("below-search"),
     };
 }
@@ -3265,35 +3275,42 @@ void testSearchFocusOutline() {
         huxerui::testing::UiTest ui(kSearchOutlineApplication, {.viewport = {width, 200.0F}});
         ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
         const auto model = searchOutlineFixture;
-        for (bool dark : {false, true}) {
-            model->dark = dark;
-            model->focused = false;
-            ui.PumpAndSettle();
-            const auto bounds = ui.Find(UiSelector::Key("search-outline")).One().bounds;
-            const auto below = ui.Find(UiSelector::Key("below-search")).One().bounds;
-            const auto idle = ui.CaptureSnapshot();
-            model->focused = true;
-            ui.Pump();
-            const int compositions = model->compositions;
-            const auto start = ui.CaptureSnapshot();
-            ui.Pump(std::chrono::milliseconds(80));
-            const auto partial = ui.CaptureSnapshot();
-            ui.Pump(std::chrono::milliseconds(80));
-            check(partial != start && partial != ui.CaptureSnapshot(),
-                  "focus outline reveals progressively instead of lighting the entire capsule immediately");
-            check(model->compositions == compositions &&
-                  ui.Find(UiSelector::Key("search-outline")).One().bounds == bounds &&
-                  ui.Find(UiSelector::Key("below-search")).One().bounds == below,
-                  "focus reveal updates retained paint without recomposition or layout movement");
-            ui.PumpAndSettle();
-            const auto finished = ui.CaptureSnapshot();
-            ui.Pump(std::chrono::seconds(2));
-            check(finished == ui.CaptureSnapshot() && finished != idle,
-                  "completed focus reveal stays highlighted and stops requesting frames");
-            model->focused = false;
-            ui.PumpAndSettle();
-            check(ui.CaptureSnapshot() == idle, "blur restores the normal border immediately");
+        for (bool fourColor : {false, true}) {
+            model->fourColor = fourColor;
+            for (bool dark : {false, true}) {
+                model->dark = dark;
+                model->focused = false;
+                ui.PumpAndSettle();
+                const auto bounds = ui.Find(UiSelector::Key("search-outline")).One().bounds;
+                const auto below = ui.Find(UiSelector::Key("below-search")).One().bounds;
+                const auto idle = ui.CaptureSnapshot();
+                model->focused = true;
+                ui.Pump();
+                const int compositions = model->compositions;
+                const auto start = ui.CaptureSnapshot();
+                ui.Pump(std::chrono::milliseconds(80));
+                const auto partial = ui.CaptureSnapshot();
+                ui.Pump(std::chrono::milliseconds(80));
+                check(partial != start && partial != ui.CaptureSnapshot(),
+                      "focus outline reveals progressively instead of lighting the entire capsule immediately");
+                check(model->compositions == compositions &&
+                      ui.Find(UiSelector::Key("search-outline")).One().bounds == bounds &&
+                      ui.Find(UiSelector::Key("below-search")).One().bounds == below,
+                      "focus reveal updates retained paint without recomposition or layout movement");
+                ui.PumpAndSettle();
+                const auto finished = ui.CaptureSnapshot();
+                const auto finishedScene = finished.ToString();
+                check(!fourColor || finishedScene.find("stroke-path {") != std::string::npos,
+                      "four-color search focus paints stroke-path segments along the capsule");
+                ui.Pump(std::chrono::seconds(2));
+                check(finished == ui.CaptureSnapshot() && finished != idle,
+                      "completed focus reveal stays highlighted and stops requesting frames");
+                model->focused = false;
+                ui.PumpAndSettle();
+                check(ui.CaptureSnapshot() == idle, "blur restores the normal border immediately");
+            }
         }
+        model->fourColor = false;
         for (bool background : {false, true}) {
             model->focused = true;
             ui.Pump();
@@ -5177,32 +5194,47 @@ void testProfileUpdateInterval() {
 }
 
 void testProfileCreateTypeOutline() {
+    static bool profileTypeFourColor = false;
     const huxerui::Application app{[] {
-        return huxerui::View{huxerui::MaterialTheme {huxerui::Scope([] {
-            const auto selected = huxerui::UseState(std::size_t{0});
-            return clashflux::ui::ProfileCreateTypeSelector({"Remote", "Local", "PPTP"}, selected);
-        })}};
+        auto theme = huxerui::MaterialLightThemeSpec();
+        if (profileTypeFourColor) theme.colors = clashflux::ui::FluxLightColors();
+        return huxerui::View{huxerui::MaterialTheme{theme,
+            huxerui::ProvideEnvironment(clashflux::ui::FluxGradientStyle{profileTypeFourColor},
+                huxerui::Scope([] {
+                    const auto selected = huxerui::UseState(std::size_t{0});
+                    return clashflux::ui::ProfileCreateTypeSelector({"Remote", "Local", "PPTP"}, selected);
+                }))}};
     }};
-    huxerui::testing::UiTest ui(app, {.viewport = {620.0F, 48.0F}, .resource_provider = AppResources()});
-    ui.PumpAndSettle();
-    for (const char* title : {"Remote", "Local", "PPTP"}) {
-        ui.Find(UiSelector::Text(title)).Tap();
+    for (bool fourColor : {false, true}) {
+        profileTypeFourColor = fourColor;
+        huxerui::testing::UiTest ui(app, {.viewport = {620.0F, 48.0F}, .resource_provider = AppResources()});
         ui.PumpAndSettle();
-        const auto option = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Label(title));
-        check(option.One().selected == true, "profile creation type selection stays interactive");
-        std::istringstream scene(ui.CaptureSnapshot().ToString());
-        std::string line;
-        bool outline = false;
-        while (std::getline(scene, line)) {
-            if (!std::string_view(line).ends_with("foreground {")) continue;
-            std::getline(scene, line);
-            if (std::string_view(line).ends_with("border {") ||
-                std::string_view(line).ends_with("stroke-path {")) {
-                outline = true;
-                break;
+        for (const char* title : {"Remote", "Local", "PPTP"}) {
+            ui.Find(UiSelector::Text(title)).Tap();
+            ui.PumpAndSettle();
+            const auto option = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Label(title));
+            check(option.One().selected == true, "profile creation type selection stays interactive");
+            std::istringstream scene(ui.CaptureSnapshot().ToString());
+            std::string line;
+            bool outline = false;
+            while (std::getline(scene, line)) {
+                const auto pos = line.find("foreground {");
+                if (pos == std::string::npos || pos + 12 != line.size()) continue;
+                const std::string closing = line.substr(0, pos) + "}";
+                int borders = 0;
+                int strokes = 0;
+                while (std::getline(scene, line)) {
+                    if (line == closing) break;
+                    if (std::string_view(line).ends_with("border {")) ++borders;
+                    else if (std::string_view(line).ends_with("stroke-path {")) ++strokes;
+                }
+                if (fourColor ? (strokes == 5) : (borders == 1 || strokes == 1)) {
+                    outline = true;
+                    break;
+                }
             }
+            check(outline, "selected profile type paints its complete outline above the shared borders");
         }
-        check(outline, "selected profile type paints its complete outline above the shared borders");
     }
 }
 
@@ -7943,8 +7975,9 @@ void testVpnPublication() {
     auto selected = huxerui::UseState(0);
     auto added = huxerui::UseState(false);
     std::vector<huxerui::View> cards;
-    for (int index = 0; index < 3; ++index) {
-        const auto accent = ResolveFluxAccent(index == 0 ? "blue" : index == 1 ? "purple" : "#336699");
+    for (int index = 0; index < 4; ++index) {
+        const auto accent = ResolveFluxAccent(index == 0 ? "gemini"
+            : index == 1 ? "purple" : index == 2 ? "#336699" : "#FF3366,#33AA55");
         const bool active = selected.Get() == index;
         cards.push_back(ThemeColorCardSurface(theme,
             IsDarkTheme(theme) ? accent.dark : accent.light,
@@ -7999,7 +8032,7 @@ void testThemeColorSurfaces() {
             const auto add = ui.Find(UiSelector::Key("test-color-add")).One();
             check(color.size.width > color.size.height && other.size == color.size && add.size == color.size,
                   "color previews and add card use equal horizontal rectangles");
-            for (const char* caption : {"蓝色", "紫色", "#336699"})
+            for (const char* caption : {"Gemini", "紫色", "#336699", "#FF3366,#33AA55"})
                 check(!ui.Find(UiSelector::Text(caption)).Exists(),
                       "preset and custom previews do not show color names or hex captions");
             const auto preview = ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key("theme-color-preview")).One().bounds;
@@ -8136,8 +8169,19 @@ void testCustomThemeColors() {
     check(ReplaceCustomThemeColor(saved, "#336699", "#AA44CC") ==
               std::vector<std::string>{"#AA44CC"},
           "editing a custom color replaces its entry and deduplicates collisions");
-    check(RemoveCustomThemeColor(saved, "#AA44CC") == std::vector<std::string>{"#336699"},
-          "deleting a custom color only removes the requested swatch");
+    const auto savedMix = ReadCustomThemeColors(
+        "#ff3366,#33aa55\n#112233,#445566,#778899,#aabbcc\ninvalid,#112233\n#11,#22,#33,#44,#55");
+    check(savedMix == std::vector<std::string>{"#FF3366,#33AA55", "#112233,#445566,#778899,#AABBCC"},
+          "multi-color theme specs normalize up to 4 stops and reject invalid or oversized lists");
+    check(NormalizeThemeColorSpec("#112233,#445566,#778899,#aabbcc,#ddeeff") == std::nullopt &&
+              ParseThemeColorStops("#112233,").empty(),
+          "theme spec rejects more than four stops and trailing commas");
+    check(ReplaceCustomThemeColor(savedMix, "#FF3366,#33AA55", "#3366FF,#34A853,#EA4335") ==
+              std::vector<std::string>{"#3366FF,#34A853,#EA4335", "#112233,#445566,#778899,#AABBCC"},
+          "editing a multi-color theme replaces its entry while preserving order");
+    check(RemoveCustomThemeColor(savedMix, "#FF3366,#33AA55") ==
+              std::vector<std::string>{"#112233,#445566,#778899,#AABBCC"},
+          "deleting a multi-color theme removes only the requested swatch");
     const auto hiddenPresets = ReadHiddenThemeColors("blue\nunknown\nblue\norange");
     check(hiddenPresets == std::vector<std::string>{"blue", "orange"},
           "hidden preset colors accept only known IDs and deduplicate them");
@@ -8216,10 +8260,50 @@ void testCustomThemeColors() {
               gradientSlider.focus_ring->color == sliderTarget &&
               std::abs(gradientSlider.disabled_thumb.alpha - 0.38F) < 0.001F,
           "HSB slider keeps the selected-color thumb and themed geometry");
-    check(ResolveFluxAccent("invalid").id == "blue", "invalid saved color uses default");
-    check(UsesFourColorAccent("blue") && UsesFourColorAccent("invalid") &&
-              !UsesFourColorAccent("purple") && !UsesFourColorAccent("#245CB0"),
-          "the default preset and its fallback use four colors independently of a custom hue");
+    check(ResolveFluxAccent("invalid").id == "gemini", "invalid saved color uses default");
+    check(ResolveFluxAccent("gemini").name == "Gemini", "default preset displays the Gemini label");
+    check(ResolveFluxAccent("blue").id == "blue" && ResolveFluxAccent("blue").name == "蓝色" &&
+              !ResolveFluxAccent("blue").multiColor.has_value(),
+          "blue preset is restored as a standalone monochrome swatch");
+    check(UsesFourColorAccent("gemini") && UsesFourColorAccent("invalid") &&
+              UsesMultiColorAccent("#FF3366,#33AA55") &&
+              !UsesFourColorAccent("blue") && !UsesFourColorAccent("purple") && !UsesFourColorAccent("#245CB0"),
+          "default and multi-color specs enable gradient accents while single-color presets stay monochrome");
+    for (const auto spec : {"gemini", "blue", "purple", "#336699", "#FF3366,#33AA55", "#E5A93C,#34A853,#4285F4"}) {
+        for (bool dark : {false, true}) {
+            auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+            theme.colors = dark ? FluxDarkColors(spec) : FluxLightColors(spec);
+            const auto expectedBase = dark ? huxerui::Color::Rgb(19, 19, 21) : huxerui::Color::Rgb(239, 237, 240);
+            const auto expectedCard = dark ? huxerui::Color::Rgb(37, 38, 40) : huxerui::Color::Rgb(252, 248, 249);
+            check(theme.colors.surface_container_low == expectedBase && theme.colors.surface_container == expectedCard,
+                  "all theme presets and custom mixes share the reference grey surfaces");
+        }
+    }
+    for (const auto mixSpec : {"gemini", "#FF3366,#33AA55", "#E5A93C,#34A853,#4285F4", "#112233,#445566,#778899,#AABBCC"}) {
+        const auto style = ResolveFluxGradientStyle(mixSpec);
+        check(style.enabled && style.palette.has_value(), "multi-color spec produces a resolved gradient palette");
+        const auto palette = ResolveGradientPalette(style);
+        for (bool dark : {false, true}) {
+            auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+            theme.colors = dark ? FluxDarkColors(mixSpec) : FluxLightColors(mixSpec);
+            const auto primary = ResolveFluxButtonStyle(theme, true, style);
+            const auto* image = std::get_if<huxerui::ImageFill>(&primary.background.Get());
+            const auto* gradient = image ? std::get_if<huxerui::VectorAsset>(&image->source) : nullptr;
+            check(gradient && gradient->HasValue() && MultiColorSelectionGradient(palette, dark).HasValue() &&
+                      primary.label_style.foreground == ResolveFluxPrimaryForeground(theme, style) &&
+                      !MultiColorLinearGradient(palette, theme.brightness).stops.empty(),
+                  "custom multi-color button, navigation, and linear gradients are valid");
+            const float a = ThemeColorLuminance(palette.primaryBase);
+            const float b = ThemeColorLuminance(palette.primaryForeground);
+            check((std::max(a, b) + 0.05F) / (std::min(a, b) + 0.05F) >= 4.5F,
+                  "multi-color primary button foreground keeps readable contrast against the base");
+            for (std::size_t entry = 0; entry < 8U; ++entry) {
+                const auto icon = BuildNavigationGradientIcon(entry, palette, dark);
+                check(icon.HasValue() && icon.IntrinsicSize() == huxerui::Size{24.0F, 24.0F},
+                      "runtime navigation gradient icon builds a 24x24 vector asset for every mix");
+            }
+        }
+    }
     for (bool dark : {false, true}) {
         auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
         theme.colors = dark ? FluxDarkColors() : FluxLightColors();
@@ -8233,6 +8317,43 @@ void testCustomThemeColors() {
         check(gradient && gradient->HasValue() && FourColorSelectionGradient(dark).HasValue() &&
                   primary.label_style.foreground == ResolveFluxPrimaryForeground(theme, true),
               "default button and navigation fills have valid vector gradients");
+        const auto trafficTotal = FourColorTrafficTotalColors(theme);
+        const auto trafficChart = ResolveTrafficColors(theme, true);
+        check(trafficChart.upload == trafficTotal.upload && trafficChart.download == trafficTotal.download,
+              "four-color traffic charts and total indicators share the same palette");
+        const auto lineGradient = FourColorLinearGradient(theme.brightness);
+        const auto palette = ResolveFourColorForegroundPalette(theme.brightness);
+        check(lineGradient.stops.size() == 4U && lineGradient.stops[0].color == palette.gold &&
+                  lineGradient.stops[1].color == palette.green && lineGradient.stops[2].color == palette.blue &&
+                  lineGradient.stops[3].color == palette.red,
+              "four-color linear gradient carries gold, green, blue, and red stops");
+    }
+    static bool indeterminateReducedMotion = false;
+    const huxerui::Application indeterminateApp{[] {
+        auto theme = huxerui::MaterialLightThemeSpec();
+        theme.colors = FluxLightColors();
+        theme.motion.reduced_motion = indeterminateReducedMotion;
+        auto def = huxerui::MaterialThemeDefinition(theme);
+        def.Set(FluxGradientStyle{true});
+        def.Set(ResolveFluxProgressBarStyle(theme));
+        return huxerui::View{huxerui::Theme(std::move(def),
+            huxerui::Column {FluxIndeterminateProgressBar()}
+                .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)))};
+    }};
+    for (bool reduced : {false, true}) {
+        indeterminateReducedMotion = reduced;
+        huxerui::testing::UiTest ui(indeterminateApp, {.viewport = {240.0F, 32.0F}, .resource_provider = AppResources()});
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        ui.Pump();
+        const auto progress = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Role(
+            huxerui::SemanticRole::ProgressIndicator)).One();
+        check(std::abs(progress.bounds.height - 5.0F) < 0.5F && progress.busy == true,
+              "four-color indeterminate bar keeps 5pt height and progress semantics");
+        const auto initial = ui.CaptureSnapshot();
+        ui.Pump(std::chrono::milliseconds(120));
+        const auto later = ui.CaptureSnapshot();
+        check(reduced ? (later == initial) : (later != initial),
+              "four-color indeterminate bar animates continuously unless reduced motion is enabled");
     }
     for (const auto hex : {"#000000", "#FFFFFF", "#FFFF00", "#0000FF", "#FF00FF", "#336699"}) {
         const auto accent = ResolveFluxAccent(hex);
@@ -8256,8 +8377,13 @@ void testCustomThemeColors() {
             check(selected.surface == colors.secondary_container && selected.fg == colors.on_surface &&
                   selected.muted == colors.on_surface_variant,
                   "selected cards use neutral surfaces and text at every accent and brightness");
+            const auto latency = ResolveFourColorForegroundPalette(theme.brightness);
+            check(DelayLevelColor(theme, 299) == latency.green &&
+                  DelayLevelColor(theme, 300) == latency.blue && DelayLevelColor(theme, 599) == latency.blue &&
+                  DelayLevelColor(theme, 600) == latency.gold && DelayLevelColor(theme, 999) == latency.gold &&
+                  DelayLevelColor(theme, 1000) == latency.red && DelayLevelColor(theme, 0) == latency.red,
+                  "latency levels use four theme-brightness colors at each threshold");
             check(CompactNavigationIndicatorColor(theme) == FluxStateLayerColor(colors.on_surface, 0.10F) &&
-                  DelayLevelColor(theme, 450) == colors.on_surface_variant &&
                   ResolveTrafficColors(theme).download == traffic.download &&
                   ResolveTrafficColors(theme).upload == traffic.upload,
                   "navigation backgrounds and measured values stay independent of the chosen accent");
@@ -9583,7 +9709,7 @@ struct ModeChoiceFixture {
 };
 std::shared_ptr<ModeChoiceFixture> modeChoiceFixture;
 bool modeChoiceDark = false;
-std::string modeChoiceAccent = "blue";
+std::string modeChoiceAccent = "gemini";
 bool modeThemeMatches = false;
 huxerui::View ModeChoiceRoot() {
     using namespace clashflux::ui;
@@ -9802,7 +9928,7 @@ void testSettingsRowFeedback() {
 
 void testModeChoiceFeedback() {
     using namespace clashflux::ui;
-    for (bool dark : {false, true}) for (const char* accent : {"blue", "green"}) {
+    for (bool dark : {false, true}) for (const char* accent : {"gemini", "blue", "green"}) {
         modeChoiceDark = dark; modeChoiceAccent = accent;
         for (auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
             huxerui::testing::UiTest ui(kModeChoiceApplication, {.viewport = {320.0F, 300.0F}});

@@ -220,13 +220,12 @@ struct ProxyGroupSnapshot {
     bool operator==(const ProxyGroupSnapshot&) const = default;
 };
 
-inline huxerui::Color DelayLevelColor(const huxerui::ThemeSpec& theme, int delay,
-                                      bool unavailable = false) {
-    if (unavailable || delay <= 0) return theme.colors.error;
-    if (delay < 300) return SemanticSuccessColor(theme);
-    if (delay < 600) return theme.colors.on_surface_variant;
-    if (delay < 1000) return SemanticWarningColor(theme);
-    return theme.colors.error;
+inline huxerui::Color DelayLevelColor(const huxerui::ThemeSpec& theme, int delay) {
+    const auto palette = ResolveFourColorForegroundPalette(theme.brightness);
+    if (delay <= 0 || delay >= 1000) return palette.red;
+    if (delay < 300) return palette.green;
+    if (delay < 600) return palette.blue;
+    return palette.gold;
 }
 
 // 由组合期调用，resolveLabel 将应用 Locale 的资源解析为拥有型菜单文案。

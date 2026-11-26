@@ -25,6 +25,7 @@
 #include "home_network_model.h"
 #include "task_bridge.h"
 #include "ui.h"
+#include "card_hover_outline.h"
 #include "page_layout.h"
 #include "responsive_shell.h"
 #include "app.h"
@@ -1089,6 +1090,7 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
     FluxToastHandle toast, std::shared_ptr<huxerui::FilePicker> picker,
     huxerui::FilePickerFilter filter, std::string key) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
     auto hovering = huxerui::UseState(false);
     const bool hover = hovering.Get();
     const auto& selection = picked_file.Get();
@@ -1146,7 +1148,8 @@ huxerui::Color IslandColor(const IslandTheme& islands, const huxerui::ThemeSpec&
                                         : theme.colors.surface_container_high),
               huxerui::CornerRadius(theme.shapes.small),
               detail::FileDropIdleOutline{idleOutline, !hover},
-              huxerui::Border(theme.colors.primary, hover ? kCardOutlineWidth : 0.0F),
+              FourColorOverlayOutline{hover, gradient.enabled, theme.brightness, theme.colors.primary,
+                  huxerui::CornerRadii{theme.shapes.small}, kCardOutlineWidth, gradient.palette},
               huxerui::ClipChildren(),
               huxerui::FileDropTarget::Accepts(std::move(dropOptions)),
               huxerui::PointerCursor(huxerui::PointerCursorKind::Hand))
@@ -1354,7 +1357,7 @@ void SettingsModel::PublishCached() {
     next.ready = clashflux::data::session().ready();
     const std::string themeMode = core.setting("ui.theme_mode", "1");
     next.themeMode = themeMode == "0" ? 0 : themeMode == "2" ? 2 : 1;
-    next.themeColor = core.setting("ui.theme_color", "blue");
+    next.themeColor = core.setting("ui.theme_color", "gemini");
     next.customThemeColors = core.setting("ui.custom_theme_colors", "");
     next.hiddenThemeColors = core.setting("ui.hidden_theme_colors", "");
     next.proxyGroupedView = ParseProxyGroupedView(core.setting(kProxyViewSetting));

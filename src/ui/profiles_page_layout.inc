@@ -41,6 +41,7 @@
     // 更新网格声明并重建可见卡片。只在 factory 内 Get() 不会触发页面重组。
     const std::int64_t previewActiveId = reorderSession.Get()->activeId;
     const std::int64_t previewTargetId = reorderTarget.Get();
+    const auto gradient = huxerui::UseEnvironment<FluxGradientStyle>();
     for (const auto& section : sections) {
         std::vector<std::size_t> typeIndices = section.indices;
         const std::size_t typeCount = typeIndices.size();
@@ -74,7 +75,7 @@
                                   pptpAvailable = vpnModel->view.Get().pptpAvailable,
                                   togglePptpConnection, openEditInfo, showEditRules,
                                   showEditFile, showCompiledPreview, showQr, showQrs,
-                                  showExternalResources, selectionPending, theme,
+                                  showExternalResources, selectionPending, theme, gradient,
                                   dialog, pageReorder, dropAtPointer,
                                   previewActiveId, previewTargetId,
                                   geometry = gridGeometry.Get()](std::size_t index) -> huxerui::View {
@@ -136,7 +137,9 @@
                                      if (previewActiveId != 0 && previewTargetId == profile.id &&
                                          previewTargetId != previewActiveId) {
                                          slot = std::move(slot).With(
-                                             huxerui::Border(theme.colors.primary, kCardOutlineWidth),
+                                             FourColorOverlayOutline{true, gradient.enabled, theme.brightness,
+                                                 theme.colors.primary, huxerui::CornerRadii{kProfileCardRadius},
+                                                 kCardOutlineWidth, gradient.palette},
                                              huxerui::CornerRadius(kProfileCardRadius));
                                      }
                                      return std::move(slot).Key("profile-slot-" + std::to_string(index));

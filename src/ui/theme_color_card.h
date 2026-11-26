@@ -77,10 +77,11 @@ inline huxerui::View HsbGradientSliderTrack(
 inline huxerui::View WithThemeCardOutline(huxerui::View card, const huxerui::ThemeSpec& theme,
     bool selected, std::function<void()> onClick) {
     return huxerui::Scope([card = std::move(card), theme, selected, onClick = std::move(onClick)] {
-        const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+        const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
         const auto hovered = huxerui::UseState(false);
-        if (fourColor) {
-            return WithSelectableCardHover(card, theme, hovered, theme.shapes.medium, selected, true).OnClick(onClick);
+        if (gradient.enabled) {
+            return WithSelectableCardHover(card, theme, hovered, theme.shapes.medium, selected, gradient)
+                .OnClick(onClick);
         }
         return huxerui::View{card}.With(
             huxerui::Border(theme.colors.primary, selected ? kCardOutlineWidth : 0.0F),
@@ -117,18 +118,24 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
     std::string accentId = {}) {
     auto candidate = theme;
     const bool dark = IsDarkTheme(theme);
-    const bool fourColor = !accentId.empty() && UsesFourColorAccent(accentId);
+    const FluxGradientStyle candidateGradient = accentId.empty()
+        ? FluxGradientStyle{} : ResolveFluxGradientStyle(accentId);
+    const bool multiColor = candidateGradient.enabled;
     if (!accentId.empty()) candidate.colors = dark ? FluxDarkColors(accentId) : FluxLightColors(accentId);
-    const huxerui::VisualFill selectionFill = fourColor
-        ? huxerui::VisualFill{FourColorSelectionGradient(dark)}
+    const huxerui::VisualFill selectionFill = multiColor
+        ? huxerui::VisualFill{MultiColorSelectionGradient(ResolveGradientPalette(candidateGradient), dark)}
         : huxerui::VisualFill{candidate.colors.primary_container};
-    const huxerui::VisualFill buttonFill = fourColor
-        ? ResolveFluxPrimaryFill(candidate, true) : huxerui::VisualFill{fill};
-    const auto buttonForeground = fourColor ? ResolveFluxPrimaryForeground(candidate, true) : foreground;
+    const huxerui::VisualFill buttonFill = multiColor
+        ? ResolveFluxPrimaryFill(candidate, candidateGradient) : huxerui::VisualFill{fill};
+    const auto buttonForeground = multiColor
+        ? ResolveFluxPrimaryForeground(candidate, candidateGradient) : foreground;
     const auto islands = ResolveIslandTheme(candidate);
-    const auto bar = [](huxerui::Color color, float width) {
+    const huxerui::VisualFill accentBarFill = multiColor
+        ? huxerui::VisualFill{MultiColorLinearGradient(ResolveGradientPalette(candidateGradient), candidate.brightness)}
+        : huxerui::VisualFill{candidate.colors.primary};
+    const auto bar = [](huxerui::VisualFill fill, float width) {
         return huxerui::Row{}.With(huxerui::Frame{.width = width, .height = kThemePreviewLineHeight},
-            huxerui::Background(color), huxerui::CornerRadius(kThemePreviewLineHeight / 2));
+            huxerui::Background(std::move(fill)), huxerui::CornerRadius(kThemePreviewLineHeight / 2));
     };
     huxerui::View content;
     if (accentId.empty()) {
@@ -141,7 +148,7 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
     } else {
         content = huxerui::Column {
           huxerui::Row {
-            bar(candidate.colors.primary, edge * 0.25F), huxerui::Spacer(),
+            bar(accentBarFill, edge * 0.25F), huxerui::Spacer(),
             selected && symbol ? huxerui::Image(*symbol).Tint(candidate.colors.primary)
                 .With(huxerui::Frame{.width = kThemeModeIconSize, .height = kThemeModeIconSize})
                 .Key("theme-color-symbol") : huxerui::View{},
@@ -150,7 +157,7 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
                   huxerui::Padding(kThemePreviewSpacing), huxerui::Background(candidate.colors.background),
                   huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
           huxerui::Row {
-            huxerui::Column {bar(candidate.colors.primary, edge * 0.08F)}
+            huxerui::Column {bar(accentBarFill, edge * 0.08F)}
                 .With(huxerui::Padding(kThemePreviewSpacing), huxerui::Background(candidate.colors.background)),
             huxerui::Column {
               bar(candidate.colors.on_surface_variant, edge * 0.3F),

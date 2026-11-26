@@ -749,7 +749,7 @@ Task<void> RunTest(TaskScope tasks) {
     using clashflux::ui::SavedProxyView;
     const std::filesystem::path path = TempPath();
     const auto missingSettings = persistence::readStartupSettings(path);
-    Check(missingSettings.themeMode == 1 && missingSettings.themeColor == "blue" &&
+    Check(missingSettings.themeMode == 1 && missingSettings.themeColor == "gemini" &&
               missingSettings.language == "system" &&
               missingSettings.trayEnabled &&
               !missingSettings.startMinimized &&
@@ -783,7 +783,7 @@ Task<void> RunTest(TaskScope tasks) {
                   "unset or unknown proxy layouts default to grouped without writing settings");
             const auto defaultStartupSettings = persistence::readStartupSettings(path);
             Check(defaultStartupSettings.themeMode == 1 &&
-                      defaultStartupSettings.themeColor == "blue" &&
+                      defaultStartupSettings.themeColor == "gemini" &&
                       defaultStartupSettings.language == "system" &&
                       defaultStartupSettings.trayEnabled &&
                       !defaultStartupSettings.startMinimized &&

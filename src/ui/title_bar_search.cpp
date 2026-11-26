@@ -19,6 +19,9 @@ struct SearchFocusOutline {
     bool focused = false;
     huxerui::Color color;
     bool animated = true;
+    bool four_color = false;
+    huxerui::ThemeBrightness brightness = huxerui::ThemeBrightness::Light;
+    std::optional<FluxMultiColorPalette> palette = std::nullopt;
     bool operator==(const SearchFocusOutline&) const = default;
 };
 
@@ -35,6 +38,9 @@ public:
         }
         focused_ = value.focused;
         color_ = value.color;
+        four_color_ = value.four_color;
+        brightness_ = value.brightness;
+        palette_ = value.palette;
         InvalidatePaint(PaintInvalidation::Foreground);
     }
 
@@ -48,25 +54,36 @@ public:
         const float progress = std::clamp(reveal_.Value(), 0.0F, 1.0F);
         if (!focused_ || progress <= 0.0F) return;
         const auto bounds = node.Bounds();
+        const huxerui::CornerRadii corners{bounds.height / 2.0F};
         // Reveal both horizontal edges together, keeping the original capsule
         // geometry. Only this foreground paint sequence changes each frame.
         paint.PushClip({bounds.x, bounds.y, bounds.width * progress, bounds.height});
-        paint.DrawBorder(bounds, color_, huxerui::StrokeStyle{.width = 1.0F},
-                         huxerui::CornerRadii{bounds.height / 2.0F});
+        if (four_color_) {
+            PaintMultiColorStroke(paint, bounds, corners,
+                                  palette_.value_or(DefaultMultiColorPalette()), brightness_, 1.0F);
+        } else {
+            paint.DrawBorder(bounds, color_, huxerui::StrokeStyle{.width = 1.0F}, corners);
+        }
         paint.PopClip();
     }
 
 private:
     bool focused_ = false;
     huxerui::Color color_;
+    bool four_color_ = false;
+    huxerui::ThemeBrightness brightness_ = huxerui::ThemeBrightness::Light;
+    std::optional<FluxMultiColorPalette> palette_{};
     huxerui::MotionController reveal_{0.0F};
 };
 
 } // namespace
 
 huxerui::View WithSearchFocusOutline(huxerui::View content, bool focused,
-                                     huxerui::Color color, bool animated) {
-    return std::move(content).With(SearchFocusOutline{focused, color, animated});
+                                     huxerui::Color color, bool animated,
+                                     bool fourColor, huxerui::ThemeBrightness brightness,
+                                     std::optional<FluxMultiColorPalette> palette) {
+    return std::move(content).With(SearchFocusOutline{
+        focused, color, animated, fourColor, brightness, std::move(palette)});
 }
 
 namespace {
@@ -273,7 +290,9 @@ private:
             close();
             return true;
         }).Key("pill-search-field");
-    return WithSearchFocusOutline(std::move(pill), focused, theme.colors.primary, animated);
+    const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
+    return WithSearchFocusOutline(std::move(pill), focused, theme.colors.primary, animated,
+                                  gradient.enabled, theme.brightness, gradient.palette);
 }
 
 } // namespace

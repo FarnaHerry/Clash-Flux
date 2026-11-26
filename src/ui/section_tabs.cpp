@@ -191,6 +191,9 @@ struct RevealSectionTab {
     huxerui::Color indicator_color;
     double indicator_duration;
     SectionTabMotionHandle motion;
+    bool four_color = false;
+    huxerui::ThemeBrightness brightness = huxerui::ThemeBrightness::Light;
+    std::optional<FluxMultiColorPalette> palette = std::nullopt;
     bool operator==(const RevealSectionTab&) const = default;
 };
 
@@ -205,8 +208,14 @@ public:
     void Update(huxerui::ViewNode&, const RevealSectionTab& spec) {
         pending_ = pending_ || selected_key_ != spec.selected_key ||
                    selected_index_ != spec.selected_index || scroll_ != spec.scroll;
-        if (color_ != spec.indicator_color) InvalidatePaint();
+        if (color_ != spec.indicator_color || four_color_ != spec.four_color ||
+            brightness_ != spec.brightness || palette_ != spec.palette) {
+            InvalidatePaint();
+        }
         color_ = spec.indicator_color;
+        four_color_ = spec.four_color;
+        brightness_ = spec.brightness;
+        palette_ = spec.palette;
         duration_ = spec.indicator_duration;
         if (motion_ != spec.motion && motion_) motion_->repaint.reset();
         motion_ = spec.motion;
@@ -244,8 +253,11 @@ public:
 
     void PaintAboveContent(const huxerui::ViewNode&, huxerui::PaintContext& paint) const override {
         if (!indicator_visible_) return;
-        paint.DrawRect(IndicatorBounds(),
-                       huxerui::Brush{color_}, huxerui::CornerRadii{1.0F});
+        const huxerui::Brush brush = four_color_
+            ? huxerui::Brush{MultiColorLinearGradient(
+                  palette_.value_or(DefaultMultiColorPalette()), brightness_)}
+            : huxerui::Brush{color_};
+        paint.DrawRect(IndicatorBounds(), brush, huxerui::CornerRadii{1.0F});
     }
 
     PaintInvalidation PrepareGeometry(huxerui::ViewNode& node,
@@ -381,6 +393,9 @@ private:
     huxerui::MotionController indicator_x_;
     huxerui::MotionController indicator_width_;
     huxerui::Color color_{};
+    bool four_color_ = false;
+    huxerui::ThemeBrightness brightness_ = huxerui::ThemeBrightness::Light;
+    std::optional<FluxMultiColorPalette> palette_{};
     double duration_ = 0.0;
     float indicator_y_ = 0.0F;
     bool indicator_visible_ = false;
@@ -473,6 +488,7 @@ private:
                 .OnClick([onSelect, key = tab.key] { onSelect(key); })
                 .Key("section-tab-" + tab.key));
     }
+    const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
     huxerui::View strip =
         huxerui::ScrollView(
             huxerui::Row(items)
@@ -480,7 +496,8 @@ private:
                       huxerui::CrossAlign(
                           huxerui::CrossAxisAlignment::Center),
                       RevealSectionTab{scroll, selectedKey, selectedIndex, theme.colors.primary,
-                          theme.motion.reduced_motion ? 0.0 : 0.16, motion}))
+                          theme.motion.reduced_motion ? 0.0 : 0.16, motion,
+                          gradient.enabled, theme.brightness, gradient.palette}))
             .ScrollAxis(huxerui::Axis::Horizontal)
             .Controller(scroll)
             .With(huxerui::ClipChildren())

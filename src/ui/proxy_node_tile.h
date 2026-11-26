@@ -326,7 +326,7 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
     detail = std::move(detail).With(huxerui::Grow(1.0F), huxerui::Semantics{.hidden = true});
     return huxerui::Scope([=] {
         const auto& theme = huxerui::UseTheme();
-        const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+        const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
         const auto hovered = huxerui::UseState(false);
         const auto colors = ResolveSelectableTileColors(theme, selected);
         huxerui::View status = testing ? ProxyProbeDots(selected ? colors.fg : colors.muted, dotsWidth) : delay;
@@ -389,10 +389,10 @@ inline huxerui::View ProxyNodeTile(huxerui::View title, huxerui::View detail,
                huxerui::Focusable(interactive),
                huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
         if (interactive) {
-            tile = WithSelectableCardHover(std::move(tile), theme, hovered, kSelectableTileRadius, selected, fourColor)
+            tile = WithSelectableCardHover(std::move(tile), theme, hovered, kSelectableTileRadius, selected, gradient)
                 .OnClick(activate);
         } else if (selected) {
-            tile = WithStaticCardSelectionOutline(std::move(tile), theme, kSelectableTileRadius, fourColor);
+            tile = WithStaticCardSelectionOutline(std::move(tile), theme, kSelectableTileRadius, gradient);
         }
         return tile;
     });

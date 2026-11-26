@@ -331,8 +331,8 @@ huxerui::TextField SshField(huxerui::State<SshProfileDraft> draft,
       SshField(draft, &SshProfileDraft::username, Localized("用户名")),
       SshField(draft, &SshProfileDraft::hostKey, Localized("SSH 主机公钥"))
           .Placeholder("ssh-ed25519 AAAA…"),
-      huxerui::SegmentedButton({Localized("密码"), Localized("SSH 私钥")}, auth)
-          .OnChanged([draft](std::size_t choice) {
+      FluxSegmentedButton({Localized("密码"), Localized("SSH 私钥")}, auth,
+          [draft](std::size_t choice) {
               auto next = draft.Get();
               next.auth = choice;
               draft = std::move(next);

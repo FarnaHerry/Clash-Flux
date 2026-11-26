@@ -18,6 +18,7 @@ struct CardHoverOutline {
     struct Selection {
         huxerui::ThemeBrightness brightness;
         bool animate = true;
+        FluxMultiColorPalette palette = DefaultMultiColorPalette();
         bool operator==(const Selection&) const = default;
     };
     huxerui::Border border;
@@ -58,22 +59,9 @@ public:
 
     void PaintBehindContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
         if (!outline_.selection) return;
-        // Keep the four static fields in the content sequence so the sweep only records foreground paint.
-        const auto bounds = node.Bounds();
-        const auto path = BorderPath(bounds);
-        if (path.IsEmpty()) return;
-        const auto palette = ResolveFourColorForegroundPalette(outline_.selection->brightness);
-        constexpr huxerui::StrokeStyle stroke{.width = kCardOutlineWidth};
-        paint.StrokePath(path, palette.base, stroke);
-        const std::array fields{palette.gold, palette.green, palette.blue, palette.red};
-        for (std::size_t index = 0; index < fields.size(); ++index) {
-            auto transparent = fields[index];
-            transparent.alpha = 0.0F;
-            paint.StrokePath(path, huxerui::RadialGradient{
-                .center = kFourColorFieldCenters[index], .radius = {0.65F, 0.93F},
-                .stops = {{0.0F, fields[index]}, {1.0F, transparent}},
-            }, bounds, stroke);
-        }
+        // Keep the static fields in the content sequence so the sweep only records foreground paint.
+        PaintMultiColorStroke(paint, node.Bounds(), outline_.corners,
+                              outline_.selection->palette, outline_.selection->brightness, kCardOutlineWidth);
     }
 
     void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
@@ -108,13 +96,7 @@ public:
 
 private:
     huxerui::Path BorderPath(huxerui::Rect bounds) const {
-        constexpr float inset = kCardOutlineWidth * 0.5F;
-        if (std::min(bounds.width, bounds.height) <= kCardOutlineWidth) return {};
-        const auto innerRadius = [](float radius) { return std::max(0.0F, radius - inset); };
-        return huxerui::Path::RoundedRect(
-            {bounds.x + inset, bounds.y + inset, bounds.width - kCardOutlineWidth, bounds.height - kCardOutlineWidth},
-            {innerRadius(outline_.corners.top_left), innerRadius(outline_.corners.top_right),
-             innerRadius(outline_.corners.bottom_right), innerRadius(outline_.corners.bottom_left)});
+        return RoundedRectStrokePath(bounds, outline_.corners, kCardOutlineWidth);
     }
 
     CardHoverOutline outline_;
@@ -122,8 +104,46 @@ private:
     std::unique_ptr<huxerui::MotionController> sweep_;
 };
 
+struct FourColorOverlayOutline {
+    class Extension;
+    bool active = true;
+    bool fourColor = false;
+    huxerui::ThemeBrightness brightness = huxerui::ThemeBrightness::Light;
+    huxerui::Color fallbackColor = huxerui::Color::Transparent();
+    huxerui::CornerRadii corners{};
+    float width = kCardOutlineWidth;
+    std::optional<FluxMultiColorPalette> palette = std::nullopt;
+    bool operator==(const FourColorOverlayOutline&) const = default;
+};
+
+class FourColorOverlayOutline::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const FourColorOverlayOutline& outline) : outline_(outline) {}
+
+    void Update(huxerui::ViewNode&, const FourColorOverlayOutline& outline) {
+        if (outline_ == outline) return;
+        outline_ = outline;
+        InvalidatePaint(PaintInvalidation::Foreground);
+    }
+
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        if (!outline_.active || outline_.width <= 0.0F) return;
+        if (outline_.fourColor) {
+            PaintMultiColorStroke(paint, node.Bounds(), outline_.corners,
+                                  outline_.palette.value_or(DefaultMultiColorPalette()),
+                                  outline_.brightness, outline_.width);
+            return;
+        }
+        paint.DrawBorder(node.Bounds(), outline_.fallbackColor, {.width = outline_.width}, outline_.corners);
+    }
+
+private:
+    FourColorOverlayOutline outline_;
+};
+
 inline huxerui::View WithSelectableCardHover(huxerui::View card, const huxerui::ThemeSpec& theme,
-    huxerui::State<bool> hovered, float radius, bool selected, bool fourColor, bool alwaysOutlined = false) {
+    huxerui::State<bool> hovered, float radius, bool selected, const FluxGradientStyle& gradient,
+    bool alwaysOutlined = false) {
     auto indication = ResolveCardIndication(theme, selected);
     const auto hover = *indication.hover;
     indication.hover.reset();
@@ -131,19 +151,32 @@ inline huxerui::View WithSelectableCardHover(huxerui::View card, const huxerui::
     return std::move(card).With(indication, CardHoverOutline{
             *hover.border, huxerui::CornerRadii{radius}, showOutline ? hover.enter : hover.exit, showOutline,
             selected || alwaysOutlined ? std::optional{theme.colors.primary} : std::nullopt,
-            selected && fourColor ? std::optional{CardHoverOutline::Selection{theme.brightness}} : std::nullopt})
+            selected && gradient.enabled
+                ? std::optional{CardHoverOutline::Selection{theme.brightness, true, ResolveGradientPalette(gradient)}}
+                : std::nullopt})
         .On<huxerui::ViewEvents::Hover>([hovered](const huxerui::HoverEvent& event) {
             if (event.type != huxerui::HoverEventType::Move)
                 hovered = event.type == huxerui::HoverEventType::Enter;
         });
 }
 
+inline huxerui::View WithSelectableCardHover(huxerui::View card, const huxerui::ThemeSpec& theme,
+    huxerui::State<bool> hovered, float radius, bool selected, bool fourColor, bool alwaysOutlined = false) {
+    return WithSelectableCardHover(std::move(card), theme, hovered, radius, selected,
+        FluxGradientStyle{fourColor}, alwaysOutlined);
+}
+
+inline huxerui::View WithStaticCardSelectionOutline(huxerui::View card, const huxerui::ThemeSpec& theme,
+    float radius, const FluxGradientStyle& gradient) {
+    const huxerui::Border border{theme.colors.primary, kCardOutlineWidth};
+    if (!gradient.enabled) return std::move(card).With(border);
+    return std::move(card).With(CardHoverOutline{border, huxerui::CornerRadii{radius}, huxerui::SnapSpec{}, false,
+        std::nullopt, CardHoverOutline::Selection{theme.brightness, false, ResolveGradientPalette(gradient)}});
+}
+
 inline huxerui::View WithStaticCardSelectionOutline(huxerui::View card, const huxerui::ThemeSpec& theme,
     float radius, bool fourColor) {
-    const huxerui::Border border{theme.colors.primary, kCardOutlineWidth};
-    if (!fourColor) return std::move(card).With(border);
-    return std::move(card).With(CardHoverOutline{border, huxerui::CornerRadii{radius}, huxerui::SnapSpec{}, false,
-        std::nullopt, CardHoverOutline::Selection{theme.brightness, false}});
+    return WithStaticCardSelectionOutline(std::move(card), theme, radius, FluxGradientStyle{fourColor});
 }
 
 } // namespace clashflux::ui

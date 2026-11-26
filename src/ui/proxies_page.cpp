@@ -435,8 +435,7 @@ struct ProxySyncCache {
     if (!node.isGroup && !currentProbe.testing && (delay > 0 || timeout)) {
         const auto text = delay > 0 ? huxerui::StringVariant{std::to_string(delay)}
                                     : huxerui::StringVariant{Localized("超时")};
-        const auto color = selected ? tile.fg
-            : delay > 0 ? DelayLevelColor(theme, delay, false) : theme.colors.error;
+        const auto color = selected ? tile.fg : DelayLevelColor(theme, delay);
         delayView = huxerui::Text(text)
             .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
             .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color});
@@ -706,6 +705,7 @@ huxerui::View ProxyGroupSectionHeader(const ProxyGroupSection& group,
 [[huxerui::composable]] huxerui::View ProxyGroupOverview(ProxyGroupPtr group,
     std::shared_ptr<ProxyTestModel> tests) {
     const auto& theme = huxerui::UseTheme();
+    const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
     const auto islands = ResolveIslandTheme(theme);
     static_cast<void>(tests->generation.Get());
     auto testing = theme.colors.on_surface_variant;
@@ -721,14 +721,20 @@ huxerui::View ProxyGroupSectionHeader(const ProxyGroupSection& group,
         const auto cached = entry->value.Get();
         const auto probe = !cached.testing && node.urlTestTime > entry->baselineTime.Get()
             ? ProbeState{node.delay, node.delay <= 0, false} : cached;
-        auto color = islands.overlay;
-        if (node.name == group->now) color = theme.colors.primary;
-        else if (probe.testing) color = testing;
-        else if (probe.timeout) color = theme.colors.error;
-        else if (probe.delay > 0) color = DelayLevelColor(theme, probe.delay, false);
+        huxerui::VisualFill dotFill{islands.overlay};
+        if (node.name == group->now) {
+            dotFill = gradient.enabled
+                ? huxerui::VisualFill{MultiColorLinearGradient(
+                      ResolveGradientPalette(gradient), theme.brightness)}
+                : huxerui::VisualFill{theme.colors.primary};
+        } else if (probe.testing) {
+            dotFill = testing;
+        } else if (probe.timeout || probe.delay > 0) {
+            dotFill = DelayLevelColor(theme, probe.timeout ? 0 : probe.delay);
+        }
         dots.push_back(huxerui::Row{}.With(
             huxerui::Frame{.width = 7.0F, .height = 7.0F},
-            huxerui::Background(color), huxerui::CornerRadius(3.5F)));
+            huxerui::Background(std::move(dotFill)), huxerui::CornerRadius(3.5F)));
     }
     return huxerui::Flow(std::move(dots)).With(
         huxerui::Spacing(4.0F),

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -15,6 +16,7 @@ namespace clashflux::ui {
 
 // 卡片悬停、选中和拖放使用同一描边线宽。
 inline constexpr float kCardOutlineWidth = 1.0F;
+inline constexpr std::size_t kMaxThemeMixColors = 4U;
 
 inline constexpr int kRgbChannelMax = 255;
 inline constexpr float kHsbTurnDegrees = 360.0F;
@@ -55,14 +57,30 @@ struct FluxPalette {
     }
 };
 
+struct FluxMultiColorPalette {
+    std::vector<huxerui::Color> lightStops;
+    std::vector<huxerui::Color> darkStops;
+    std::vector<huxerui::Color> primaryStops;
+    std::vector<huxerui::Color> lightWash;
+    std::vector<huxerui::Color> darkWash;
+    huxerui::Color lightBase{};
+    huxerui::Color darkBase{};
+    huxerui::Color primaryBase{};
+    huxerui::Color primaryForeground{};
+    bool operator==(const FluxMultiColorPalette&) const = default;
+};
+
 struct FluxAccent {
     std::string id;
     std::string name;
     huxerui::Color light, dark, onLight, onDark, lightContainer, onLightContainer;
+    std::vector<std::string> mixHexes{};
+    std::optional<FluxMultiColorPalette> multiColor = std::nullopt;
 };
 
 struct FluxGradientStyle {
     bool enabled = false;
+    std::optional<FluxMultiColorPalette> palette = std::nullopt;
     static FluxGradientStyle Default() { return {}; }
     bool operator==(const FluxGradientStyle&) const = default;
 };
@@ -75,10 +93,44 @@ struct HsbColor {
 
 enum class HsbChannel { Hue, Saturation, Brightness };
 
-inline const std::array<FluxAccent, 6> kFluxAccents{{
+inline FluxMultiColorPalette DefaultMultiColorPalette() {
+    using huxerui::Color;
+    return {
+        .lightStops = {Color::Rgba32(0x996314FF), Color::Rgba32(0x197E56FF),
+                       Color::Rgba32(0x2767C4FF), Color::Rgba32(0xC54461FF)},
+        .darkStops = {Color::Rgba32(0xFFD28BFF), Color::Rgba32(0x7ADCAEFF),
+                      Color::Rgba32(0x91BDFFFF), Color::Rgba32(0xFFA0AAFF)},
+        .primaryStops = {Color::Rgb(255, 224, 139), Color::Rgb(137, 221, 178),
+                         Color::Rgb(145, 185, 255), Color::Rgb(255, 154, 146)},
+        .lightWash = {Color::Rgba32(0xFFCB5852), Color::Rgba32(0x62CC9248),
+                      Color::Rgba32(0x6FA2FD52), Color::Rgba32(0xF66D634D)},
+        .darkWash = {Color::Rgba32(0xFFCB5833), Color::Rgba32(0x62CC9233),
+                     Color::Rgba32(0x6FA2FD3D), Color::Rgba32(0xF66D633A)},
+        .lightBase = Color::Rgba32(0x66599BFF),
+        .darkBase = Color::Rgba32(0xBECAF2FF),
+        .primaryBase = Color::Rgb(219, 231, 251),
+        .primaryForeground = Color::Rgb(21, 39, 57),
+    };
+}
+
+inline FluxMultiColorPalette ResolveGradientPalette(const FluxGradientStyle& style) {
+    return style.palette.value_or(DefaultMultiColorPalette());
+}
+
+inline std::vector<huxerui::Point> MultiColorFieldCenters(std::size_t count) {
+    if (count <= 2U) return {{0.0F, 0.5F}, {1.0F, 0.5F}};
+    if (count == 3U) return {{0.0F, 0.55F}, {0.5F, 1.0F}, {1.0F, 0.25F}};
+    return {{0.0F, 0.5F}, {0.5F, 1.0F}, {1.0F, 0.5F}, {0.5F, 0.0F}};
+}
+
+inline const std::array<FluxAccent, 7> kFluxAccents{{
+    {"gemini", "Gemini", huxerui::Color::Rgb(36, 92, 176), huxerui::Color::Rgb(138, 182, 255),
+     huxerui::Color::White(), FluxPalette::abyss(),
+     huxerui::Color::Rgb(241, 237, 243), huxerui::Color::Rgb(32, 78, 147),
+     {"#E5A93C", "#34A853", "#4285F4", "#EA4335"}, DefaultMultiColorPalette()},
     {"blue", "蓝色", huxerui::Color::Rgb(36, 92, 176), huxerui::Color::Rgb(138, 182, 255),
      huxerui::Color::White(), FluxPalette::abyss(),
-     huxerui::Color::Rgb(241, 237, 243), huxerui::Color::Rgb(32, 78, 147)},
+     huxerui::Color::Rgb(220, 238, 255), huxerui::Color::Rgb(16, 73, 103)},
     {"purple", "紫色", huxerui::Color::Rgb(108, 69, 189), huxerui::Color::Rgb(192, 165, 255),
      huxerui::Color::White(), huxerui::Color::Rgb(33, 17, 57),
      huxerui::Color::Rgb(237, 224, 255), huxerui::Color::Rgb(60, 27, 107)},
@@ -214,11 +266,42 @@ inline std::string ThemeColorToHex(huxerui::Color color) {
     return value;
 }
 
+inline std::vector<std::string> ParseThemeColorStops(std::string_view value) {
+    std::vector<std::string> stops;
+    while (!value.empty()) {
+        const auto comma = value.find(',');
+        const auto part = value.substr(0, comma);
+        const auto normalized = NormalizeThemeColor(part);
+        if (!normalized) return {};
+        stops.push_back(*normalized);
+        if (stops.size() > kMaxThemeMixColors) return {};
+        if (comma == std::string_view::npos) break;
+        value.remove_prefix(comma + 1);
+        if (value.empty()) return {};
+    }
+    return stops;
+}
+
+inline std::string JoinThemeColorStops(const std::vector<std::string>& stops) {
+    std::string joined;
+    for (const auto& stop : stops) {
+        if (!joined.empty()) joined += ',';
+        joined += stop;
+    }
+    return joined;
+}
+
+inline std::optional<std::string> NormalizeThemeColorSpec(std::string_view value) {
+    const auto stops = ParseThemeColorStops(value);
+    if (stops.empty()) return std::nullopt;
+    return JoinThemeColorStops(stops);
+}
+
 inline std::vector<std::string> ReadCustomThemeColors(std::string_view saved) {
     std::vector<std::string> colors;
     while (!saved.empty()) {
         const auto end = saved.find('\n');
-        const auto color = NormalizeThemeColor(saved.substr(0, end));
+        const auto color = NormalizeThemeColorSpec(saved.substr(0, end));
         if (color && std::find(colors.begin(), colors.end(), *color) == colors.end()) colors.push_back(*color);
         if (end == std::string_view::npos) break;
         saved.remove_prefix(end + 1);
@@ -266,7 +349,7 @@ inline std::vector<std::string> HidePresetThemeColor(
 
 inline std::vector<std::string> ReplaceCustomThemeColor(
     std::vector<std::string> colors, std::string_view existing, std::string_view replacement) {
-    const auto normalized = NormalizeThemeColor(replacement);
+    const auto normalized = NormalizeThemeColorSpec(replacement);
     if (!normalized) return colors;
     bool replaced = false;
     for (auto& color : colors) {
@@ -303,10 +386,68 @@ inline huxerui::Color MixThemeColor(huxerui::Color color, huxerui::Color target,
             color.blue + (target.blue - color.blue) * weight, 1.0F};
 }
 
+inline huxerui::Color AverageThemeColors(const std::vector<huxerui::Color>& colors) {
+    if (colors.empty()) return {};
+    float r = 0.0F, g = 0.0F, b = 0.0F;
+    for (const auto& c : colors) {
+        r += c.red;
+        g += c.green;
+        b += c.blue;
+    }
+    const float inv = 1.0F / static_cast<float>(colors.size());
+    return {r * inv, g * inv, b * inv, 1.0F};
+}
+
+inline FluxMultiColorPalette BuildCustomMultiColorPalette(const std::vector<huxerui::Color>& rawColors) {
+    FluxMultiColorPalette palette;
+    const std::size_t count = std::min(rawColors.size(), kMaxThemeMixColors);
+    palette.lightStops.reserve(count);
+    palette.darkStops.reserve(count);
+    palette.primaryStops.reserve(count);
+    palette.lightWash.reserve(count);
+    palette.darkWash.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto raw = rawColors[i];
+        auto light = raw;
+        for (int step = 0; step < 24 && ThemeColorLuminance(light) > kThemeAccentLightLuminanceCeiling; ++step)
+            light = MixThemeColor(light, huxerui::Color::Black(), kThemeAccentMixStep);
+        for (int step = 0; step < 12 && ThemeColorLuminance(light) < 0.04F; ++step)
+            light = MixThemeColor(light, huxerui::Color::White(), kThemeAccentMixStep);
+        auto dark = raw;
+        for (int step = 0; step < 24 && ThemeColorLuminance(dark) < kThemeAccentDarkLuminanceFloor; ++step)
+            dark = MixThemeColor(dark, huxerui::Color::White(), kThemeAccentMixStep);
+        for (int step = 0; step < 16 && ThemeColorLuminance(dark) > 0.78F; ++step)
+            dark = MixThemeColor(dark, huxerui::Color::Black(), 0.04F);
+        auto primary = raw;
+        for (int step = 0; step < 24 && ThemeColorLuminance(primary) < 0.58F; ++step)
+            primary = MixThemeColor(primary, huxerui::Color::White(), kThemeAccentMixStep);
+        auto washBase = raw;
+        for (int step = 0; step < 12 && ThemeColorLuminance(washBase) < 0.15F; ++step)
+            washBase = MixThemeColor(washBase, huxerui::Color::White(), 0.08F);
+        auto lightWash = washBase;
+        lightWash.alpha = 0.30F;
+        auto darkWash = washBase;
+        darkWash.alpha = 0.22F;
+        palette.lightStops.push_back(light);
+        palette.darkStops.push_back(dark);
+        palette.primaryStops.push_back(primary);
+        palette.lightWash.push_back(lightWash);
+        palette.darkWash.push_back(darkWash);
+    }
+    palette.lightBase = AverageThemeColors(palette.lightStops);
+    palette.darkBase = AverageThemeColors(palette.darkStops);
+    palette.primaryBase = AverageThemeColors(palette.primaryStops);
+    palette.primaryForeground = huxerui::Color::Rgb(21, 39, 57);
+    return palette;
+}
+
 inline FluxAccent ResolveFluxAccent(std::string_view id) {
     for (const auto& accent : kFluxAccents) if (accent.id == id) return accent;
-    if (id.starts_with('#')) if (const auto hex = NormalizeThemeColor(id)) {
-        const auto base = ThemeColorFromHex(*hex);
+    if (const auto stops = ParseThemeColorStops(id); !stops.empty()) {
+        std::vector<huxerui::Color> rawColors;
+        rawColors.reserve(stops.size());
+        for (const auto& stop : stops) rawColors.push_back(ThemeColorFromHex(stop));
+        const auto base = rawColors.front();
         auto light = base, dark = base;
         // 深浅模式分别调整亮度，保持色相，并保证按钮与控件的可见对比。
         while (ThemeColorLuminance(light) > kThemeAccentLightLuminanceCeiling)
@@ -315,25 +456,44 @@ inline FluxAccent ResolveFluxAccent(std::string_view id) {
             dark = MixThemeColor(dark, huxerui::Color::White(), kThemeAccentMixStep);
         const auto onLight = ThemeColorLuminance(light) > kThemeColorBlackWhiteSplit ?
             huxerui::Color::Black() : huxerui::Color::White();
-        return {*hex, *hex, light, dark, onLight, huxerui::Color::Black(),
-                MixThemeColor(base, huxerui::Color::White(), kThemeAccentLightContainerTint), FluxPalette::abyss()};
+        const std::string spec = JoinThemeColorStops(stops);
+        std::optional<FluxMultiColorPalette> multiColor;
+        if (rawColors.size() >= 2U) multiColor = BuildCustomMultiColorPalette(rawColors);
+        return {spec, spec, light, dark, onLight, huxerui::Color::Black(),
+                MixThemeColor(base, huxerui::Color::White(), kThemeAccentLightContainerTint),
+                FluxPalette::abyss(), stops, std::move(multiColor)};
     }
     return kFluxAccents.front();
 }
 
+inline std::optional<FluxMultiColorPalette> ResolveMultiColorPalette(std::string_view id) {
+    return ResolveFluxAccent(id).multiColor;
+}
+
+inline bool UsesMultiColorAccent(std::string_view id) {
+    return ResolveFluxAccent(id).multiColor.has_value();
+}
+
 inline bool UsesFourColorAccent(std::string_view id) {
-    return ResolveFluxAccent(id).id == kFluxAccents.front().id;
+    return UsesMultiColorAccent(id);
+}
+
+inline FluxGradientStyle ResolveFluxGradientStyle(std::string_view id) {
+    const auto palette = ResolveMultiColorPalette(id);
+    return {palette.has_value(), palette};
 }
 
 inline void ApplyFluxAccent(huxerui::ColorScheme& colors, bool dark, std::string_view id) {
-    const auto& accent = ResolveFluxAccent(id);
+    const auto accent = ResolveFluxAccent(id);
     colors.primary = dark ? accent.dark : accent.light;
     colors.on_primary = dark ? accent.onDark : accent.onLight;
     if (dark) {
         colors.on_primary_container = accent.dark;
-        if (accent.id == kFluxAccents.front().id) {
+        if (accent.multiColor.has_value()) {
             colors.primary_container = huxerui::Color::Rgb(46, 46, 51);
-            colors.on_primary_container = huxerui::Color::Rgb(214, 232, 255);
+            colors.on_primary_container = accent.id == kFluxAccents.front().id
+                ? huxerui::Color::Rgb(214, 232, 255)
+                : MixThemeColor(accent.dark, huxerui::Color::White(), 0.45F);
         }
     } else {
         colors.primary_container = accent.lightContainer;
@@ -341,11 +501,11 @@ inline void ApplyFluxAccent(huxerui::ColorScheme& colors, bool dark, std::string
     }
 }
 
-inline huxerui::ColorScheme FluxDarkColors(std::string_view accent = "blue") {
+inline huxerui::ColorScheme FluxDarkColors(std::string_view accent = "gemini") {
     auto colors = huxerui::MaterialDarkThemeSpec().colors;
     colors.primary = FluxPalette::water();
     colors.on_primary = FluxPalette::abyss();
-    // 外框比内容底色亮，卡片/交互表面再次提亮。
+    // 外框比内容底色亮，卡片/交互表面再次提亮；全主题统一采用参考图灰。
     colors.primary_container = huxerui::Color::Rgb(34, 35, 36);
     colors.on_primary_container = FluxPalette::ice();
     colors.secondary = huxerui::Color::Rgb(185, 185, 185);
@@ -354,35 +514,24 @@ inline huxerui::ColorScheme FluxDarkColors(std::string_view accent = "blue") {
     colors.on_secondary_container = huxerui::Color::Rgb(226, 226, 226);
     colors.tertiary_container = huxerui::Color::Rgb(36, 36, 36);
     colors.on_tertiary_container = huxerui::Color::Rgb(222, 222, 222);
-    colors.background = huxerui::Color::Rgb(26, 27, 28);
-    colors.surface = huxerui::Color::Rgb(22, 23, 24);
-    colors.surface_container_low = huxerui::Color::Rgb(20, 21, 22);
-    colors.surface_container = huxerui::Color::Rgb(30, 31, 32);
-    colors.surface_container_high = huxerui::Color::Rgb(36, 37, 38);
-    colors.surface_container_highest = huxerui::Color::Rgb(42, 43, 44);
-    colors.on_surface = huxerui::Color::Rgb(241, 241, 241);
-    colors.on_surface_variant = huxerui::Color::Rgb(176, 176, 176);
-    colors.outline = huxerui::Color::Rgb(65, 65, 65);
+    colors.background = huxerui::Color::Rgb(28, 28, 31);              // #1C1C1F
+    colors.surface = huxerui::Color::Rgb(24, 24, 26);
+    colors.surface_container_low = huxerui::Color::Rgb(19, 19, 21);  // #131315
+    colors.surface_container = huxerui::Color::Rgb(37, 38, 40);      // #252628
+    colors.surface_container_high = huxerui::Color::Rgb(46, 46, 49);
+    colors.surface_container_highest = huxerui::Color::Rgb(52, 52, 55);
+    colors.on_surface = huxerui::Color::Rgb(238, 239, 243);
+    colors.on_surface_variant = huxerui::Color::Rgb(186, 186, 198);
+    colors.outline = huxerui::Color::Rgb(55, 56, 59);
     colors.inverse_surface = huxerui::Color::Rgb(232, 232, 232);
     colors.inverse_on_surface = huxerui::Color::Rgb(32, 32, 32);
     colors.scrim = huxerui::Color::Rgb(7, 7, 7, 0.66F);
     colors.error = huxerui::Color::Rgb(255, 144, 153);
     ApplyFluxAccent(colors, true, accent);
-    if (UsesFourColorAccent(accent)) {
-        colors.background = huxerui::Color::Rgb(28, 28, 31);              // #1C1C1F
-        colors.surface = huxerui::Color::Rgb(24, 24, 26);
-        colors.surface_container_low = huxerui::Color::Rgb(19, 19, 21);  // #131315
-        colors.surface_container = huxerui::Color::Rgb(37, 38, 40);      // #252628
-        colors.surface_container_high = huxerui::Color::Rgb(46, 46, 49);
-        colors.surface_container_highest = huxerui::Color::Rgb(52, 52, 55);
-        colors.on_surface = huxerui::Color::Rgb(238, 239, 243);
-        colors.on_surface_variant = huxerui::Color::Rgb(186, 186, 198);
-        colors.outline = huxerui::Color::Rgb(55, 56, 59);
-    }
     return colors;
 }
 
-inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "blue") {
+inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "gemini") {
     auto colors = huxerui::MaterialLightThemeSpec().colors;
     colors.primary = FluxPalette::water_deep();
     colors.on_primary = FluxPalette::abyss();
@@ -394,32 +543,21 @@ inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "blue") {
     colors.on_secondary_container = huxerui::Color::Rgb(48, 56, 64);
     colors.tertiary_container = huxerui::Color::Rgb(236, 238, 240);
     colors.on_tertiary_container = huxerui::Color::Rgb(63, 70, 77);
-    // Subtly cool neutral surfaces, shared by every light-theme page.
-    colors.background = huxerui::Color::Rgb(250, 250, 251);            // #FAFAFB
-    colors.surface = huxerui::Color::Rgb(254, 254, 255);               // #FEFEFF
-    colors.surface_container_low = huxerui::Color::Rgb(241, 242, 244); // #F1F2F4
+    // 全主题统一采用参考图灰表面色板。
+    colors.background = huxerui::Color::Rgb(245, 242, 244);            // #F5F2F4
+    colors.surface = huxerui::Color::Rgb(252, 248, 249);               // #FCF8F9
+    colors.surface_container_low = huxerui::Color::Rgb(239, 237, 240); // #EFEDF0
     colors.surface_container = colors.surface;
-    colors.surface_container_high = huxerui::Color::Rgb(248, 249, 251);
+    colors.surface_container_high = colors.background;
     colors.surface_container_highest = colors.surface;
-    colors.on_surface = huxerui::Color::Rgb(36, 38, 41);
-    colors.on_surface_variant = huxerui::Color::Rgb(104, 108, 114);
-    colors.outline = huxerui::Color::Rgb(211, 215, 221);
+    colors.on_surface = huxerui::Color::Rgb(32, 33, 38);
+    colors.on_surface_variant = huxerui::Color::Rgb(92, 96, 106);
+    colors.outline = huxerui::Color::Rgb(220, 215, 221);
     colors.inverse_surface = huxerui::Color::Rgb(38, 40, 44);
     colors.inverse_on_surface = huxerui::Color::Rgb(244, 246, 249);
     colors.scrim = huxerui::Color::Rgb(27, 31, 38, 0.34F);
     colors.error = huxerui::Color::Rgb(180, 35, 50);
     ApplyFluxAccent(colors, false, accent);
-    if (UsesFourColorAccent(accent)) {
-        colors.background = huxerui::Color::Rgb(245, 242, 244);            // #F5F2F4
-        colors.surface = huxerui::Color::Rgb(252, 248, 249);               // #FCF8F9
-        colors.surface_container_low = huxerui::Color::Rgb(239, 237, 240); // #EFEDF0
-        colors.surface_container = colors.surface;
-        colors.surface_container_high = colors.background;
-        colors.surface_container_highest = colors.surface;
-        colors.on_surface = huxerui::Color::Rgb(32, 33, 38);
-        colors.on_surface_variant = huxerui::Color::Rgb(92, 96, 106);
-        colors.outline = huxerui::Color::Rgb(220, 215, 221);
-    }
     return colors;
 }
 
@@ -450,17 +588,77 @@ inline constexpr FourColorForegroundPalette ResolveFourColorForegroundPalette(hu
             Color::Rgba32(0x2767C4FF), Color::Rgba32(0xC54461FF)};
 }
 
-// A single immutable vector fill maps the four color fields into the existing surface bounds.
-inline huxerui::VectorAsset MakeFourColorGradient(
-    huxerui::Color base, const std::array<huxerui::Color, 4>& colors) {
+inline huxerui::LinearGradient MultiColorLinearGradient(
+    const FluxMultiColorPalette& palette, huxerui::ThemeBrightness brightness) {
+    const auto& colors = brightness == huxerui::ThemeBrightness::Dark ? palette.darkStops : palette.lightStops;
+    huxerui::LinearGradient gradient{.start = {0.0F, 0.5F}, .end = {1.0F, 0.5F}};
+    if (colors.empty()) return gradient;
+    if (colors.size() == 1U) {
+        gradient.stops = {{0.0F, colors.front()}, {1.0F, colors.front()}};
+        return gradient;
+    }
+    gradient.stops.reserve(colors.size());
+    const float denom = static_cast<float>(colors.size() - 1U);
+    for (std::size_t i = 0; i < colors.size(); ++i) {
+        gradient.stops.push_back({static_cast<float>(i) / denom, colors[i]});
+    }
+    return gradient;
+}
+
+inline huxerui::LinearGradient FourColorLinearGradient(huxerui::ThemeBrightness brightness) {
+    return MultiColorLinearGradient(DefaultMultiColorPalette(), brightness);
+}
+
+inline huxerui::Path RoundedRectStrokePath(
+    huxerui::Rect bounds, huxerui::CornerRadii corners, float strokeWidth) {
+    if (strokeWidth <= 0.0F || std::min(bounds.width, bounds.height) <= strokeWidth) return {};
+    const float inset = strokeWidth * 0.5F;
+    const auto innerRadius = [inset](float radius) { return std::max(0.0F, radius - inset); };
+    return huxerui::Path::RoundedRect(
+        {bounds.x + inset, bounds.y + inset, bounds.width - strokeWidth, bounds.height - strokeWidth},
+        {innerRadius(corners.top_left), innerRadius(corners.top_right),
+         innerRadius(corners.bottom_right), innerRadius(corners.bottom_left)});
+}
+
+inline void PaintMultiColorStroke(huxerui::PaintContext& paint, huxerui::Rect bounds,
+    huxerui::CornerRadii corners, const FluxMultiColorPalette& palette,
+    huxerui::ThemeBrightness brightness, float strokeWidth = kCardOutlineWidth) {
+    const auto path = RoundedRectStrokePath(bounds, corners, strokeWidth);
+    if (path.IsEmpty()) return;
+    const bool dark = brightness == huxerui::ThemeBrightness::Dark;
+    const auto& fields = dark ? palette.darkStops : palette.lightStops;
+    const auto base = dark ? palette.darkBase : palette.lightBase;
+    const huxerui::StrokeStyle stroke{.width = strokeWidth};
+    paint.StrokePath(path, base, stroke);
+    const auto centers = MultiColorFieldCenters(fields.size());
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+        auto transparent = fields[index];
+        transparent.alpha = 0.0F;
+        paint.StrokePath(path, huxerui::RadialGradient{
+            .center = centers[index],
+            .radius = {0.65F, 0.93F},
+            .stops = {{0.0F, fields[index]}, {1.0F, transparent}},
+        }, bounds, stroke);
+    }
+}
+
+inline void PaintFourColorStroke(huxerui::PaintContext& paint, huxerui::Rect bounds,
+    huxerui::CornerRadii corners, huxerui::ThemeBrightness brightness, float strokeWidth = kCardOutlineWidth) {
+    PaintMultiColorStroke(paint, bounds, corners, DefaultMultiColorPalette(), brightness, strokeWidth);
+}
+
+// A single immutable vector fill maps the multi-color fields into the existing surface bounds.
+inline huxerui::VectorAsset MakeMultiColorGradient(
+    huxerui::Color base, const std::vector<huxerui::Color>& colors) {
     return huxerui::VectorAsset::Create(huxerui::Size{1.0F, 1.0F}, [&](huxerui::VectorBuilder& builder) {
         const auto bounds = huxerui::Path::RoundedRect({0.0F, 0.0F, 1.0F, 1.0F}, {});
         builder.FillPath(bounds, base);
+        const auto centers = MultiColorFieldCenters(colors.size());
         for (std::size_t index = 0; index < colors.size(); ++index) {
             auto transparent = colors[index];
             transparent.alpha = 0.0F;
             builder.FillPath(bounds, huxerui::RadialGradient{
-                .center = kFourColorFieldCenters[index],
+                .center = centers[index],
                 .radius = {0.65F, 0.93F},
                 .stops = {{0.0F, colors[index]}, {1.0F, transparent}},
             });
@@ -468,41 +666,90 @@ inline huxerui::VectorAsset MakeFourColorGradient(
     });
 }
 
-inline huxerui::VectorAsset MakeFourColorWash(huxerui::Color base, bool dark) {
-    const auto colors = dark ? std::array{
-        huxerui::Color::Rgba32(0xFFCB5833), huxerui::Color::Rgba32(0x62CC9233),
-        huxerui::Color::Rgba32(0x6FA2FD3D), huxerui::Color::Rgba32(0xF66D633A),
-    } : std::array{
-        huxerui::Color::Rgba32(0xFFCB5852), huxerui::Color::Rgba32(0x62CC9248),
-        huxerui::Color::Rgba32(0x6FA2FD52), huxerui::Color::Rgba32(0xF66D634D),
+inline huxerui::VectorAsset MakeFourColorGradient(
+    huxerui::Color base, const std::array<huxerui::Color, 4>& colors) {
+    return MakeMultiColorGradient(base, {colors.begin(), colors.end()});
+}
+
+inline huxerui::VectorAsset MultiColorSelectionGradient(
+    const FluxMultiColorPalette& palette, bool dark) {
+    struct CacheEntry {
+        bool dark = false;
+        FluxMultiColorPalette palette;
+        huxerui::VectorAsset asset;
     };
-    return MakeFourColorGradient(base, colors);
+    static std::mutex cacheMutex;
+    static std::vector<CacheEntry> cache;
+    {
+        std::lock_guard lock(cacheMutex);
+        for (const auto& item : cache) {
+            if (item.dark == dark && item.palette == palette) return item.asset;
+        }
+    }
+    const auto base = dark ? huxerui::Color::Rgb(46, 46, 51)
+                           : huxerui::Color::Rgb(241, 237, 243);
+    auto asset = MakeMultiColorGradient(base, dark ? palette.darkWash : palette.lightWash);
+    {
+        std::lock_guard lock(cacheMutex);
+        if (cache.size() >= 16U) cache.erase(cache.begin(), cache.begin() + 4U);
+        cache.push_back({dark, palette, asset});
+    }
+    return asset;
 }
 
 inline const huxerui::VectorAsset& FourColorSelectionGradient(bool dark) {
     if (dark) {
-        static const auto gradient = MakeFourColorWash(FluxDarkColors().primary_container, true);
+        static const auto gradient = MultiColorSelectionGradient(DefaultMultiColorPalette(), true);
         return gradient;
     }
-    static const auto gradient = MakeFourColorWash(FluxLightColors().primary_container, false);
+    static const auto gradient = MultiColorSelectionGradient(DefaultMultiColorPalette(), false);
     return gradient;
+}
+
+inline huxerui::VectorAsset MultiColorPrimaryGradient(const FluxMultiColorPalette& palette) {
+    struct CacheEntry {
+        FluxMultiColorPalette palette;
+        huxerui::VectorAsset asset;
+    };
+    static std::mutex cacheMutex;
+    static std::vector<CacheEntry> cache;
+    {
+        std::lock_guard lock(cacheMutex);
+        for (const auto& item : cache) {
+            if (item.palette == palette) return item.asset;
+        }
+    }
+    auto asset = MakeMultiColorGradient(palette.primaryBase, palette.primaryStops);
+    {
+        std::lock_guard lock(cacheMutex);
+        if (cache.size() >= 16U) cache.erase(cache.begin(), cache.begin() + 4U);
+        cache.push_back({palette, asset});
+    }
+    return asset;
 }
 
 inline const huxerui::VectorAsset& FourColorPrimaryGradient() {
-    static const auto gradient = MakeFourColorGradient(huxerui::Color::Rgb(219, 231, 251), {
-        huxerui::Color::Rgb(255, 224, 139), huxerui::Color::Rgb(137, 221, 178),
-        huxerui::Color::Rgb(145, 185, 255), huxerui::Color::Rgb(255, 154, 146),
-    });
+    static const auto gradient = MultiColorPrimaryGradient(DefaultMultiColorPalette());
     return gradient;
 }
 
-inline huxerui::VisualFill ResolveFluxPrimaryFill(const huxerui::ThemeSpec& theme, bool fourColor) {
-    if (fourColor) return FourColorPrimaryGradient();
+inline huxerui::VisualFill ResolveFluxPrimaryFill(
+    const huxerui::ThemeSpec& theme, const FluxGradientStyle& gradient) {
+    if (gradient.enabled) return MultiColorPrimaryGradient(ResolveGradientPalette(gradient));
     return theme.colors.primary;
 }
 
+inline huxerui::VisualFill ResolveFluxPrimaryFill(const huxerui::ThemeSpec& theme, bool fourColor) {
+    return ResolveFluxPrimaryFill(theme, FluxGradientStyle{fourColor});
+}
+
+inline huxerui::Color ResolveFluxPrimaryForeground(
+    const huxerui::ThemeSpec& theme, const FluxGradientStyle& gradient) {
+    return gradient.enabled ? ResolveGradientPalette(gradient).primaryForeground : theme.colors.on_primary;
+}
+
 inline huxerui::Color ResolveFluxPrimaryForeground(const huxerui::ThemeSpec& theme, bool fourColor) {
-    return fourColor ? huxerui::Color::Rgb(21, 39, 57) : theme.colors.on_primary;
+    return ResolveFluxPrimaryForeground(theme, FluxGradientStyle{fourColor});
 }
 
 // 流量方向色独立于警告语义色。
@@ -511,20 +758,16 @@ struct TrafficColors {
     huxerui::Color download;
 };
 
-inline TrafficColors ResolveTrafficColors(const huxerui::ThemeSpec& theme, bool fourColor = false) {
-    if (fourColor) {
-        return IsDarkTheme(theme)
-            ? TrafficColors{huxerui::Color::Rgb(242, 180, 107), huxerui::Color::Rgb(100, 195, 255)}
-            : TrafficColors{huxerui::Color::Rgb(156, 86, 7), huxerui::Color::Rgb(8, 111, 166)};
-    }
-    return IsDarkTheme(theme)
-        ? TrafficColors{huxerui::Color::Rgb(255, 184, 77), huxerui::Color::Rgb(63, 184, 255)}
-        : TrafficColors{huxerui::Color::Rgb(196, 122, 0), huxerui::Color::Rgb(20, 139, 220)};
-}
-
 inline TrafficColors FourColorTrafficTotalColors(const huxerui::ThemeSpec& theme) {
     const auto palette = ResolveFourColorForegroundPalette(theme.brightness);
     return {.upload = palette.gold, .download = palette.blue};
+}
+
+inline TrafficColors ResolveTrafficColors(const huxerui::ThemeSpec& theme, bool fourColor = false) {
+    if (fourColor) return FourColorTrafficTotalColors(theme);
+    return IsDarkTheme(theme)
+        ? TrafficColors{huxerui::Color::Rgb(255, 184, 77), huxerui::Color::Rgb(63, 184, 255)}
+        : TrafficColors{huxerui::Color::Rgb(196, 122, 0), huxerui::Color::Rgb(20, 139, 220)};
 }
 
 // MD3 feedback is rebuilt after applying the accent palette. These values own
@@ -581,13 +824,13 @@ inline void ApplyFluxInteractionTheme(huxerui::ThemeSpec& theme) {
 
 // 覆盖 ButtonStyle 时必须同时提供禁用态，不能带回 Default() 的深色文字。
 // 使用中性表面区分不可操作状态，同时保持标签在深浅主题下可读。
-inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme, bool primary = false,
-                                                 bool fourColor = false) {
+inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme, bool primary,
+                                                 const FluxGradientStyle& gradient) {
     huxerui::ButtonStyle style;
     style.corner_radii = huxerui::CornerRadii{theme.shapes.small};
-    style.background = primary ? ResolveFluxPrimaryFill(theme, fourColor)
+    style.background = primary ? ResolveFluxPrimaryFill(theme, gradient)
                                : huxerui::VisualFill{theme.colors.secondary_container};
-    const auto foreground = primary ? ResolveFluxPrimaryForeground(theme, fourColor)
+    const auto foreground = primary ? ResolveFluxPrimaryForeground(theme, gradient)
                                     : theme.colors.on_secondary_container;
     style.label_style = {huxerui::Font::System(theme.typography.label_large),
                          foreground};
@@ -598,6 +841,11 @@ inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& the
     style.disabled_label = theme.colors.on_surface;
     style.disabled_label.alpha *= 0.62F;
     return style;
+}
+
+inline huxerui::ButtonStyle ResolveFluxButtonStyle(const huxerui::ThemeSpec& theme, bool primary = false,
+                                                 bool fourColor = false) {
+    return ResolveFluxButtonStyle(theme, primary, FluxGradientStyle{fourColor});
 }
 
 inline huxerui::ProgressBarStyle ResolveFluxProgressBarStyle(const huxerui::ThemeSpec& theme) {

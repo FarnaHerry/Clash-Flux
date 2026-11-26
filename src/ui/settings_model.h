@@ -40,7 +40,7 @@ struct SettingsView {
     // 据此覆盖用户可见状态（例如不要用默认布局替换会话中的布局）。
     bool ready = false;
     int themeMode = 1;             // ui.theme_mode: 0 系统 / 1 深色 / 2 浅色
-    std::string themeColor = "blue"; // ui.theme_color: kFluxAccents 的稳定 ID
+    std::string themeColor = "gemini"; // ui.theme_color: kFluxAccents 的稳定 ID
     std::string customThemeColors;  // ui.custom_theme_colors: 换行分隔的 #RRGGBB
     std::string hiddenThemeColors;  // ui.hidden_theme_colors: 换行分隔的隐藏预设 ID
     bool proxyGroupedView = true;

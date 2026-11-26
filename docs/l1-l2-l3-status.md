@@ -1,5 +1,19 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-26 通用 1–4 色混合主题与全主题参考图灰
+
+- 基于 `ee308d2`（`v0.3.133`，Android `versionCode 210`）与 HuxerUI `b581978c`。将 Gemini 四色主题通用化为数据驱动的 1–4 色混合引擎，拆出独立默认预设 ID `gemini`（展示名 `Gemini`）并恢复单色 `blue`（`蓝色`）预设，全路径默认主题色同步切换为 `gemini`；全主题统一参考图灰表面色板；添加/编辑颜色支持 1–4 色混合管理；一级导航图标改由 `navigation_gradient_icons.h` 运行期 `VectorAsset` 生成（移除 16 份静态渐变 SVG 与生成脚本）；延迟色阶保持固定 Gemini 四色。
+- Linux `cmake --build build --parallel`、`./run.sh --version`（`Clash-Flux v0.3.133（sing-box 客户端）`）、`git diff --check`、`./build/test_page_transition --accent-roles` 与 `ctest --test-dir build --output-on-failure --no-tests=error -j 4 -L clashflux-required`（38/38，`125.50s`）全部通过；Android arm64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3`（包含 `:app:testAppUpdatePolicy`、`:app:testProfileHttpPolicy`、`:app:testRuntimeModeReconciler`、`:app:testRuntimeStartPolicy`、`:app:testVpnUptime`）构建通过。Linux 原生窗口逐页/编辑页视觉验收、Release 签名 APK 校验、Android 真机及 Windows/macOS 原生显示与安装包构建待 CI / 实机完成。
+
+## 2026-11-26 Gemini 四色主题收口与其余强调组件补齐
+
+- 基于 `ee308d2` 与 HuxerUI `b581978c`。在延迟色阶之上，将默认预设文案更新为「默认」（兼容 ID `blue`）、收口流量圆环与速率曲线四色常量、使网站测试失败/超时与 `DelayLevelColor` 对齐，并将四色渐变/描边接入外观预览条、分区标签指示线、分段选择器（新建类型与 SSH 认证）、首页代理模式选项、顶部搜索聚焦、订阅拖拽落点/文件拖入悬停/首页选择器展开浮层边框、代理分组折叠选中点与运行诊断不确定进度条；小尺寸原生表单控件与语义状态色保持单色。
+- Linux `cmake --build build --target clash-flux test_page_transition --parallel`、`./run.sh --version`（`Clash-Flux v0.3.132`）、`./build/test_page_transition --accent-roles`、`./build/test_page_transition --profile-interval` 与 `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`（2/2，`page_transition` 115.07s、`ui_resources` 0.51s）均通过；`git diff --check` 无告警。Linux 原生窗口逐页视觉验收、Android 构建与真机及 Windows/macOS 原生显示未实测。
+
+## 2026-11-26 Gemini 延迟色阶
+
+- 基于 `ee308d2` 与 HuxerUI `b581978c`。共享延迟分级采用绿、蓝、琥珀黄、红，测试核对深浅主题的 299/300、599/600、999/1000ms 边界和超时色。Linux 主目标构建、版本检查、`git diff --check`、`--accent-roles`、`page_transition` 与 `ui_resources` 通过。原生测速显示和移动端未实测。
+
 ## 2026-11-26 默认主题配额条四色渐变
 
 - 基于 `42511ace` 加工作区及 HuxerUI `b581978c`。首页、订阅卡片的配额填充复用默认主按钮的 Gemini 四色渐变，保留原生进度条的轨道与比例语义。Linux 原生夹具核对深浅半格、空条、满格和紫色纯色填充，另在无窗口夹具检查 25% → 100% → 0% 更新与布局一致。

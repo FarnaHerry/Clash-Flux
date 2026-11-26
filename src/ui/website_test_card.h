@@ -46,7 +46,7 @@ inline huxerui::View WebsiteTestCard(WebsiteTestSite site, std::function<void()>
             accessibleValue = status;
             hint = result.error.empty() ? status : huxerui::StringVariant{result.error};
             indicator = huxerui::Text(status)
-                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), theme.colors.error});
+                .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), DelayLevelColor(theme, 0)});
         } else if (result.latencyMs) {
             hint = huxerui::StringVariant{std::to_string(*result.latencyMs) + " ms"};
             accessibleValue = hint;

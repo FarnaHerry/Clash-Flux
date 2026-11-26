@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "app_resources.h"
+#include "card_hover_outline.h"
 #include "country_flag.h"
 #include "proxies_model.h"
 #include "search_text.h"
@@ -363,7 +364,9 @@ inline huxerui::View HomeProxyPanel(
             .With(huxerui::Frame{.height = listHeight}, huxerui::Focusable(true),
                   huxerui::Semantics{.role = huxerui::SemanticRole::List,
                       .collection = huxerui::SemanticCollection{.item_count = matches.size()}});
-        const bool reduced = huxerui::UseTheme().motion.reduced_motion;
+        const auto& theme = huxerui::UseTheme();
+        const bool reduced = theme.motion.reduced_motion;
+        const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
         const auto suggestions = huxerui::Scope([list, reduced, opensUp] {
             auto revealed = huxerui::UseState(reduced);
             huxerui::Lifecycle([revealed] {
@@ -384,7 +387,9 @@ inline huxerui::View HomeProxyPanel(
             .LayoutValue<HomeProxyOpensUp>(opensUp)
             .With(huxerui::Frame{.width = anchor.width},
                huxerui::Background(listStyle.popup_background),
-               huxerui::CornerRadius(outline.corner_radii), huxerui::Border(outline.focused_border, borderWidth),
+               huxerui::CornerRadius(outline.corner_radii),
+               FourColorOverlayOutline{true, gradient.enabled, theme.brightness, outline.focused_border,
+                   outline.corner_radii, borderWidth, gradient.palette},
                huxerui::ClipChildren())
             .On<huxerui::ViewEvents::KeyIntercept>([edit, active, close, select, scroll,
                                                    matches = std::move(matches)](const huxerui::KeyEvent& key) {

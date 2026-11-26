@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -87,6 +88,7 @@ struct QuotaGradientFill {
     class Extension;
     float fraction;
     float cornerRadius;
+    FluxMultiColorPalette palette = DefaultMultiColorPalette();
     bool operator==(const QuotaGradientFill&) const = default;
 };
 
@@ -105,7 +107,7 @@ public:
         if (bounds.IsEmpty()) return;
         const float radius = std::clamp(fill_.cornerRadius, 0.0F, std::min(bounds.width, bounds.height) * 0.5F);
         paint.PushClip(bounds, huxerui::CornerRadii{radius});
-        paint.DrawImage(FourColorPrimaryGradient(), bounds);
+        paint.DrawImage(MultiColorPrimaryGradient(fill_.palette), bounds);
         paint.PopClip();
     }
 
@@ -113,19 +115,118 @@ private:
     QuotaGradientFill fill_;
 };
 
+inline float SegmentedProgressBezierCoord(float time, float first, float second) {
+    const float inv = 1.0F - time;
+    return 3.0F * inv * inv * time * first + 3.0F * inv * time * time * second + time * time * time;
+}
+
+inline float SegmentedProgressPosition(float phase, float delay, float duration) {
+    if (phase <= delay) return 0.0F;
+    if (phase >= delay + duration) return 1.0F;
+    const float target = std::clamp((phase - delay) / duration, 0.0F, 1.0F);
+    float lower = 0.0F;
+    float upper = 1.0F;
+    for (int i = 0; i < 16; ++i) {
+        const float mid = (lower + upper) * 0.5F;
+        if (SegmentedProgressBezierCoord(mid, 0.3F, 0.8F) < target) lower = mid;
+        else upper = mid;
+    }
+    return SegmentedProgressBezierCoord((lower + upper) * 0.5F, 0.0F, 0.15F);
+}
+
+struct IndeterminateGradientFill {
+    class Extension;
+    float cornerRadius = 0.0F;
+    double duration = 0.0;
+    FluxMultiColorPalette palette = DefaultMultiColorPalette();
+    bool operator==(const IndeterminateGradientFill&) const = default;
+};
+
+class IndeterminateGradientFill::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const IndeterminateGradientFill& spec)
+        : spec_(spec), phase_(Animated(spec, false) ? 0.0F : 0.5F) {}
+
+    void Update(huxerui::ViewNode&, const IndeterminateGradientFill& spec) {
+        if (spec_ == spec) return;
+        spec_ = spec;
+        if (!Animated(spec_, false)) phase_ = 0.5F;
+        InvalidatePaint(PaintInvalidation::Foreground);
+    }
+
+    FrameResult OnFrame(huxerui::ViewNode&, const huxerui::FrameInfo& frame) override {
+        if (!Animated(spec_, frame.reduced_motion)) {
+            if (phase_ != 0.5F) {
+                phase_ = 0.5F;
+                InvalidatePaint(PaintInvalidation::Foreground);
+            }
+            return {};
+        }
+        phase_ += static_cast<float>(frame.delta_time / spec_.duration);
+        phase_ -= std::floor(phase_);
+        InvalidatePaint(PaintInvalidation::Foreground);
+        return {.needs_frame = true};
+    }
+
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        const auto frame = node.Bounds();
+        if (frame.IsEmpty()) return;
+        constexpr float kCycle = 1750.0F;
+        const float firstHead = SegmentedProgressPosition(phase_, 0.0F, 1000.0F / kCycle);
+        const float firstTail = SegmentedProgressPosition(phase_, 250.0F / kCycle, 1000.0F / kCycle);
+        const float secondHead = SegmentedProgressPosition(phase_, 650.0F / kCycle, 850.0F / kCycle);
+        const float secondTail = SegmentedProgressPosition(phase_, 900.0F / kCycle, 850.0F / kCycle);
+        const float trackRadius = std::clamp(spec_.cornerRadius, 0.0F, frame.height * 0.5F);
+        const auto drawSegment = [&](float start, float end) {
+            start = std::clamp(start, 0.0F, 1.0F);
+            end = std::clamp(end, 0.0F, 1.0F);
+            if (end <= start) return;
+            const float x = frame.x + frame.width * start;
+            const float width = frame.width * (end - start);
+            const float radius = std::min(trackRadius, width * 0.5F);
+            paint.PushClip({x, frame.y, width, frame.height}, huxerui::CornerRadii{radius});
+            paint.DrawImage(MultiColorPrimaryGradient(spec_.palette), frame);
+            paint.PopClip();
+        };
+        drawSegment(firstTail, firstHead);
+        drawSegment(secondTail, secondHead);
+    }
+
+private:
+    static bool Animated(const IndeterminateGradientFill& spec, bool reducedMotion) noexcept {
+        return !reducedMotion && std::isfinite(spec.duration) && spec.duration > 0.0;
+    }
+
+    IndeterminateGradientFill spec_;
+    float phase_ = 0.0F;
+};
+
 } // namespace detail
+
+inline huxerui::View FluxIndeterminateProgressBar() {
+    return huxerui::Scope([] {
+        const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
+        if (!gradient.enabled) return huxerui::View{huxerui::ProgressBar{}};
+        auto style = huxerui::UseEnvironment<huxerui::ProgressBarStyle>();
+        style.indicator_color = huxerui::Color::Transparent();
+        return huxerui::View{huxerui::ProvideEnvironment(style, huxerui::ProgressBar{}
+            .With(detail::IndeterminateGradientFill{
+                style.corner_radius, style.animation_duration, ResolveGradientPalette(gradient)}))};
+    });
+}
 
 inline huxerui::View ProfileQuotaBar(float fraction) {
     return huxerui::Scope([fraction] {
-        const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+        const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
         auto style = huxerui::UseEnvironment<huxerui::ProgressBarStyle>();
         style.height = kProfileQuotaBarHeight;
-        if (fourColor) {
+        if (gradient.enabled) {
             // Keep native measurement, track and semantics. Paint the determinate segment with the shared vector.
             style.indicator_color = huxerui::Color::Transparent();
             const float progress = fraction > 0.0F ? std::min(fraction, 1.0F) : 0.0F;
             return huxerui::ProvideEnvironment(style, huxerui::ProgressBar(progress)
-                .With(detail::QuotaGradientFill{progress, style.corner_radius}));
+                .With(detail::QuotaGradientFill{
+                    progress, style.corner_radius, ResolveGradientPalette(gradient)}));
         }
         return huxerui::ProvideEnvironment(style, huxerui::ProgressBar(fraction));
     });

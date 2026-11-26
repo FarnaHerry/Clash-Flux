@@ -19,7 +19,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
     std::function<void()> on_click, SelectableTileInteraction interaction, SelectableTileStyle style,
     float corner_radius) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
-    const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+    const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
     const auto hovered = huxerui::UseState(false);
     const SelectableTileColors colors =
         ResolveSelectableTileColors(theme, selected);
@@ -42,13 +42,14 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                   huxerui::Focusable(interactive),
                   huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
     if (!interactive && (selected || dragPreview)) {
-        tile = WithStaticCardSelectionOutline(std::move(tile), theme, corner_radius, selected && fourColor);
+        tile = WithStaticCardSelectionOutline(std::move(tile), theme, corner_radius,
+            selected ? gradient : FluxGradientStyle{});
     }
     if (dragPreview) {
         tile = std::move(tile).With(ResolveFluxShadows(theme).profile_drag_preview);
     }
     if (interactive) {
-        tile = WithSelectableCardHover(std::move(tile), theme, hovered, corner_radius, selected, fourColor, dragPreview)
+        tile = WithSelectableCardHover(std::move(tile), theme, hovered, corner_radius, selected, gradient, dragPreview)
             .OnClick(std::move(on_click));
     }
     return tile;

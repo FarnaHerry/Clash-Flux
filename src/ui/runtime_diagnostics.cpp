@@ -2,6 +2,7 @@
 #include "runtime_diagnostics.h"
 #include "ui.h"
 #include "page_layout.h"
+#include "profile_card_layout.h"
 #include "text_document.h"
 
 namespace clashflux::ui {
@@ -22,7 +23,7 @@ namespace clashflux::ui {
     huxerui::View reportArea;
     if (busy) {
         reportArea = huxerui::Column {
-            huxerui::ProgressBar{},
+            FluxIndeterminateProgressBar(),
             huxerui::Text(Localized("正在收集诊断证据…")),
         }.With(huxerui::Spacing(12.0F), huxerui::Padding(huxerui::EdgeInsets::Symmetric(0.0F, 8.0F)),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

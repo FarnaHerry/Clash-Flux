@@ -151,7 +151,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             });
         if (firstVisiblePreset != kFluxAccents.end()) selectedColor = firstVisiblePreset->id;
         else if (!remaining.empty()) selectedColor = remaining.front();
-        else selectedColor = "blue";
+        else selectedColor = std::string(kFluxAccents.front().id);
     }
     if (removeColor) store::coreStore().setSetting("ui.custom_theme_colors", saved);
     if (hideColor) store::coreStore().setSetting("ui.hidden_theme_colors", savedHidden);
@@ -168,14 +168,97 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     std::string initialHex, std::optional<std::string> editingId, bool fullPage) {
     const auto& theme = huxerui::UseTheme();
     const bool editing = editingId.has_value();
-    auto input = huxerui::UseState(huxerui::TextEditingValue{initialHex});
-    auto hsb = huxerui::UseState(ThemeColorToHsb(ThemeColorFromHex(initialHex)));
-    const auto close = UseEditorClose([input, initialHex] {
-        return NormalizeThemeColor(input.Get().text) != NormalizeThemeColor(initialHex);
+    auto initialStops = ParseThemeColorStops(initialHex);
+    if (initialStops.empty()) initialStops.push_back(ThemeColorToHex(FluxPalette::water()));
+    const std::string initialSpec = JoinThemeColorStops(initialStops);
+    auto stops = huxerui::UseState(initialStops);
+    auto activeIndex = huxerui::UseState<std::size_t>(0);
+    auto input = huxerui::UseState(huxerui::TextEditingValue{initialStops.front()});
+    auto hsb = huxerui::UseState(ThemeColorToHsb(ThemeColorFromHex(initialStops.front())));
+    const auto close = UseEditorClose([stops, activeIndex, input, initialSpec] {
+        auto currentStops = stops.Get();
+        if (currentStops.empty()) return false;
+        const std::size_t index = std::min(activeIndex.Get(), currentStops.size() - 1U);
+        const auto hex = NormalizeThemeColor(input.Get().text);
+        if (!hex) return true;
+        currentStops[index] = *hex;
+        return JoinThemeColorStops(currentStops) != initialSpec;
     }, [] { return false; }, onClose);
+    auto currentStops = stops.Get();
+    if (currentStops.empty()) currentStops = initialStops;
+    const std::size_t selectedIndex = std::min(activeIndex.Get(), currentStops.size() - 1U);
     const auto hex = NormalizeThemeColor(input.Get().text);
     const HsbColor currentHsb = hsb.Get();
     const auto preview = hex ? ThemeColorFromHex(*hex) : ThemeColorFromHsb(currentHsb);
+    auto effectiveStops = currentStops;
+    if (hex) effectiveStops[selectedIndex] = *hex;
+    std::vector<huxerui::Color> previewColors;
+    previewColors.reserve(effectiveStops.size());
+    for (std::size_t i = 0; i < effectiveStops.size(); ++i) {
+        previewColors.push_back(i == selectedIndex ? preview : ThemeColorFromHex(effectiveStops[i]));
+    }
+    const huxerui::VisualFill previewFill = previewColors.size() >= 2U
+        ? huxerui::VisualFill{MakeMultiColorGradient(AverageThemeColors(previewColors), previewColors)}
+        : huxerui::VisualFill{preview};
+    const auto selectStop = [stops, activeIndex, input, hsb](
+                                std::size_t nextIndex, std::vector<std::string> nextStops) {
+        nextIndex = std::min(nextIndex, nextStops.size() - 1U);
+        const std::string& nextHex = nextStops[nextIndex];
+        stops = std::move(nextStops);
+        activeIndex = nextIndex;
+        input = huxerui::TextEditingValue{nextHex};
+        hsb = ThemeColorToHsb(ThemeColorFromHex(nextHex));
+    };
+    const auto updateActiveStop = [stops, selectedIndex, currentStops](const std::string& nextHex) {
+        auto next = currentStops;
+        next[selectedIndex] = nextHex;
+        stops = std::move(next);
+    };
+    std::vector<huxerui::View> mixSwatches;
+    for (std::size_t i = 0; i < effectiveStops.size(); ++i) {
+        const bool current = i == selectedIndex;
+        const auto swatchColor = previewColors[i];
+        mixSwatches.push_back(
+            huxerui::Row {}
+                .With(huxerui::Frame{.width = 32.0F, .height = 28.0F},
+                      huxerui::Background(swatchColor),
+                      huxerui::CornerRadius(theme.shapes.small),
+                      huxerui::Border(current ? theme.colors.on_surface : theme.colors.outline,
+                                      current ? 2.0F : 1.0F),
+                      huxerui::Focusable(true),
+                      huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                         .label = LocalizedFormat("混合色 {}", i + 1),
+                                         .selected = current})
+                .OnClick([selectStop, i, effectiveStops] { selectStop(i, effectiveStops); })
+                .Key("theme-mix-stop-" + std::to_string(i)));
+    }
+    if (effectiveStops.size() < kMaxThemeMixColors) {
+        mixSwatches.push_back(
+            huxerui::IconButton(app::images::add, Localized("添加混合颜色"))
+                .OnClick([selectStop, effectiveStops, currentHsb] {
+                    HsbColor nextHsb = currentHsb;
+                    nextHsb.hue = std::fmod(nextHsb.hue + 90.0F, kHsbTurnDegrees);
+                    nextHsb.saturation = std::max(nextHsb.saturation, 0.55F);
+                    nextHsb.brightness = std::max(nextHsb.brightness, 0.72F);
+                    auto nextStops = effectiveStops;
+                    nextStops.push_back(ThemeColorToHex(ThemeColorFromHsb(nextHsb)));
+                    selectStop(nextStops.size() - 1U, std::move(nextStops));
+                })
+                .With(huxerui::Tooltip(Localized("添加混合颜色")))
+                .Key("theme-mix-add"));
+    }
+    if (effectiveStops.size() > 1U) {
+        mixSwatches.push_back(
+            huxerui::IconButton(app::images::close, Localized("移除当前颜色"))
+                .OnClick([selectStop, effectiveStops, selectedIndex] {
+                    auto nextStops = effectiveStops;
+                    nextStops.erase(nextStops.begin() + static_cast<std::ptrdiff_t>(selectedIndex));
+                    selectStop(selectedIndex >= nextStops.size() ? nextStops.size() - 1U : selectedIndex,
+                               std::move(nextStops));
+                })
+                .With(huxerui::Tooltip(Localized("移除当前颜色")))
+                .Key("theme-mix-remove"));
+    }
     std::vector<huxerui::View> sliders;
     const std::array<float, 3> channels{
         currentHsb.hue,
@@ -194,10 +277,12 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
             HsbGradientSliderTrack(HsbChannelGradient(currentHsb, channel), sliderStyle),
             huxerui::ProvideEnvironment(sliderStyle,
                 huxerui::Slider(std::round(channels[index])).Range(0.0F, maximums[index]).Step(1.0F)
-                    .OnChanged([input, hsb, channel](float value) {
+                    .OnChanged([input, hsb, channel, updateActiveStop](float value) {
                         const HsbColor changed = UpdateHsbChannel(hsb.Get(), channel, value);
                         hsb = changed;
-                        input = huxerui::TextEditingValue{ThemeColorToHex(ThemeColorFromHsb(changed))};
+                        const std::string nextHex = ThemeColorToHex(ThemeColorFromHsb(changed));
+                        input = huxerui::TextEditingValue{nextHex};
+                        updateActiveStop(nextHex);
                     })),
           }.With(huxerui::Grow(1.0F), huxerui::Align(huxerui::HorizontalAlignment::Stretch,
                                                     huxerui::VerticalAlignment::Center)),
@@ -206,17 +291,17 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
               .With(huxerui::Frame{.width = theme.spacing.extra_large}),
         }.With(huxerui::Spacing(theme.spacing.small), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
     }
-    const auto save = [model, input, onClose, editingId] {
-        const auto color = NormalizeThemeColor(input.Get().text);
-        if (!color || !model->view.Get().ready) return;
+    const auto currentSpec = hex ? NormalizeThemeColorSpec(JoinThemeColorStops(effectiveStops)) : std::nullopt;
+    const auto save = [model, currentSpec, onClose, editingId] {
+        if (!currentSpec || !model->view.Get().ready) return;
         const SettingsView current = model->view.Get();
         auto colors = ReadCustomThemeColors(current.customThemeColors);
         auto hiddenColors = ReadHiddenThemeColors(current.hiddenThemeColors);
         if (editingId) {
-            colors = ReplaceCustomThemeColor(std::move(colors), *editingId, *color);
+            colors = ReplaceCustomThemeColor(std::move(colors), *editingId, *currentSpec);
             hiddenColors = HidePresetThemeColor(std::move(hiddenColors), *editingId);
-        } else if (std::find(colors.begin(), colors.end(), *color) == colors.end()) {
-            colors.push_back(*color);
+        } else if (std::find(colors.begin(), colors.end(), *currentSpec) == colors.end()) {
+            colors.push_back(*currentSpec);
         }
         const std::string saved = SaveCustomThemeColors(colors);
         const std::string savedHidden = SaveHiddenThemeColors(hiddenColors);
@@ -224,7 +309,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         if (savedHidden != current.hiddenThemeColors)
             store::coreStore().setSetting("ui.hidden_theme_colors", savedHidden);
         const std::string selectedColor =
-            !editingId || current.themeColor == *editingId ? *color : current.themeColor;
+            !editingId || current.themeColor == *editingId ? *currentSpec : current.themeColor;
         if (current.themeColor != selectedColor)
             store::coreStore().setSetting("ui.theme_color", selectedColor);
         model->Update([saved, savedHidden, selectedColor](SettingsView& settings) {
@@ -236,16 +321,20 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     };
     huxerui::View fields = huxerui::Column {
       huxerui::Row {}.With(huxerui::Frame{.height = kThemeColorPreviewHeight},
-          huxerui::Background(preview), huxerui::CornerRadius(theme.shapes.medium)),
+          huxerui::Background(previewFill), huxerui::CornerRadius(theme.shapes.medium)),
+      huxerui::Row(std::move(mixSwatches)).With(huxerui::Spacing(theme.spacing.small),
+          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
       huxerui::TextField(input.Get()).Label(Localized("颜色值"))
           .Variant(huxerui::TextFieldVariant::Outlined)
           .Placeholder("#RRGGBB")
           .Validation(hex ? huxerui::ValidationResult::None() :
               huxerui::ValidationResult::Invalid(Localized("请输入六位十六进制颜色值")))
-          .OnChanged([input, hsb](const huxerui::TextEditingValue& value) {
+          .OnChanged([input, hsb, updateActiveStop](const huxerui::TextEditingValue& value) {
               input = value;
-              if (const auto normalized = NormalizeThemeColor(value.text))
+              if (const auto normalized = NormalizeThemeColor(value.text)) {
                   hsb = ThemeColorToHsb(ThemeColorFromHex(*normalized));
+                  updateActiveStop(*normalized);
+              }
           })
           .OnSubmitted(save),
       huxerui::Column(std::move(sliders)).With(huxerui::Spacing(theme.spacing.small),
@@ -299,7 +388,9 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         selected, huxerui::UseString(label), [model, id = accent.id] { SelectThemeColor(model, id); }, edge, accent.id)
         .Key("theme-color-" + accent.id);
     const std::string id = accent.id;
-    const std::string initialHex = id.starts_with('#') ? id : ThemeColorToHex(accent.light);
+    const std::string initialHex = !accent.mixHexes.empty()
+        ? JoinThemeColorStops(accent.mixHexes)
+        : (id.starts_with('#') ? id : ThemeColorToHex(accent.light));
     const auto edit = [dialog, navigation, compact, model, id, initialHex] {
         if (compact) {
             navigation.Push(ThemeColorEditorRoutePage, initialHex, std::optional<std::string>{id});

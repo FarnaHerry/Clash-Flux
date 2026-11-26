@@ -19,7 +19,7 @@ namespace clashflux::data {
 // 托盘停用时 startMinimized 对外返回 false，但查询不修改数据库中的历史值。
 export struct StartupSettings {
     int themeMode = 1;
-    std::string themeColor = "blue";
+    std::string themeColor = "gemini";
     std::string language = "system";
     bool trayEnabled = true;
     bool startMinimized = false;
