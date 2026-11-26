@@ -1,8 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -125,7 +128,58 @@ public:
 
 inline constexpr float kHomeProxyOptionHeight = 36.0F;
 inline constexpr float kHomeProxyListHeight = 144.0F;
+inline constexpr float kHomeProxyClosedChevronAngle = -90.0F;
+inline constexpr std::string_view kHomeProxyGroupPickerId = "home-proxy-group";
 inline constexpr std::string_view kHomeProxyNodePickerId = "home-proxy-node";
+
+struct HomeProxyPicker {
+    std::string_view id;
+    std::vector<HomeProxyChoice> choices;
+    std::string current;
+    std::string label;
+    huxerui::StringVariant noMatches;
+    bool enabled;
+    std::function<void(std::string)> select;
+};
+
+struct HomeProxyAnchor {
+    huxerui::ViewHandle field;
+    huxerui::State<huxerui::Rect> bounds;
+    std::shared_ptr<float> chevronAngle;
+};
+
+inline HomeProxyAnchor UseHomeProxyAnchor() {
+    return {huxerui::UseViewHandle(), huxerui::UseState(huxerui::Rect{}),
+        huxerui::UseState(std::make_shared<float>(kHomeProxyClosedChevronAngle)).Get()};
+}
+
+struct HomeProxyChevronPresentation {
+    class Extension;
+    std::shared_ptr<float> angle;
+    bool operator==(const HomeProxyChevronPresentation&) const = default;
+};
+
+class HomeProxyChevronPresentation::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const HomeProxyChevronPresentation& value) : angle_(value.angle) {}
+    void Update(huxerui::ViewNode&, const HomeProxyChevronPresentation& value) { angle_ = value.angle; }
+
+    PaintInvalidation PrepareGeometry(huxerui::ViewNode& node, huxerui::TextMeasurer&) override {
+        // Read the image's rotation in its unrotated wrapper, excluding ancestor transforms.
+        const auto& image = node.ChildAt(0);
+        const auto origin = node.WindowToLocal(image.LocalToWindow({0.0F, 0.0F}));
+        const auto right = node.WindowToLocal(image.LocalToWindow({1.0F, 0.0F}));
+        if (origin && right) {
+            // All targets lie between -180 and 0 degrees, including their endpoints.
+            const float radians = std::atan2(std::abs(right->y - origin->y), right->x - origin->x);
+            *angle_ = -radians * (180.0F / std::numbers::pi_v<float>);
+        }
+        return PaintInvalidation::None;
+    }
+
+private:
+    std::shared_ptr<float> angle_;
+};
 
 inline huxerui::TextField HomeProxyField(const huxerui::TextEditingValue& value,
                                        std::string_view current, const std::string& label,
@@ -137,8 +191,8 @@ inline huxerui::TextField HomeProxyField(const huxerui::TextEditingValue& value,
 }
 
 inline huxerui::View HomeProxyFieldSurface(huxerui::View field, huxerui::TextFieldStyle style,
-    const std::optional<ProxyNameFlag>& flag, huxerui::State<std::optional<bool>> direction,
-    bool enabled, bool covered, std::optional<bool> listOpensUp = {}) {
+    const std::optional<ProxyNameFlag>& flag, std::shared_ptr<float> chevronAngle,
+    bool enabled, bool covered, std::optional<bool> listOpensUp = {}, std::function<void()> toggle = {}) {
     huxerui::View leading;
     if (flag) {
         leading = huxerui::Row {UseCountryFlagTile(flag->index)}
@@ -151,26 +205,32 @@ inline huxerui::View HomeProxyFieldSurface(huxerui::View field, huxerui::TextFie
         const float inset = style.padding.right;
         const auto tint = !enabled ? style.disabled_trailing_icon :
             listOpensUp.has_value() ? style.focused_trailing_icon : style.trailing_icon;
-        trailing = huxerui::Scope([direction, listOpensUp, size, inset, tint] {
-            const auto previous = direction.Get();
-            const auto start = huxerui::UseState(!listOpensUp && previous
-                ? (*previous ? -180.0F : 0.0F) : -90.0F);
+        auto arrow = huxerui::Scope([chevronAngle, listOpensUp, size, inset, tint, toggle] {
+            const bool reduced = huxerui::UseTheme().motion.reduced_motion;
+            // The trigger and popup hand off the last painted angle for this field.
+            const auto start = huxerui::UseState(*chevronAngle);
             const auto ready = huxerui::UseState(false);
-            huxerui::Lifecycle([direction, listOpensUp, ready] {
-                if (listOpensUp.has_value()) direction = listOpensUp;
+            huxerui::Lifecycle([ready] {
                 ready = true;
                 return [] {};
-            }, listOpensUp);
-            const float target = !listOpensUp ? -90.0F : *listOpensUp ? -180.0F : 0.0F;
-            const float angle = ready.Get() ? target : start.Get();
-            return huxerui::Stack {
+            });
+            const float target = !listOpensUp ? kHomeProxyClosedChevronAngle : *listOpensUp ? -180.0F : 0.0F;
+            const float angle = reduced || ready.Get() ? target : start.Get();
+            auto icon = huxerui::Stack {
               huxerui::Image(app::images::chevron_down).Tint(tint)
                   .With(huxerui::Frame{.width = size, .height = size},
                         huxerui::Rotation(huxerui::AnimateTo(angle, huxerui::TweenSpec{0.16, huxerui::Easing::EaseOut})))
                   .Key("home-proxy-chevron"),
             }.With(huxerui::Padding(huxerui::EdgeInsets{.right = inset}),
-                   huxerui::Align(huxerui::HorizontalAlignment::End, huxerui::VerticalAlignment::Center));
-        });
+                   huxerui::Align(huxerui::HorizontalAlignment::End, huxerui::VerticalAlignment::Center),
+                   HomeProxyChevronPresentation{chevronAngle});
+            if (toggle) return huxerui::View{std::move(icon)
+                .With(huxerui::Focusable(false), huxerui::Semantics{.hidden = true}).OnClick(toggle)};
+            return huxerui::View{std::move(icon)};
+        }).With(huxerui::Frame{.width = size + inset + style.icon_spacing,
+                              .height = style.outlined.minimum_height});
+        trailing = huxerui::Row {huxerui::Spacer().With(huxerui::Grow(1.0F)), arrow}
+            .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }
     style.padding.right += style.trailing_icon_size + style.icon_spacing;
     return huxerui::Stack {
@@ -181,15 +241,11 @@ inline huxerui::View HomeProxyFieldSurface(huxerui::View field, huxerui::TextFie
 }
 
 inline huxerui::View HomeProxyPanel(
-    std::vector<HomeProxyChoice> choices, std::string current, std::string label,
-    huxerui::StringVariant noMatches, std::string id, bool searchEnabled, huxerui::State<huxerui::Rect> anchorBounds,
-    huxerui::State<huxerui::Rect> viewportBounds, huxerui::State<std::optional<bool>> direction,
-    huxerui::State<huxerui::TextEditingValue> edit, std::function<void()> close,
-    std::function<void(std::string)> onSelect) {
-    return huxerui::Scope([choices = std::move(choices), current = std::move(current), label = std::move(label),
-                          noMatches, id = std::move(id), searchEnabled, anchorBounds, viewportBounds, direction, edit,
-                          close = std::move(close), onSelect = std::move(onSelect)] {
-        auto active = huxerui::UseState(std::optional<std::size_t>{});
+    std::shared_ptr<const HomeProxyPicker> picker, HomeProxyAnchor trigger, HomeProxyAnchor other,
+    bool searchEnabled, bool otherEnabled, huxerui::State<huxerui::Rect> viewportBounds,
+    huxerui::State<huxerui::TextEditingValue> edit, std::function<void()> close, std::function<void()> switchPicker) {
+    return huxerui::Scope([=] {
+        auto active = huxerui::UseState(std::optional<std::string>{});
         const auto editor = huxerui::UseViewHandle();
         const auto scroll = huxerui::UseScrollController();
         const auto viewport = viewportBounds.Get();
@@ -202,9 +258,14 @@ inline huxerui::View HomeProxyPanel(
             active = std::nullopt;
             return [] {};
         }, searchEnabled);
-        auto backdrop = huxerui::Row{}.On<huxerui::ViewEvents::Pointer>([close](const huxerui::PointerEvent& event) {
-            if (event.type == huxerui::PointerEventType::Down) close();
-        });
+        const auto otherBounds = other.bounds.Get();
+        auto backdrop = huxerui::Row{}.On<huxerui::ViewEvents::Pointer>(
+            [close, switchPicker, otherBounds, otherEnabled](const huxerui::PointerEvent& event) {
+                if (event.type != huxerui::PointerEventType::Down) return;
+                if (otherEnabled && event.changed_button == huxerui::PointerButton::Primary &&
+                    otherBounds.Contains(event.position)) switchPicker();
+                else close();
+            });
         if (!viewportReady) {
             return huxerui::View{HomeProxyPopupLayout{std::move(backdrop)}.With(HomeProxyBounds{viewportBounds})};
         }
@@ -212,22 +273,34 @@ inline huxerui::View HomeProxyPanel(
         const huxerui::TextEditingValue value = searchEnabled ? edit.Get() : huxerui::TextEditingValue{};
         const std::string_view query = value.text;
         std::vector<HomeProxyChoice> matches;
-        for (const auto& choice : choices) {
+        for (const auto& choice : picker->choices) {
             if (SearchTextMatches(choice.label, query) || SearchTextMatches(choice.tag, query))
                 matches.push_back(choice);
         }
-        const auto anchor = anchorBounds.Get();
-        const float above = std::max(0.0F, anchor.y - viewport.y);
-        const float below = std::max(0.0F, viewport.y + viewport.height - anchor.y - anchor.height);
+        const auto anchor = trigger.bounds.Get();
+        const float anchorBottom = anchor.y + anchor.height;
+        const float viewportBottom = viewport.y + viewport.height;
+        float above = std::max(0.0F, anchor.y - viewport.y);
+        float below = std::max(0.0F, viewportBottom - anchorBottom);
+        if (otherEnabled && otherBounds.height > 0.0F) {
+            const float otherBottom = otherBounds.y + otherBounds.height;
+            const float clearAbove = otherBottom <= anchor.y ? std::min(above, anchor.y - otherBottom) : above;
+            const float clearBelow = otherBounds.y >= anchorBottom ? std::min(below, otherBounds.y - anchorBottom) : below;
+            // Keep both fields reachable unless a short viewport would hide even one full option.
+            if (std::max(clearAbove, clearBelow) >= kHomeProxyOptionHeight) {
+                above = clearAbove;
+                below = clearBelow;
+            }
+        }
         const float preferredHeight = std::min(kHomeProxyListHeight,
             kHomeProxyOptionHeight * static_cast<float>(std::max<std::size_t>(1, matches.size())));
         const bool opensUp = preferredHeight > below && above > below;
         const float listHeight = std::min(preferredHeight, opensUp ? above : below);
         const huxerui::Point origin{anchor.x - viewport.x,
             anchor.y - viewport.y - (opensUp ? listHeight : 0.0F)};
-        const auto select = [close, onSelect](const std::string& tag) {
+        const auto select = [close, picker](const std::string& tag) {
             close();
-            onSelect(tag);
+            picker->select(tag);
         };
 
         auto fieldStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
@@ -239,29 +312,32 @@ inline huxerui::View HomeProxyPanel(
         fieldStyle.border_width = 0.0F;
         fieldStyle.focused_border_width = 0.0F;
 
-        const bool nodePicker = id == kHomeProxyNodePickerId;
-        const auto flag = nodePicker ? UseProxyNameFlag(current) : std::nullopt;
-        const auto field = HomeProxyField(value, flag ? flag->name : std::string_view{current}, label, searchEnabled)
-            .OnChanged([edit, active, searchEnabled](const huxerui::TextEditingValue& next) {
+        const bool nodePicker = picker->id == kHomeProxyNodePickerId;
+        const auto flag = nodePicker ? UseProxyNameFlag(picker->current) : std::nullopt;
+        auto field = HomeProxyField(value, flag ? flag->name : std::string_view{picker->current}, picker->label, searchEnabled)
+            .OnChanged([edit, active, scroll, searchEnabled](const huxerui::TextEditingValue& next) {
                 if (!searchEnabled) return;
-                if (next.text != edit.Get().text) active = std::nullopt;
+                if (next.text != edit.Get().text) {
+                    active = std::nullopt;
+                    if (scroll.IsConnected()) static_cast<void>(scroll.ScrollTo(0.0F));
+                }
                 edit = next;
             })
             .OnSubmitted(close)
             .With(editor, huxerui::Frame{.height = anchor.height}, HomeProxyExpansion{true}, huxerui::Semantics{
-                .role = huxerui::SemanticRole::ComboBox, .label = label, .identifier = id,
+                .role = huxerui::SemanticRole::ComboBox, .label = picker->label, .identifier = std::string{picker->id},
                 .expanded = true})
-            .On<HomeProxyExpansion::Requested>([close](bool show) { if (!show) close(); })
-            .OnClick(close);
+            .On<HomeProxyExpansion::Requested>([close](bool show) { if (!show) close(); });
+        if (!searchEnabled) field = std::move(field).OnClick(close);
 
         const auto listStyle = huxerui::UseEnvironment<huxerui::ComboBoxStyle>();
         std::vector<huxerui::View> rows;
         const auto renderTitle = [](std::string_view name) {
             return huxerui::Text(std::string{name}).LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis);
         };
-        for (std::size_t index = 0; index < matches.size(); ++index) {
-            const auto& choice = matches[index];
-            const bool highlighted = active.Get() == index;
+        const auto& activeTag = active.Get();
+        for (const auto& choice : matches) {
+            const bool highlighted = activeTag == choice.tag;
             auto title = nodePicker ? UseProxyNameTitle(choice.label, renderTitle)
                                     : huxerui::View{renderTitle(choice.label)};
             rows.push_back(std::move(title)
@@ -276,7 +352,7 @@ inline huxerui::View HomeProxyPanel(
                 .Key(choice.tag));
         }
         if (rows.empty()) {
-            rows.push_back(huxerui::Text(noMatches)
+            rows.push_back(huxerui::Text(picker->noMatches)
                 .LineLimit(1).Overflow(huxerui::TextOverflow::Ellipsis)
                 .With(huxerui::Frame{.height = kHomeProxyOptionHeight},
                       huxerui::Padding(huxerui::EdgeInsets::Symmetric(8.0F, 6.0F))));
@@ -302,7 +378,7 @@ inline huxerui::View HomeProxyPanel(
             }.With(huxerui::ClipChildren(), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
         }).Key("home-proxy-suggestions");
         auto panel = HomeProxyPanelLayout {
-          HomeProxyFieldSurface(field, fieldStyle, flag, direction, true, false, opensUp),
+          HomeProxyFieldSurface(field, fieldStyle, flag, trigger.chevronAngle, true, false, opensUp, close),
           suggestions,
         }
             .LayoutValue<HomeProxyOpensUp>(opensUp)
@@ -319,8 +395,11 @@ inline huxerui::View HomeProxyPanel(
                     close();
                     return true;
                 }
-                if (key.key == Key::Enter && !key.modifiers.alt && active.Get() && *active.Get() < matches.size()) {
-                    if (!key.repeat) select(matches[*active.Get()].tag);
+                const auto& highlighted = active.Get();
+                const auto current = highlighted ? std::ranges::find(matches, *highlighted, &HomeProxyChoice::tag)
+                                                 : matches.end();
+                if (key.key == Key::Enter && !key.modifiers.alt && current != matches.end()) {
+                    if (!key.repeat) select(current->tag);
                     return true;
                 }
                 if (key.key != Key::ArrowDown && key.key != Key::ArrowUp) return false;
@@ -329,12 +408,12 @@ inline huxerui::View HomeProxyPanel(
                     return true;
                 }
                 if (matches.empty()) return false;
-                const auto index = active.Get();
+                const auto index = static_cast<std::size_t>(current - matches.begin());
                 const std::size_t last = matches.size() - 1;
                 const std::size_t next = key.key == Key::ArrowDown
-                    ? (index ? std::min(*index + 1, last) : 0)
-                    : (index && *index > 0 ? std::min(*index - 1, last) : index ? 0 : last);
-                active = next;
+                    ? (current == matches.end() ? 0 : std::min(index + 1, last))
+                    : (current == matches.end() ? last : index > 0 ? index - 1 : 0);
+                active = matches[next].tag;
                 if (scroll.IsConnected()) {
                     const auto metrics = scroll.Metrics();
                     const float top = kHomeProxyOptionHeight * static_cast<float>(next);
@@ -348,87 +427,130 @@ inline huxerui::View HomeProxyPanel(
         return huxerui::View{HomeProxyPopupLayout{std::move(backdrop), std::move(panel)}
             .LayoutValue<HomeProxyPanelOrigin>(origin)
             .With(HomeProxyBounds{viewportBounds}, huxerui::ClipChildren())};
-    });
+    }).Key("popup-" + std::string{picker->id});
 }
 
 inline huxerui::View HomeProxyCombo(
-    std::vector<HomeProxyChoice> choices, std::string current,
-    huxerui::StringVariant fieldLabel, huxerui::StringVariant noMatches,
-    std::string id, bool enabled, bool searchEnabled, huxerui::State<std::string> expandedPicker,
-    std::uint64_t revision, std::function<void(std::string)> onSelect) {
-    return huxerui::Scope([choices = std::move(choices), current = std::move(current),
-                          fieldLabel, noMatches, id, enabled, searchEnabled, expandedPicker, revision,
-                          onSelect = std::move(onSelect)] {
-        const auto anchor = huxerui::UseViewHandle();
-        const auto popup = huxerui::UsePopup();
-        auto anchorBounds = huxerui::UseState(huxerui::Rect{});
-        auto viewportBounds = huxerui::UseState(huxerui::Rect{});
-        const auto direction = huxerui::UseState(std::optional<bool>{});
-        auto layer = huxerui::UseState(huxerui::LayerId{});
-        auto edit = huxerui::UseState(huxerui::TextEditingValue{});
-        const auto close = [popup, layer, edit, expandedPicker, id, viewportBounds] {
-            if (layer.Get() == 0) return;
-            const auto previous = layer.Get();
-            layer = huxerui::LayerId{};
-            popup.Dismiss(previous);
-            if (expandedPicker.Get() == id) expandedPicker = std::string{};
-            edit = huxerui::TextEditingValue{};
-            viewportBounds = huxerui::Rect{};
-        };
-        const std::string label = huxerui::UseString(fieldLabel);
-        const huxerui::ViewFactory panel = [choices, current, label, noMatches, id, searchEnabled, anchorBounds,
-                                           viewportBounds, direction, edit, close, onSelect] {
-            return HomeProxyPanel(choices, current, label, noMatches, id, searchEnabled, anchorBounds, viewportBounds,
-                                  direction, edit, close, onSelect);
-        };
-        const auto open = [anchor, popup, panel, layer, anchorBounds, enabled, expandedPicker, id, close] {
-            if (!enabled || layer.Get() != 0 || anchorBounds.Get().width <= 0.0F) return;
-            anchor.RequestFocus();
-            // The popup occupies the safe viewport and positions the combined
-            // surface against the editor's current window bounds.
-            layer = popup.ShowAt({}, panel, {
-                .gap = 0.0F, .viewport_margin = 0.0F, .trap_focus = true, .on_dismiss_request = close});
-            expandedPicker = id;
-        };
-        huxerui::Lifecycle([close] { return close; });
-        huxerui::Lifecycle([enabled, searchEnabled, edit, popup, layer, panel, close] {
-            if (!searchEnabled) edit = huxerui::TextEditingValue{};
-            if (layer.Get() != 0 && (!enabled || !popup.Update(layer.Get(), panel))) close();
-            return [] {};
-        }, enabled, searchEnabled, choices, current, label, revision);
-
-        const bool expanded = layer.Get() != 0 && viewportBounds.Get().height > 0.0F;
-        const auto flag = id == kHomeProxyNodePickerId ? UseProxyNameFlag(current) : std::nullopt;
-        const auto displayed = flag ? flag->name : std::string_view{current};
-        const auto field = HomeProxyField(enabled ? huxerui::TextEditingValue{}
+    std::shared_ptr<const HomeProxyPicker> picker, HomeProxyAnchor anchor, bool searchEnabled,
+    huxerui::State<std::string> expandedPicker, huxerui::State<huxerui::Rect> viewportBounds,
+    std::function<void(huxerui::TextEditingValue)> open) {
+    return huxerui::Scope([=] {
+        const auto viewport = viewportBounds.Get();
+        const bool expanded = expandedPicker.Get() == picker->id && viewport.width > 0.0F && viewport.height > 0.0F;
+        const auto flag = picker->id == kHomeProxyNodePickerId ? UseProxyNameFlag(picker->current) : std::nullopt;
+        const auto displayed = flag ? flag->name : std::string_view{picker->current};
+        const auto activate = [open] { open({}); };
+        const auto field = HomeProxyField(picker->enabled ? huxerui::TextEditingValue{}
                                               : huxerui::TextEditingValue::FromText(std::string{displayed}),
-                                          displayed, label, searchEnabled)
-            .OnChanged([edit, open, searchEnabled](const huxerui::TextEditingValue& next) {
-                if (searchEnabled && (!next.text.empty() || next.composition)) {
-                    edit = next;
-                    open();
-                }
+                                          displayed, picker->label, searchEnabled)
+            .OnChanged([open, searchEnabled](const huxerui::TextEditingValue& next) {
+                if (searchEnabled && (!next.text.empty() || next.composition)) open(next);
             })
-            .With(anchor, HomeProxyExpansion{false}, HomeProxyBounds{anchorBounds},
-                  huxerui::Semantics{.role = huxerui::SemanticRole::ComboBox, .label = label,
-                      .identifier = id, .expanded = false, .hidden = expanded})
-            .On<HomeProxyExpansion::Requested>([open](bool show) { if (show) open(); })
-            .OnClick(open);
+            .With(anchor.field, HomeProxyExpansion{false}, HomeProxyBounds{anchor.bounds},
+                  huxerui::Semantics{.role = huxerui::SemanticRole::ComboBox, .label = picker->label,
+                      .identifier = std::string{picker->id}, .expanded = false, .hidden = expanded})
+            .On<HomeProxyExpansion::Requested>([activate](bool show) { if (show) activate(); })
+            .OnClick(activate);
         const auto fieldStyle = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
         return huxerui::Column {
-          HomeProxyFieldSurface(field, fieldStyle, flag, direction, enabled, expanded)
+          HomeProxyFieldSurface(field, fieldStyle, flag, anchor.chevronAngle, picker->enabled, expanded)
               .With(huxerui::Opacity(expanded ? 0.0F : 1.0F)),
         }
-            .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::Enabled(enabled))
-            .On<huxerui::ViewEvents::KeyIntercept>([open](const huxerui::KeyEvent& key) {
+            .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), huxerui::Enabled(picker->enabled))
+            .On<huxerui::ViewEvents::KeyIntercept>([activate](const huxerui::KeyEvent& key) {
                 using huxerui::Key;
                 if (key.type != huxerui::KeyEventType::Down || key.modifiers.control ||
                     key.modifiers.meta || key.modifiers.shift ||
                     (key.key != Key::ArrowDown && (key.key != Key::ArrowUp || key.modifiers.alt))) return false;
-                open();
+                activate();
                 return true;
             })
-            .Key(id);
+            .Key(std::string{picker->id});
+    });
+}
+
+inline huxerui::View HomeProxyPickerControls(HomeProxyPicker group, HomeProxyPicker node, std::string groupName,
+    bool searchEnabled, std::uint64_t revision, huxerui::State<std::string> expandedPicker) {
+    return huxerui::Scope([group = std::move(group), node = std::move(node), groupName = std::move(groupName),
+                          searchEnabled, revision, expandedPicker] {
+        const auto groupAnchor = UseHomeProxyAnchor();
+        const auto nodeAnchor = UseHomeProxyAnchor();
+        const auto popup = huxerui::UsePopup();
+        const auto layer = huxerui::UseState(huxerui::LayerId{});
+        const auto viewport = huxerui::UseState(huxerui::Rect{});
+        const auto edit = huxerui::UseState(huxerui::TextEditingValue{});
+        const auto closedPicker = huxerui::UseState(std::string{});
+        const auto openedRevision = huxerui::UseState(revision);
+        const auto openedGroup = huxerui::UseState(groupName);
+        const auto close = [=] {
+            const auto id = layer.Get();
+            if (id == 0) return;
+            closedPicker = expandedPicker.Get();
+            layer = huxerui::LayerId{};
+            expandedPicker = std::string{};
+            edit = huxerui::TextEditingValue{};
+            viewport = huxerui::Rect{};
+            popup.Dismiss(id);
+        };
+        const auto groupPicker = std::make_shared<const HomeProxyPicker>(group);
+        const auto nodePicker = std::make_shared<const HomeProxyPicker>(node);
+        const auto activate = [edit, expandedPicker, closedPicker, openedRevision, openedGroup, revision, groupName](
+            std::string_view id, huxerui::TextEditingValue value = {}) {
+            edit = std::move(value);
+            openedRevision = revision;
+            openedGroup = groupName;
+            closedPicker = std::string{};
+            expandedPicker = std::string{id};
+        };
+        const huxerui::ViewFactory panel = [=] {
+            return huxerui::Scope([=] {
+                const bool groupActive = expandedPicker.Get() == kHomeProxyGroupPickerId;
+                const auto& current = groupActive ? groupPicker : nodePicker;
+                const auto& other = groupActive ? nodePicker : groupPicker;
+                return HomeProxyPanel(current, groupActive ? groupAnchor : nodeAnchor,
+                    groupActive ? nodeAnchor : groupAnchor, searchEnabled, other->enabled, viewport, edit, close,
+                    [activate, id = other->id] { activate(id); });
+            });
+        };
+        const auto open = [=](const HomeProxyPicker& picker, const HomeProxyAnchor& trigger,
+                              huxerui::TextEditingValue value) {
+            if (!picker.enabled || layer.Get() != 0 || trigger.bounds.Get().width <= 0.0F) return;
+            trigger.field.RequestFocus();
+            // The popup occupies the safe viewport and positions the combined surface at the active field.
+            const auto id = popup.ShowAt({}, panel, {
+                .gap = 0.0F, .viewport_margin = 0.0F, .trap_focus = true, .on_dismiss_request = close});
+            if (id != 0) {
+                layer = id;
+                activate(picker.id, std::move(value));
+            }
+        };
+        huxerui::Lifecycle([close] { return close; });
+        const auto restoreFocus = closedPicker.Get();
+        huxerui::Lifecycle([=] {
+            if (!restoreFocus.empty() && layer.Get() == 0) {
+                const auto& trigger = restoreFocus == kHomeProxyGroupPickerId ? groupAnchor : nodeAnchor;
+                trigger.field.RequestFocus();
+            }
+            return [] {};
+        }, restoreFocus);
+        huxerui::Lifecycle([=] {
+            if (!searchEnabled) edit = huxerui::TextEditingValue{};
+            if (const auto id = layer.Get(); id != 0) {
+                const bool groupActive = expandedPicker.Get() == kHomeProxyGroupPickerId;
+                const bool available = groupActive ? groupPicker->enabled
+                    : nodePicker->enabled && openedGroup.Get() == groupName;
+                if (!available || openedRevision.Get() != revision || !popup.Update(id, panel)) close();
+            }
+            return [] {};
+        }, searchEnabled, revision, groupName, group.enabled, node.enabled,
+            group.choices, group.current, group.label, node.choices, node.current, node.label);
+
+        return huxerui::Column {
+          HomeProxyCombo(groupPicker, groupAnchor, searchEnabled, expandedPicker, viewport,
+              [=](huxerui::TextEditingValue value) { open(*groupPicker, groupAnchor, std::move(value)); }),
+          HomeProxyCombo(nodePicker, nodeAnchor, searchEnabled, expandedPicker, viewport,
+              [=](huxerui::TextEditingValue value) { open(*nodePicker, nodeAnchor, std::move(value)); }),
+        }.With(huxerui::Spacing(5.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
     });
 }
 
@@ -463,20 +585,18 @@ inline huxerui::View HomeProxyPickers(
         auto fields = huxerui::UseEnvironment<huxerui::TextFieldStyle>();
         fields.outlined.minimum_height = fieldHeight;
         fields.padding = huxerui::EdgeInsets::Symmetric(8.0F, 0.0F);
-        return huxerui::ProvideEnvironment(fields, huxerui::Column {
-          HomeProxyCombo(std::move(groupChoices),
-                         group ? (group->displayName.empty() ? group->name : group->displayName) : "",
-                         searchEnabled ? Localized("搜索代理组") : Localized("策略组"),
-                         Localized("没有匹配的代理组"), "home-proxy-group", enabled, searchEnabled,
-                         expandedPicker, revision, [groupTag](std::string tag) { groupTag = std::move(tag); }),
-          HomeProxyCombo(std::move(nodeChoices), group ? nodeLabel(group->current) : "",
-                         searchEnabled ? Localized("搜索节点") : Localized("节点"),
-                         Localized("没有匹配的节点"), std::string{kHomeProxyNodePickerId},
-                         enabled && (!group || group->selectable), searchEnabled, expandedPicker, revision,
-                         [onSelect, name = group ? group->name : "", revision](std::string tag) {
-                             onSelect(name, std::move(tag), revision);
-                         }).Key(group ? group->name : ""),
-        }.With(huxerui::Spacing(5.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)));
+        std::string groupName = group ? group->name : "";
+        return huxerui::ProvideEnvironment(fields, HomeProxyPickerControls(
+            {kHomeProxyGroupPickerId, std::move(groupChoices),
+             group ? (group->displayName.empty() ? group->name : group->displayName) : "",
+             huxerui::UseString(searchEnabled ? Localized("搜索代理组") : Localized("策略组")),
+             Localized("没有匹配的代理组"), enabled,
+             [groupTag](std::string tag) { groupTag = std::move(tag); }},
+            {kHomeProxyNodePickerId, std::move(nodeChoices), group ? nodeLabel(group->current) : "",
+             huxerui::UseString(searchEnabled ? Localized("搜索节点") : Localized("节点")),
+             Localized("没有匹配的节点"), enabled && (!group || group->selectable),
+             [onSelect, groupName, revision](std::string tag) { onSelect(groupName, std::move(tag), revision); }},
+            groupName, searchEnabled, revision, expandedPicker));
     });
 }
 

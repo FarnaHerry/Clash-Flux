@@ -135,8 +135,7 @@ huxerui::Task<bool> RunPendingCliCommand(huxerui::ApplicationHandle application)
 } // namespace
 #endif
 
-// 品牌蓝只出现在主交互和选中态。页面、卡片、导航与浮层使用中性灰阶，
-// 通过稳定的明度差区分层级，避免整页被蓝色表面染色。
+// 页面、卡片、导航与浮层使用中性灰阶，通过稳定的明度差区分层级。
 huxerui::ThemeSpec FluxDarkThemeSpec(std::string_view accent) {
     huxerui::ThemeSpec spec = huxerui::MaterialDarkThemeSpec();
     spec.typography = huxerui::TypographyScheme{
@@ -171,7 +170,8 @@ huxerui::ThemeSpec FluxLightThemeSpec(std::string_view accent) {
                                         10000.0F};
     spec.colors = FluxLightColors(accent);
     ApplyFluxInteractionTheme(spec);
-    spec.interactions.focus_ring = huxerui::FocusRing{ResolveFluxAccent(accent).dark, 2.0F, 2.0F};
+    const auto focus = UsesFourColorAccent(accent) ? spec.colors.primary : ResolveFluxAccent(accent).dark;
+    spec.interactions.focus_ring = huxerui::FocusRing{focus, 2.0F, 2.0F};
     return spec;
 }
 
@@ -185,8 +185,9 @@ huxerui::ThemeSpec FluxLightThemeSpec(std::string_view accent) {
 // 主题边界：MaterialThemeDefinition(spec) 之上用 typed style 覆盖组件样式——
 // 按钮/分段按钮/菜单圆角统一 8px（M3 默认全圆胶囊），叠加层用 on_surface
 // 半透明，让深浅模式的交互反馈都留在品牌色相内。
-huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) {
+huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, bool fourColor, huxerui::View content) {
     huxerui::ThemeDefinition definition = huxerui::MaterialThemeDefinition(spec);
+    definition.Set(FluxGradientStyle{fourColor});
 
     const auto withAlpha = [](huxerui::Color c, float a) {
         c.alpha = a;
@@ -221,10 +222,11 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
         spec.colors.on_surface};
     dialogs.message_style = huxerui::TextStyle{huxerui::Font::System(font_size::kBody),
                                                spec.colors.on_surface};
+    const auto primaryForeground = ResolveFluxPrimaryForeground(spec, fourColor);
     dialogs.positive_action_style = huxerui::TextStyle{
-        huxerui::Font::System(font_size::kBody), spec.colors.on_primary};
-    dialogs.positive_action_background = spec.colors.primary;
-    dialogs.positive_action_indication = ResolveFluxIndication(spec, spec.colors.on_primary);
+        huxerui::Font::System(font_size::kBody), primaryForeground};
+    dialogs.positive_action_background = ResolveFluxPrimaryFill(spec, fourColor);
+    dialogs.positive_action_indication = ResolveFluxIndication(spec, primaryForeground);
     dialogs.negative_action_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kBody), spec.colors.on_surface};
     dialogs.negative_action_indication = ResolveFluxIndication(spec);
@@ -300,7 +302,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
     navigationPane.background = huxerui::Color::Transparent();
     navigationPane.label_style = huxerui::TextStyle{
         huxerui::Font::System(font_size::kBody), FluxStateLayerColor(navigationForeground, 0.60F)};
-    navigationPane.selected_content = navigationForeground;
+    navigationPane.selected_content = fourColor ? spec.colors.on_primary_container : navigationForeground;
     navigationPane.indicator = FluxStateLayerColor(navigationForeground, 0.10F);
     navigationPane.compact_width = kTopNavigationRailWidth;
     navigationPane.expanded_min_width = 220.0F;
@@ -363,19 +365,37 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, huxerui::View content) 
 struct NavigationEntry {
     huxerui::ImageResource outlineIcon;
     huxerui::ImageResource selectedIcon;
+    huxerui::ImageResource gradientLightIcon;
+    huxerui::ImageResource gradientDarkIcon;
     huxerui::StringVariant label;
 };
 
 const std::array<NavigationEntry, 8> kNavigationEntries{{
-    {app::images::home, app::images::home_selected, Localized("首页")},
-    {app::images::request, app::images::request_selected, Localized("订阅")},
-    {app::images::proxies, app::images::proxies_selected, Localized("代理")},
-    {app::images::route, app::images::route_selected, Localized("规则")},
-    {app::images::connections, app::images::connections_selected, Localized("连接")},
-    {app::images::logs, app::images::logs_selected, Localized("日志")},
-    {app::images::website_test, app::images::website_test_selected, Localized("网站测试")},
-    {app::images::gear_outline, app::images::gear, Localized("设置")},
+    {app::images::home, app::images::home_selected,
+     app::images::nav_home_gradient_light, app::images::nav_home_gradient_dark, Localized("首页")},
+    {app::images::request, app::images::request_selected,
+     app::images::nav_request_gradient_light, app::images::nav_request_gradient_dark, Localized("订阅")},
+    {app::images::proxies, app::images::proxies_selected,
+     app::images::nav_proxies_gradient_light, app::images::nav_proxies_gradient_dark, Localized("代理")},
+    {app::images::route, app::images::route_selected,
+     app::images::nav_route_gradient_light, app::images::nav_route_gradient_dark, Localized("规则")},
+    {app::images::connections, app::images::connections_selected,
+     app::images::nav_connections_gradient_light, app::images::nav_connections_gradient_dark, Localized("连接")},
+    {app::images::logs, app::images::logs_selected,
+     app::images::nav_logs_gradient_light, app::images::nav_logs_gradient_dark, Localized("日志")},
+    {app::images::website_test, app::images::website_test_selected,
+     app::images::nav_website_test_gradient_light, app::images::nav_website_test_gradient_dark, Localized("网站测试")},
+    {app::images::gear_outline, app::images::gear,
+     app::images::nav_gear_gradient_light, app::images::nav_gear_gradient_dark, Localized("设置")},
 }};
+
+huxerui::Image NavigationIcon(const NavigationEntry& entry, bool filled, bool fourColor, bool dark,
+                              huxerui::Color foreground) {
+    if (filled && fourColor) {
+        return huxerui::Image(dark ? entry.gradientDarkIcon : entry.gradientLightIcon);
+    }
+    return huxerui::Image(filled ? entry.selectedIcon : entry.outlineIcon).Tint(foreground);
+}
 
 // Android 仅暴露四个一级页；规则、连接、日志和网站测试由设置页的“更多”入口承载。
 constexpr std::array<std::size_t, 4> kAndroidNavDestinations{
@@ -388,6 +408,7 @@ struct AndroidNavigationIndicator {
     huxerui::Color fill = huxerui::Color::Transparent();
     huxerui::AnimationSpec animation = huxerui::TweenSpec{0.2};
     bool reduced_motion = false;
+    huxerui::VectorAsset gradient;
 
     bool operator==(const AndroidNavigationIndicator&) const = default;
 };
@@ -406,7 +427,10 @@ public:
             geometry_pending_ || !initialized_ ||
             selected_index_ != spec.selected_index;
         selected_index_ = spec.selected_index;
+        if (initialized_ && (fill_ != spec.fill || gradient_ != spec.gradient))
+            InvalidatePaint(PaintInvalidation::Content);
         fill_ = spec.fill;
+        gradient_ = spec.gradient;
         animation_ = spec.animation;
         reduced_motion_ = spec.reduced_motion;
         initialized_ = true;
@@ -460,15 +484,21 @@ public:
 
     void PaintBehindContent(const huxerui::ViewNode& node,
                             huxerui::PaintContext& context) const override {
-        if (!geometry_initialized_ || fill_.alpha <= 0.0F) return;
-        context.DrawRect(
-            huxerui::Rect{offset_.Value(), indicator_y_, indicator_width_, 50.0F},
-            fill_, 25.0F);
+        if (!geometry_initialized_ || indicator_width_ <= 0.0F) return;
+        const huxerui::Rect bounds{offset_.Value(), indicator_y_, indicator_width_, 50.0F};
+        if (gradient_.HasValue()) {
+            context.PushClip(bounds, huxerui::CornerRadii{25.0F});
+            context.DrawImage(gradient_, bounds);
+            context.PopClip();
+        } else if (fill_.alpha > 0.0F) {
+            context.DrawRect(bounds, fill_, 25.0F);
+        }
     }
 
 private:
     std::size_t selected_index_ = 0;
     huxerui::Color fill_ = huxerui::Color::Transparent();
+    huxerui::VectorAsset gradient_;
     huxerui::MotionController offset_;
     huxerui::AnimationSpec animation_ = huxerui::TweenSpec{0.2};
     bool reduced_motion_ = false;
@@ -484,6 +514,12 @@ private:
 [[huxerui::composable]] huxerui::View DesktopNavigationSurface(
     huxerui::State<std::size_t> navPage) {
     const auto& style = huxerui::UseEnvironment<huxerui::NavigationPaneStyle>();
+    const auto& theme = huxerui::UseTheme();
+    const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+    const bool dark = IsDarkTheme(theme);
+    const huxerui::VisualFill fill = fourColor
+        ? huxerui::VisualFill{FourColorSelectionGradient(dark)}
+        : huxerui::VisualFill{style.indicator};
     const auto scroll = huxerui::UseScrollController();
     auto tooltip = huxerui::UseEnvironment<huxerui::TooltipStyle>();
     tooltip.placement = {huxerui::AnchorSide::Right, huxerui::AnchorAlignment::Center};
@@ -496,10 +532,10 @@ private:
         const bool selected = navPage.Get() == index;
         items.push_back(huxerui::Stack {
           huxerui::Stack {}.With(huxerui::Frame{.width = indicator.width, .height = indicator.height},
-              huxerui::Background(style.indicator), radius,
+              huxerui::Background(fill), radius,
               huxerui::Opacity(huxerui::AnimateTo(selected ? 1.0F : 0.0F, style.selection_animation))),
-          huxerui::Image(selected ? entry.selectedIcon : entry.outlineIcon)
-              .Tint(selected ? style.selected_content : style.label_style.foreground)
+          NavigationIcon(entry, selected, fourColor, dark,
+                         selected ? style.selected_content : style.label_style.foreground)
               .With(huxerui::Frame{.width = style.icon_size, .height = style.icon_size}),
         }.With(huxerui::Frame{.height = style.item_height}, huxerui::Padding(style.item_margin), radius,
             huxerui::Align(huxerui::HorizontalAlignment::Center, huxerui::VerticalAlignment::Center),
@@ -545,13 +581,16 @@ private:
         .With(huxerui::Padding(huxerui::EdgeInsets{.top = kDesktopTopContentGap}));
 }
 
-// 底部导航以中性胶囊承托整项，选中图标和标签使用强调色。
+// 底部导航以胶囊承托整项，选中图标和标签使用当前主题的强调样式。
 // 内建 NavigationBar 的指示器只覆盖图标层，所以这里自绘条目；同时保留底部
 // 安全区消费与系统导航栏底色，行为对齐原先的内建组件。
 [[huxerui::composable]] huxerui::View AndroidNavigationSurface(
     huxerui::State<std::size_t> navPage, bool fromSwipe = false,
     std::function<void()> onSelect = {}) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+    const bool dark = IsDarkTheme(theme);
+    const auto selectedContent = fourColor ? theme.colors.on_primary_container : theme.colors.primary;
     const std::size_t selected = navPage.Get() == pages::kHome
         ? 0U
         : navPage.Get() == pages::kProxies ? 1U
@@ -570,10 +609,9 @@ private:
         const NavigationEntry& entry = kNavigationEntries[destination];
         const bool isSelected = index == selected;
         const huxerui::TweenSpec fade{duration, huxerui::Easing::EaseOut};
-        const auto content = [entry, isSelected, fade](huxerui::Color color, bool filled) {
+        const auto content = [entry, isSelected, fade, fourColor, dark](huxerui::Color color, bool filled) {
             return huxerui::Column {
-                huxerui::Image(filled ? entry.selectedIcon : entry.outlineIcon)
-                    .Tint(color)
+                NavigationIcon(entry, filled, fourColor, dark, color)
                     .With(huxerui::Frame{.width = 20.0F, .height = 20.0F},
                           huxerui::Opacity(huxerui::AnimateTo(filled || !isSelected ? 1.0F : 0.0F, fade))),
                 huxerui::Text(entry.label).Style(huxerui::TextStyle{
@@ -586,7 +624,7 @@ private:
         entries.push_back(
             huxerui::Stack {
                 content(theme.colors.on_surface_variant, false),
-                content(theme.colors.primary, true)
+                content(selectedContent, true)
                     .With(huxerui::Opacity(huxerui::AnimateTo(isSelected ? 1.0F : 0.0F, fade))),
             }.With(huxerui::Grow(1.0F),
                       huxerui::Frame{.height = 64.0F},
@@ -619,7 +657,9 @@ private:
                   AndroidNavigationIndicator{selected,
                                              CompactNavigationIndicatorColor(theme),
                                              indicatorMotion,
-                                             theme.motion.reduced_motion}),
+                                             theme.motion.reduced_motion,
+                                             fourColor ? FourColorSelectionGradient(dark)
+                                                       : huxerui::VectorAsset{}}),
     }.With(huxerui::SafeAreaPadding{.top = false},
            systemBars,
            huxerui::Semantics{.role = huxerui::SemanticRole::Navigation},
@@ -1579,6 +1619,7 @@ void StartDesktopRuntime() {
 
     return huxerui::ProvideEnvironment(locale, FluxThemed(
         rootSpec,
+        UsesFourColorAccent(accent),
         WithUnifiedFieldStyle(
             huxerui::Column {
                 AppNoticeEffects(profilesModel, navPage, pagerPage),

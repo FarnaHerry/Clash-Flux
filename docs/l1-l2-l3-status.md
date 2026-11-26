@@ -1,5 +1,34 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-25 卡片四色选中描边
+
+- 基于 `eff37870` 工作区和 HuxerUI `b581978c`。默认主题的卡片选中态共用四色 1pt 圆角描边。新选中沿边扫一圈，640ms 后收为静态。生产组件的无窗口回归核对深浅、宽窄布局、点击选择，以及亮带出现、停止时的描边命令数和卡片几何。
+- Linux 原生深浅截图核对共享绘制组件四边颜色，隔离生产窗口宽窄首帧通过。相同虚拟网格滚动输入下，原生绘制 P95 从 5.16ms 升至 5.53ms，静态和流光各 955 个绘制间隔均未超过 25ms。停稳后无持续绘制。[性能对照](scroll-performance.md#2026-11-25-卡片选中描边流光)
+- Linux `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.sh --version`（v0.3.130）、`git diff --check`、`./build/test_page_transition --accent-roles` 通过，`ctest --test-dir build --output-on-failure --no-tests=error -j 2 -R '^(page_transition|ui_resources)$'` 通过（2/2）。Android ARM64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3` 通过。原生性能测量限于 Linux，Android 真机、Windows/macOS 显示和设备功耗未实测。
+
+## 2026-11-25 首页流量统计圆环配色
+
+- 基于 `eff37870` 工作区和 HuxerUI `b581978c`。默认主题的流量统计圆环和累计量旁的方向箭头取用导航四色中的下载蓝（浅 `#2767C4`、深 `#91BDFF`）和上传琥珀黄（浅 `#996314`、深 `#FFD28B`）。Linux 隔离原生窗口取样覆盖深浅色的 1080pt 宽窗与 430pt 窄窗，核对了两种方向色、中性累计数字和普通卡片底色。
+- Linux `cmake --build build --target clash-flux test_page_transition --parallel 6`、`./run.sh --version`（v0.3.130）、`git diff --check` 通过，`ctest --test-dir build --output-on-failure --no-tests=error -j 2 -R '^(page_transition|ui_resources)$'` 通过（2/2）。Android ARM64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3` 通过。原生取样覆盖零流量首帧，真实流量及 Android 真机、Windows 和 macOS 显示未实测。
+
+## 2026-11-25 浅色导航渐变与首页选择框箭头
+
+- 基于 `eff37870` 工作区和 HuxerUI `b581978c`。浅色模式提亮选中图标的四色填充，在浅灰底托上保留轮廓对比。Linux 原生截图取样中，1080pt 宽窗首页选中图标的中位相对亮度从 0.090 升至 0.134，430pt 窄窗从 0.094 升至 0.135，深色截图的图标区域像素一致。
+- 首页代理组和节点选择框各自保留实际呈现的箭头角度。旧实现的无窗口回归复现了中途关闭和立即重开的跳转。修复后通过中途关闭、立即重开、两个字段同时处于转动中时快速互切的逐帧检查，并保留列表朝向与原字段几何。
+- Linux `cmake --build build --target clash-flux test_page_transition --parallel 6`、`./run.sh --version`（v0.3.130）、`git diff --check`、`./build/test_page_transition --home-proxy-pickers` 和 `page_transition`、`ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3` 通过。箭头逐帧交互验收覆盖无窗口环境，原生鼠标/触摸手感、Android 真机及 Windows/macOS 待验证。
+
+## 2026-11-25 默认四色渐变与参考图灰
+
+- 基于 `eff37870` 工作区和 HuxerUI `b581978c`。沿用已保存的 `blue` 预设 ID，深浅模式的内容区与卡片使用参考图灰。当前导航和主提交按钮沿原有绘制边界用四色渐变。流量统计卡以普通卡片底色承托蓝、橙方向色。
+- Linux 执行 `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.130）、`git diff --check`，以及 `page_transition`、`ui_resources` 回归。隔离设置与系统服务后，从深浅色的 1080pt 宽窗与 430pt 窄窗截图取样，确认流量统计和下载卡的底色相同。宽窗另核对圆环的蓝橙色和当前导航渐变。未覆盖 Android 真机、Windows 或 macOS 的原生绘制。
+- 同一基线上的方案 2 将四色渐变同时用于选中底托和选中图标内部。16 份深浅 SVG 均通过 HuxerUI 资源编译，另核对其渲染轮廓与原图标一致。Linux 原生窗口核对了深浅主题在 1080pt 侧栏和 430pt 底栏的首页选中首帧，以及独立紫色主题在宽窗的单色首页图标。上述 Linux 构建、版本、差异检查及两项 CTest 回归通过。Android ARM64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3` 通过。原生取样覆盖首页，其他入口的切换取样和 Android 真机、Windows、macOS 原生显示待验证。
+
+## 2026-11-25 代理分组连续滚动与首页选择框
+
+- 基于 `eff37870` 加本轮工作区及 HuxerUI `b581978c`。纵向分组按分配后的正文宽度测量，缓存限制在视口上下各 200pt。滚动区悬停从已提交的几何读取溢出状态，协调视口声明时不再订阅滚动偏移。宽屏 96 帧的节点卡工厂调用从 61,995 次降至 1,170 次，滚动位移一致。[连续滚动复现](scroll-performance.md#2026-11-25-纵向代理分组连续滚动)
+- 首页两个选择框共用一个浮层。无窗口回归覆盖单击互切、搜索与焦点重置、回到当前字段、短视口的列表方向、响应式宽窄切换及快照替换。滚动回归覆盖组头冻结、原位开合、滚轮、触控板和触摸位移，以及悬停后连续滚动时的行挂载次数。
+- Linux `cmake --build build --target clash-flux test_page_transition`、`./run.sh --version`（v0.3.130）、`git diff --check`、`--home-proxy-pickers`、`--proxy-group-panel`、`--scrollbars` 与 `page_transition`、`ui_resources`、`group_expansion_runtime` 通过。隔离数据目录和服务的 Wayland 原生窗口启动并提交了首帧。Android ARM64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3` 通过。未测量原生滚动帧率，未覆盖 Android 真机或 Windows/macOS 原生交互。
+
 ## 2026-11-25 代理分组短滚动位移与行高缓存
 
 - 基于 `3ed4df5` 工作区与 HuxerUI `b581978c`。父布局在两种宽度下测量时共用行高缓存，常规滚动按输入偏移布局，开合锚点在几何提交后清除。专项覆盖单次滚轮、短触控板输入和停住后抬手的触摸拖动。20pt 触控板输入的测量调用从 110 次降至 39 次，复现条件和测量边界见[纵向代理分组短滚动](scroll-performance.md#2026-11-25-纵向代理分组短滚动)。

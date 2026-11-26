@@ -380,6 +380,9 @@ huxerui::XYChartData BuildTrafficChartData(
 // 流量统计：圆环旁保留方向占比，累计上传/下载量固定排在卡片底部。
 [[huxerui::composable]] huxerui::View HomeTotalCard(const HomeState& s) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+    const auto muted = theme.colors.on_surface_variant;
+    const auto directions = fourColor ? FourColorTrafficTotalColors(theme) : TrafficColors{muted, muted};
     const std::int64_t upload = s.coreReady ? std::max<std::int64_t>(0, s.totalUp) : 0;
     const std::int64_t download = s.coreReady ? std::max<std::int64_t>(0, s.totalDown) : 0;
     const double total = static_cast<double>(upload) + static_cast<double>(download);
@@ -390,16 +393,16 @@ huxerui::XYChartData BuildTrafficChartData(
     };
     const auto shareFont = huxerui::Font::System(font_size::kCaption)
                                .WithWeight(huxerui::FontWeight::SemiBold);
-    const auto shareMetric = [&theme, shareFont](std::string direction, const std::string& share) {
+    const auto shareMetric = [muted, shareFont](std::string direction, const std::string& share) {
         return huxerui::Text(direction + " " + share)
-            .Style(huxerui::TextStyle{shareFont, theme.colors.on_surface_variant});
+            .Style(huxerui::TextStyle{shareFont, muted});
     };
     const auto amountFont = huxerui::Font::System(font_size::kBody)
                                 .WithWeight(huxerui::FontWeight::SemiBold);
-    const auto amountMetric = [&theme, amountFont](std::string direction, std::int64_t bytes) {
+    const auto amountMetric = [&theme, amountFont](std::string direction, std::int64_t bytes, huxerui::Color color) {
         return huxerui::Row {
             huxerui::Text(std::move(direction))
-                .Style(huxerui::TextStyle{amountFont, theme.colors.on_surface_variant}),
+                .Style(huxerui::TextStyle{amountFont, color}),
             huxerui::Text(bytes == 0 ? "0B" : formatBytes(bytes))
                 .Style(huxerui::TextStyle{amountFont, theme.colors.on_surface}),
         }.With(huxerui::Spacing(6.0F),
@@ -418,8 +421,8 @@ huxerui::XYChartData BuildTrafficChartData(
         huxerui::Row {
             huxerui::PieChart(data)
                 .Style(huxerui::PieChartStyle{.inner_radius = 0.62F, .rounded_caps = true})
-                .SliceStyle("upload", {.fill = huxerui::Brush(theme.colors.on_surface_variant)})
-                .SliceStyle("download", {.fill = huxerui::Brush(theme.colors.on_surface)})
+                .SliceStyle("upload", {.fill = huxerui::Brush(directions.upload)})
+                .SliceStyle("download", {.fill = huxerui::Brush(fourColor ? directions.download : theme.colors.on_surface)})
                 .With(huxerui::Frame{.width = 72.0F, .height = 72.0F}),
             huxerui::Column {
                 shareMetric("↑", shareText(upload)),
@@ -432,8 +435,8 @@ huxerui::XYChartData BuildTrafficChartData(
                huxerui::Spacing(8.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
         huxerui::Column {
-            amountMetric("↑", upload),
-            amountMetric("↓", download),
+            amountMetric("↑", upload, directions.upload),
+            amountMetric("↓", download, directions.download),
         }.With(huxerui::Spacing(4.0F),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
     }.With(huxerui::Spacing(8.0F),
@@ -442,10 +445,12 @@ huxerui::XYChartData BuildTrafficChartData(
 
 [[huxerui::composable]] huxerui::View HomeTrafficCard(const HomeState& s, bool upload) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
     const bool fresh = huxerui::UseService<CoreModel>()->view.Get().health.traffic.state == health::State::Fresh;
-    const auto color = theme.colors.on_surface_variant;
+    const auto directions = ResolveTrafficColors(theme, fourColor);
+    const auto color = fourColor ? (upload ? directions.upload : directions.download) : theme.colors.on_surface_variant;
     auto fill = color;
-    fill.alpha = 0.18F;
+    fill.alpha = fourColor ? 0.14F : 0.18F;
     const auto rateField = upload ? &stream::TrafficPoint::up : &stream::TrafficPoint::down;
     const auto rate = s.latest.*rateField;
     const auto title = upload ? Localized("上传") : Localized("下载");
@@ -477,7 +482,7 @@ huxerui::XYChartData BuildTrafficChartData(
     return HomeTrafficCardLayout(
         HomeCardHeading(upload ? app::images::arrow_up : app::images::arrow_down, title),
         huxerui::Text(fresh && rate > 0 ? formatRate(rate) : "0B/s")
-            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), color}),
+            .Style(huxerui::TextStyle{huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant}),
         std::move(chart), ResolveIslandTheme(theme).island_padding);
 }
 

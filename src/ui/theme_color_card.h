@@ -7,6 +7,7 @@
 #include <utility>
 #include <huxerui/huxerui.h>
 
+#include "card_hover_outline.h"
 #include "theme_colors.h"
 #include "ui.h"
 
@@ -73,11 +74,25 @@ inline huxerui::View HsbGradientSliderTrack(
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
+inline huxerui::View WithThemeCardOutline(huxerui::View card, const huxerui::ThemeSpec& theme,
+    bool selected, std::function<void()> onClick) {
+    return huxerui::Scope([card = std::move(card), theme, selected, onClick = std::move(onClick)] {
+        const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
+        const auto hovered = huxerui::UseState(false);
+        if (fourColor) {
+            return WithSelectableCardHover(card, theme, hovered, theme.shapes.medium, selected, true).OnClick(onClick);
+        }
+        return huxerui::View{card}.With(
+            huxerui::Border(theme.colors.primary, selected ? kCardOutlineWidth : 0.0F),
+            ResolveCardIndication(theme, selected)).OnClick(onClick);
+    });
+}
+
 inline huxerui::View ThemeModeCardSurface(const huxerui::ThemeSpec& theme,
     huxerui::ImageResource symbol, bool selected, std::string label,
     std::function<void()> onClick, float width = kThemeModeCardWidth) {
     const auto colors = ResolveSelectableTileColors(theme, selected);
-    return huxerui::Row {
+    auto card = huxerui::Row {
       huxerui::Image(symbol).Tint(colors.fg)
           .With(huxerui::Frame{.width = kThemeModeIconSize, .height = kThemeModeIconSize})
           .Key("theme-mode-symbol"),
@@ -87,12 +102,11 @@ inline huxerui::View ThemeModeCardSurface(const huxerui::ThemeSpec& theme,
     }.With(huxerui::Frame{.width = width, .height = kThemeModeCardHeight},
         huxerui::Spacing(theme.spacing.small), huxerui::Padding(theme.spacing.small),
         huxerui::Background(colors.surface), huxerui::CornerRadius(theme.shapes.medium),
-        huxerui::Border(theme.colors.primary, selected ? kCardOutlineWidth : 0.0F),
         huxerui::ClipChildren(),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
-        ResolveCardIndication(theme, selected), huxerui::Focusable(true),
-        huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = std::move(label), .selected = selected})
-        .OnClick(std::move(onClick));
+        huxerui::Focusable(true),
+        huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = std::move(label), .selected = selected});
+    return WithThemeCardOutline(std::move(card), theme, selected, std::move(onClick));
 }
 
 // 用真实候选主题 tokens 绘制微型界面；内部仅展示，不创建可交互控件。
@@ -102,7 +116,15 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
     float edge = kThemeColorCardEdge,
     std::string accentId = {}) {
     auto candidate = theme;
-    if (!accentId.empty()) ApplyFluxAccent(candidate.colors, IsDarkTheme(theme), accentId);
+    const bool dark = IsDarkTheme(theme);
+    const bool fourColor = !accentId.empty() && UsesFourColorAccent(accentId);
+    if (!accentId.empty()) candidate.colors = dark ? FluxDarkColors(accentId) : FluxLightColors(accentId);
+    const huxerui::VisualFill selectionFill = fourColor
+        ? huxerui::VisualFill{FourColorSelectionGradient(dark)}
+        : huxerui::VisualFill{candidate.colors.primary_container};
+    const huxerui::VisualFill buttonFill = fourColor
+        ? ResolveFluxPrimaryFill(candidate, true) : huxerui::VisualFill{fill};
+    const auto buttonForeground = fourColor ? ResolveFluxPrimaryForeground(candidate, true) : foreground;
     const auto islands = ResolveIslandTheme(candidate);
     const auto bar = [](huxerui::Color color, float width) {
         return huxerui::Row{}.With(huxerui::Frame{.width = width, .height = kThemePreviewLineHeight},
@@ -134,10 +156,10 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
               bar(candidate.colors.on_surface_variant, edge * 0.3F),
               huxerui::Row {bar(candidate.colors.on_primary_container, edge * 0.2F)}
                   .With(huxerui::Padding(kThemePreviewSpacing),
-                      huxerui::Background(candidate.colors.primary_container),
+                      huxerui::Background(selectionFill),
                       huxerui::CornerRadius(theme.shapes.small)).Key("theme-preview-selection"),
-              huxerui::Row {bar(foreground, edge * 0.12F)}
-                  .With(huxerui::Padding(kThemePreviewSpacing), huxerui::Background(fill),
+              huxerui::Row {bar(buttonForeground, edge * 0.12F)}
+                  .With(huxerui::Padding(kThemePreviewSpacing), huxerui::Background(buttonFill),
                       huxerui::CornerRadius(theme.shapes.small)).Key("theme-preview-button"),
             }.With(huxerui::Grow(1.0F), huxerui::Spacing(kThemePreviewSpacing),
                 huxerui::Padding(kThemePreviewSpacing), huxerui::Background(islands.base),
@@ -147,16 +169,16 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
             huxerui::CornerRadius(theme.shapes.small),
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)).Key("theme-color-preview");
     }
-    return huxerui::Column {content}.With(
+    auto card = huxerui::Column {content}.With(
         huxerui::Frame{.width = edge, .height = edge * kThemeColorCardHeightRatio},
         huxerui::Spacing(theme.spacing.small),
         huxerui::Padding(theme.spacing.small), huxerui::Background(ResolveIslandTheme(theme).raised),
         huxerui::CornerRadius(theme.shapes.medium), huxerui::ClipChildren(),
-        huxerui::Border(theme.colors.primary, selected ? kCardOutlineWidth : 0.0F),
         huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch),
-        ResolveCardIndication(theme, selected), huxerui::Focusable(true),
+        huxerui::Focusable(true),
         huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = std::move(label), .selected = selected}
-    ).OnClick(std::move(onClick));
+    );
+    return WithThemeCardOutline(std::move(card), theme, selected, std::move(onClick));
 }
 
 } // namespace clashflux::ui

@@ -12,10 +12,9 @@ namespace clashflux::ui {
 inline constexpr float kScrollHoverMinimumOverflow = 0.5F;
 
 struct ScrollHoverRegion {
-    huxerui::ScrollController controller;
     huxerui::State<bool> selected{false};
     std::size_t depth = 0;
-    bool hovered = false, rail_hovered = false, enabled = false;
+    bool hovered = false, rail_hovered = false, enabled = false, overflowing = false;
     // UI-thread input epoch shared by the viewport and its scroll animation.
     std::uint64_t input_revision = 0;
 };
@@ -33,9 +32,7 @@ struct ScrollHoverRoute {
         std::shared_ptr<ScrollHoverRegion> target;
         for (const auto& weak : regions) {
             const auto region = weak.lock();
-            if (!region || (!region->hovered && !region->rail_hovered) || !region->enabled ||
-                !region->controller.IsConnected() ||
-                region->controller.Metrics().maximum_offset <= kScrollHoverMinimumOverflow) {
+            if (!region || (!region->hovered && !region->rail_hovered) || !region->enabled || !region->overflowing) {
                 continue;
             }
             if (!target || region->depth > target->depth) target = region;
@@ -51,6 +48,7 @@ struct ScrollHoverRoute {
         region->hovered = false;
         region->rail_hovered = false;
         region->enabled = false;
+        region->overflowing = false;
         region->selected = false;
         std::erase_if(regions, [&](const auto& weak) { return weak.lock() == region; });
         Refresh();
@@ -86,8 +84,8 @@ public:
     ~Extension() override { value_.route->Remove(value_.region); }
     void Update(huxerui::ViewNode& node, const ScrollViewportHover& value) {
         if (value_.route != value.route || value_.region != value.region) value_.route->Remove(value_.region);
+        if (value_.controller != value.controller) value.region->overflowing = false;
         value_ = value;
-        value_.region->controller = value.controller;
         value_.region->depth = value.depth;
         value_.region->enabled = value.enabled && node.IsEnabled();
         value_.route->Add(value_.region);
@@ -97,18 +95,19 @@ public:
         // Qualification can change without pointer movement: disabling a subtree
         // or content becoming short must hand the highlight to an eligible ancestor.
         const bool enabled = value_.enabled && node.IsEnabled();
-        const bool overflowing = enabled && value_.region->controller.IsConnected() &&
-            value_.region->controller.Metrics().maximum_offset > kScrollHoverMinimumOverflow;
-        if (enabled != value_.region->enabled || overflowing != overflowing_) {
+        // Refresh also runs during reconciliation. Publish overflow here so it never
+        // reads observable scroll metrics while the viewport scope is composing.
+        const bool overflowing = enabled && value_.controller.IsConnected() &&
+            value_.controller.Metrics().maximum_offset > kScrollHoverMinimumOverflow;
+        if (enabled != value_.region->enabled || overflowing != value_.region->overflowing) {
             value_.region->enabled = enabled;
-            overflowing_ = overflowing;
+            value_.region->overflowing = overflowing;
             value_.route->Refresh();
         }
         return PaintInvalidation::None;
     }
 private:
     ScrollViewportHover value_;
-    bool overflowing_ = false;
 };
 
 } // namespace clashflux::ui

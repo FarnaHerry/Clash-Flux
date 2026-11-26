@@ -2329,15 +2329,33 @@ void testHomeProxyPickers() {
           "home pickers show both fields without a subscription");
     group.Find(chevron).Tap();
     ui.PumpUntil([&] { return panel.Exists() && isTurning(panelChevron); });
+    const auto partiallyOpen = panelChevron.One().bounds;
+    ui.PressKey(huxerui::Key::Escape); ui.Pump();
+    check(!panel.Exists() && std::abs(group.Find(chevron).One().bounds.width - partiallyOpen.width) < 0.1F,
+          "closing mid-turn starts at the last presented angle of the popup arrow");
+    groupInput.Tap(); ui.Pump();
+    ui.PumpUntil([&] { return panel.Exists(); });
+    check(std::abs(panelChevron.One().bounds.width - partiallyOpen.width) < 0.1F,
+          "reopening in the same instant preserves the angle across the field handoff");
     ui.Pump(kSettle);
     check(focusedCombo.One().expanded == true && !options.Exists(),
           "the group opens an empty list without a subscription");
-    ui.TapAt(outside); ui.Pump(kSettle);
-    node.Tap(); ui.Pump(kSettle);
-    check(focusedCombo.One().expanded == true && !options.Exists(),
-          "the node opens an empty list without a subscription");
-    panelInput.Tap(); ui.Pump(kSettle);
-    check(!panel.Exists(), "tapping the expanded editor closes an empty popup on touch devices");
+    nodeInput.Tap(); ui.Pump();
+    ui.PumpUntil([&] { return panel.Exists() && isTurning(group.Find(chevron)) && isTurning(panelChevron); });
+    const auto groupTurning = group.Find(chevron).One().bounds;
+    const auto nodeTurning = panelChevron.One().bounds;
+    groupInput.Tap(); ui.Pump();
+    check(panelInput.One().bounds == groupBounds &&
+              std::abs(panelChevron.One().bounds.width - groupTurning.width) < 0.1F &&
+              std::abs(node.Find(chevron).One().bounds.width - nodeTurning.width) < 0.1F,
+          "a rapid handoff resumes each field's own presented angle");
+    nodeInput.Tap(); ui.Pump(kSettle);
+    check(focusedCombo.One().identifier == "home-proxy-node" && focusedCombo.One().expanded == true &&
+              panel.Count() == 1 && panelInput.One().bounds == nodeBounds && !options.Exists(),
+          "one tap on the other field switches the empty popup and its focus");
+    panelChevron.Tap(); ui.Pump(kSettle);
+    check(!panel.Exists() && focusedCombo.One().identifier == "home-proxy-node",
+          "closing after a handoff restores focus to the active field");
     checkLayout();
 
     clashflux::ui::ProxiesSnapshot snapshot{
@@ -2406,9 +2424,9 @@ void testHomeProxyPickers() {
           "the group opens with an empty query, the current group as a hint, and all choices");
     const auto inlineList = suggestions.One();
     check(panelInput.One().bounds == groupBounds &&
-              inlineList.bounds.y == groupBounds.y + groupBounds.height &&
+              inlineList.bounds.y + inlineList.bounds.height == groupBounds.y &&
               inlineList.bounds.width == groupBounds.width,
-          "the input and list occupy one popup surface positioned at the original input");
+          "the group list stays attached to its input and leaves the node field visible");
     checkLayout();
     ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 112.0F}});
     ui.PumpUntil([&] { return suggestions.One().bounds.y < groupBounds.y; });
@@ -2419,19 +2437,26 @@ void testHomeProxyPickers() {
               aboveGroup.y >= 0.0F && aboveGroup.y + aboveGroup.height == groupBounds.y &&
               aboveGroup.height < 3.0F * clashflux::ui::kHomeProxyOptionHeight,
           "when neither side fits all groups, the list scrolls above the stationary input in the larger space");
-    check(pointsUp(), "the group arrow points up when the list opens above its field");
+    ui.PumpUntil(pointsUp);
     panelInput.EnterText("BACK"); ui.Pump(kSettle);
     check(panelInput.One().bounds == groupBounds && focusedCombo.One().expanded == true &&
               suggestions.One().bounds.height == clashflux::ui::kHomeProxyOptionHeight,
           "filtering the upward list keeps the input pinned and focused");
+    panelInput.Tap({.device_kind = huxerui::PointerDeviceKind::Mouse}); ui.Pump(kSettle);
+    check(panel.Exists() && panelInput.One().value == "BACK", "clicking the search editor lets the user move its caret");
     ui.SetWindowMetrics({.viewport = {kHomeProxySearchViewportWidth, 480.0F}});
-    ui.PumpUntil([&] { return suggestions.One().bounds.y == groupBounds.y + groupBounds.height; });
-    ui.Pump();
     ui.Pump(kSettle);
     check(panelInput.One().bounds == groupBounds && panelInput.One().value == "BACK" &&
               focusedCombo.One().expanded == true,
-          "growing the viewport flips the list below without moving the input or resetting its session");
-    check(!pointsUp(), "changing the list placement below the field turns the group arrow back down");
+          "growing the viewport keeps the group editor in place and preserves its session");
+    check(pointsUp(), "the group list keeps its arrow pointing up while the node field is visible below");
+    nodeInput.Tap(); ui.Pump(kSettle);
+    check(focusedCombo.One().identifier == "home-proxy-node" && panel.Count() == 1 &&
+              panelInput.One().value == "" && focusedCombo.One().placeholder == "alpha",
+          "switching from a filtered group list opens the current group's nodes with a fresh query");
+    groupInput.Tap(); ui.Pump(kSettle);
+    check(focusedCombo.One().identifier == "home-proxy-group" && panel.Count() == 1 &&
+              panelInput.One().value == "", "one tap switches back to the group list and clears its search");
     panelChevron.Tap({.device_kind = huxerui::PointerDeviceKind::Mouse});
     ui.PumpUntil([&] { return !panel.Exists() && isTurning(group.Find(chevron)); });
     ui.Pump(kSettle);
@@ -2447,11 +2472,11 @@ void testHomeProxyPickers() {
     snapshot.groups[2].displayName = "Automatic";
     fixture->snapshot = snapshot;
     ui.PumpUntil([&] { return ui.Find(UiSelector::Text("Automatic")).Exists(); });
+    panelInput.EnterText("BACK"); ui.Pump(kSettle);
     const auto option = ui.Find(UiSelector::Text("Backup")).One().bounds;
     hoverAt({option.x + option.width / 2.0F, option.y + option.height / 2.0F});
     check(paintedHomeProxyCardOutline(ui) == 1.0F,
           "the card keeps its outline when the pointer moves into the group popup");
-    panelInput.EnterText("BACK"); ui.Pump(kSettle);
     check(panelInput.One().value == "BACK" && ui.Find(UiSelector::Text("Backup")).Exists() &&
               !ui.Find(UiSelector::Text("Automatic")).Exists(),
           "typing into the group field filters by the new query");
@@ -2515,6 +2540,7 @@ void testHomeProxyPickers() {
     ui.Pump(kSettle);
 
     group.Tap(); ui.Pump(kSettle);
+    panelInput.EnterText("Automatic"); ui.Pump(kSettle);
     ui.Find(UiSelector::Text("Automatic")).Tap(); ui.Pump(kSettle);
     check(nodeInput.One().value == "delta" && !nodeInput.One().enabled,
           "automatic groups expose the current member as read-only");
@@ -2555,6 +2581,18 @@ void testCompactHomeProxyPickers() {
     group.Tap(); ui.Pump(kSettle);
     check(groupCombo.One().expanded == true && primary.Exists() && backup.Exists() && !ui.ActiveTextInput(),
           "one compact tap opens all groups without starting a text input session");
+    node.Tap(); ui.Pump(kSettle);
+    check(panel.Count() == 1 && nodeCombo.One().expanded == true && !ui.ActiveTextInput(),
+          "one compact tap switches from the group list to the node list without opening a keyboard");
+    group.Tap(); ui.Pump(kSettle);
+    check(panel.Count() == 1 && groupCombo.One().expanded == true && !ui.ActiveTextInput(),
+          "one compact tap switches back to groups");
+    panelInput.Tap(); ui.Pump(kSettle);
+    check(!panel.Exists() && !ui.ActiveTextInput(), "tapping the open compact field closes it");
+    group.Tap(); ui.Pump(kSettle);
+    ui.PressKey(huxerui::Key::ArrowDown);
+    ui.PressKey(huxerui::Key::ArrowDown);
+    ui.Pump(kSettle);
     backup.Tap(); ui.Pump(kSettle);
     check(!panel.Exists() && groupCombo.One().placeholder == "Backup" && !ui.ActiveTextInput(),
           "selecting a compact group returns to its read-only trigger");
@@ -4583,6 +4621,8 @@ struct ProxyGridProfileFixture {
     float cache_extent = -1.0F;
     std::size_t count = 5000;
 };
+bool profileGroupedProxyGrid = false;
+float proxyGridProfileWidth = 0.0F;
 std::shared_ptr<ProxyGridProfileFixture> proxyGridProfileFixture;
 huxerui::ScrollController proxyGridController;
 huxerui::View ProxyGridProfileRoot() {
@@ -4607,24 +4647,49 @@ huxerui::View ProxyGridProfileRoot() {
     return huxerui::FlatTheme{huxerui::Scope([model, item, generation] {
         const auto controller = huxerui::UseScrollController();
         proxyGridController = controller;
+        const auto pinned = huxerui::UseState(std::make_shared<PinnedProxyGroup>()).Get();
+        if (profileGroupedProxyGrid) {
+            const std::size_t columns = huxerui::GridColumns::Adaptive(kProxyNodeWidth).Resolve(
+                proxyGridProfileWidth - 2.0F * kScrollBarGutter, kSectionCardSpacing);
+            const std::size_t rows = (model->count + columns - 1) / columns;
+            const auto list = MakeStickyProxyGroupList(rows + 1, [=](std::size_t index) -> huxerui::View {
+                ProxyGroupRow::Value row{.headerIndex = 1, .expanded = true};
+                if (index == 0) {
+                    return ProxyGroupPanelPart(ProxyGroupHeader("Group", "Selector", model->count,
+                        false, true, "", {}, [] {}), true, false, false)
+                        .LayoutValue<ProxyGroupHeaderName>("group").LayoutValue<ProxyGroupRow>(row);
+                }
+                std::vector<huxerui::View> cards;
+                const std::size_t start = (index - 1) * columns;
+                for (auto i = start; i < std::min(start + columns, model->count); ++i) cards.push_back(item(i));
+                const bool last = index == rows;
+                if (last) row.trailingGap = 0.0F;
+                return ProxyGroupPanelPart(ProxyGroupNodeRow(std::move(cards), columns, last), false, last, false)
+                    .LayoutValue<ProxyGroupRow>(row).Key("proxy-profile-row-" + std::to_string(index));
+            }, pinned).Key("proxy-grid-viewport-" + std::to_string(generation));
+            return huxerui::View{huxerui::Column {ProxyGroupViewport{ScrollArea(list, controller)}}
+                .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
+        }
         auto grid = PageVirtualGrid(model->count, item, 8.0F)
             .Columns(huxerui::GridColumns::Adaptive(196.0F)) // matches kProxyNodeWidth
             .EstimatedRowExtent(52.0F)
             .ColumnSpacing(kSectionCardSpacing)
             .Controller(controller);
         if (model->cache_extent >= 0.0F) grid = std::move(grid).CacheExtent(model->cache_extent);
-        return huxerui::Column {ScrollArea(std::move(grid)
+        return huxerui::View{huxerui::Column {ScrollArea(std::move(grid)
                 .Key("proxy-grid-viewport-" + std::to_string(generation)), controller, {}, {},
             ScrollAreaInsets::Symmetric(kSectionCardSpacing))}
-            .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+            .With(huxerui::Grow(1.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
     })};
 }
 const huxerui::Application kProxyGridProfileApplication{ProxyGridProfileRoot, {.show_debug_overlay = false}};
 void profileProxyGrid() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     const auto measure = [&](float width, float cache) {
-        const std::string kind = cache < 0.0F ? "default" : "c" + std::to_string(static_cast<int>(cache));
+        const std::string kind = profileGroupedProxyGrid ? "grouped" :
+            cache < 0.0F ? "default" : "c" + std::to_string(static_cast<int>(cache));
         std::printf("proxy-grid-start,w=%.0f,cache=%s\n", width, kind.c_str());
+        proxyGridProfileWidth = width;
         huxerui::testing::UiTest ui(kProxyGridProfileApplication,
             {.viewport = {width, 1400.0F}, .resource_provider = AppResources()});
         ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
@@ -4649,7 +4714,7 @@ void profileProxyGrid() {
         std::array<double, frames> samples{};
         for (int frame = 0; frame < frames; ++frame) {
             const auto start = std::chrono::steady_clock::now();
-            static_cast<void>(proxyGridController.ScrollBy(160.0F));
+            static_cast<void>(proxyGridController.ScrollBy(profileGroupedProxyGrid ? 36.0F : 160.0F));
             ui.Pump(std::chrono::milliseconds(16));
             samples[frame] = std::chrono::duration<double, std::micro>(
                 std::chrono::steady_clock::now() - start).count();
@@ -4663,7 +4728,7 @@ void profileProxyGrid() {
     };
     for (const float width : {800.0F, 3200.0F}) {
         measure(width, -1.0F);
-        measure(width, 200.0F); // matches kProxyGridCacheExtent
+        if (!profileGroupedProxyGrid) measure(width, 200.0F); // matches kProxyGridCacheExtent
     }
 }
 
@@ -6366,6 +6431,7 @@ void testStickyProxyGroupHeader() {
         huxerui::State<float> footerAvoidance{0.0F};
         huxerui::State<std::optional<bool>> lastDisclosure{std::optional<bool>{}};
         int selections = 0;
+        int realizedRows = 0;
     };
     std::shared_ptr<Fixture> fixture;
     const huxerui::Application app{[]() -> huxerui::View {
@@ -6378,6 +6444,7 @@ void testStickyProxyGroupHeader() {
             const std::size_t end = secondIndex + (lastDisclosure.value_or(true) ? rowsPerGroup : 2);
             auto list = MakeStickyProxyGroupList(end,
                 [fixture, open, longFirstGroup, lastDisclosure, secondIndex, end](std::size_t index) -> huxerui::View {
+                    ++fixture->realizedRows;
                     const bool first = index < secondIndex;
                     const auto header = first ? 0 : secondIndex;
                     ProxyGroupRow::Value row{.headerIndex = header + 1, .expanded = first ? open : lastDisclosure.value_or(true)};
@@ -6423,7 +6490,8 @@ void testStickyProxyGroupHeader() {
             const auto scroll = ScrollArea(list, fixture->controller, {}, {},
                 {.bottom_avoidance = lastDisclosure ? fixture->footerAvoidance.Get() : 240.0F});
             if (!longFirstGroup) return scroll;
-            return huxerui::View{huxerui::Column {scroll}.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
+            return huxerui::View{huxerui::Column {ProxyGroupViewport{scroll}}
+                .With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))};
         })};
     }, {.show_debug_overlay = false, .application_hooks = {
         [&fixture](huxerui::ApplicationContext& context) {
@@ -6721,6 +6789,22 @@ void testStickyProxyGroupHeader() {
     ui.PumpAndSettle();
     check(dragEnd > dragStart && dragEnd <= dragStart + 30.1F && std::abs(controller.Offset() - dragEnd) < 0.1F,
           "a short touch drag with a stationary release stops at its dragged offset");
+
+    // Start hovered and trigger one declarative refresh. A metrics read in the
+    // viewport's extension update would subscribe its factory to every offset.
+    ui.SendPointer({.type = huxerui::PointerEventType::Move, .pointer_id = 46,
+        .position = scrollPoint, .device_kind = huxerui::PointerDeviceKind::Mouse});
+    fixture->footerAvoidance = 12.0F;
+    ui.PumpAndSettle();
+    const int before = fixture->realizedRows;
+    const float scrollStart = controller.Offset();
+    for (int frame = 0; frame < 24; ++frame) {
+        static_cast<void>(controller.ScrollBy(12.0F));
+        ui.Pump(std::chrono::milliseconds(16));
+    }
+    check(std::abs(controller.Offset() - scrollStart - 288.0F) < 0.1F &&
+          fixture->realizedRows - before <= 24 && fixture->pinned->index == 1,
+          "a hovered group list realizes entering rows without rebuilding the visible cards each frame");
 }
 
 void testProxySpeedLoading() {
@@ -7889,14 +7973,16 @@ void testVpnPublication() {
 huxerui::View ThemeColorSurfaceLightRoot() {
     auto theme = huxerui::MaterialLightThemeSpec();
     theme.colors = clashflux::ui::FluxLightColors();
-    return huxerui::MaterialTheme(theme, ThemeColorSurfaceContent());
+    return huxerui::MaterialTheme(theme, huxerui::ProvideEnvironment(
+        clashflux::ui::FluxGradientStyle{true}, ThemeColorSurfaceContent()));
 }
 huxerui::View ThemeColorSurfaceDarkRoot() {
     auto theme = huxerui::MaterialDarkThemeSpec();
     theme.colors = clashflux::ui::FluxDarkColors();
     theme.spacing.extra_large = 40.0F;
     theme.shapes.medium = 18.0F;
-    return huxerui::MaterialTheme(theme, ThemeColorSurfaceContent());
+    return huxerui::MaterialTheme(theme, huxerui::ProvideEnvironment(
+        clashflux::ui::FluxGradientStyle{true}, ThemeColorSurfaceContent()));
 }
 const huxerui::Application kThemeColorSurfaceLight{ThemeColorSurfaceLightRoot, {.show_debug_overlay = false}};
 const huxerui::Application kThemeColorSurfaceDark{ThemeColorSurfaceDarkRoot, {.show_debug_overlay = false}};
@@ -7906,6 +7992,7 @@ void testThemeColorSurfaces() {
         for (float width : {320.0F, 800.0F}) {
             huxerui::testing::UiTest ui(*application, {
                 .viewport = {width, 500.0F}, .resource_provider = AppResources()});
+            ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
             ui.PumpAndSettle();
             const auto color = ui.Find(UiSelector::Key("test-color-0")).One();
             const auto other = ui.Find(UiSelector::Key("test-color-1")).One();
@@ -7947,8 +8034,20 @@ void testThemeColorSurfaces() {
             };
             checkCenter("test-color-0");
             checkCenter("test-color-add");
+            const auto strokeCount = [&ui] {
+                static const std::regex stroke{R"(\bstroke-path\s*\{)"};
+                const auto scene = ui.CaptureSnapshot().ToString();
+                return std::distance(std::sregex_iterator(scene.begin(), scene.end(), stroke), std::sregex_iterator{});
+            };
+            const auto restingStrokes = strokeCount();
             ui.Find(UiSelector::Key("test-color-1")).Tap();
+            ui.Pump();
+            ui.Pump(std::chrono::milliseconds(180));
+            check(strokeCount() == restingStrokes + 1 &&
+                      ui.Find(UiSelector::Key("test-color-1")).One().bounds == other.bounds,
+                  "selecting a theme card adds a sweep stroke without moving the card");
             ui.PumpAndSettle();
+            check(strokeCount() == restingStrokes, "the selection sweep stops while the four-color outlines persist");
             check(!ui.Find(UiSelector::Key("test-color-0")).Find(UiSelector::Key("theme-color-symbol")).Exists(),
                   "previous selection mark clears after selecting another color");
             checkCenter("test-color-1");
@@ -8118,6 +8217,23 @@ void testCustomThemeColors() {
               std::abs(gradientSlider.disabled_thumb.alpha - 0.38F) < 0.001F,
           "HSB slider keeps the selected-color thumb and themed geometry");
     check(ResolveFluxAccent("invalid").id == "blue", "invalid saved color uses default");
+    check(UsesFourColorAccent("blue") && UsesFourColorAccent("invalid") &&
+              !UsesFourColorAccent("purple") && !UsesFourColorAccent("#245CB0"),
+          "the default preset and its fallback use four colors independently of a custom hue");
+    for (bool dark : {false, true}) {
+        auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+        theme.colors = dark ? FluxDarkColors() : FluxLightColors();
+        const auto expectedBase = dark ? huxerui::Color::Rgb(19, 19, 21) : huxerui::Color::Rgb(239, 237, 240);
+        const auto expectedCard = dark ? huxerui::Color::Rgb(37, 38, 40) : huxerui::Color::Rgb(252, 248, 249);
+        check(theme.colors.surface_container_low == expectedBase && theme.colors.surface_container == expectedCard,
+              "default page and card surfaces use the reference greys in both brightnesses");
+        const auto primary = ResolveFluxButtonStyle(theme, true, true);
+        const auto* image = std::get_if<huxerui::ImageFill>(&primary.background.Get());
+        const auto* gradient = image ? std::get_if<huxerui::VectorAsset>(&image->source) : nullptr;
+        check(gradient && gradient->HasValue() && FourColorSelectionGradient(dark).HasValue() &&
+                  primary.label_style.foreground == ResolveFluxPrimaryForeground(theme, true),
+              "default button and navigation fills have valid vector gradients");
+    }
     for (const auto hex : {"#000000", "#FFFFFF", "#FFFF00", "#0000FF", "#FF00FF", "#336699"}) {
         const auto accent = ResolveFluxAccent(hex);
         check(accent.id == hex, "custom color retains its stable identity");
@@ -10926,6 +11042,11 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-grid-profile") {
+        profileProxyGrid();
+        return failures == 0 ? 0 : 1;
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--proxy-group-profile") {
+        profileGroupedProxyGrid = true;
         profileProxyGrid();
         return failures == 0 ? 0 : 1;
     }

@@ -19,6 +19,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
     std::function<void()> on_click, SelectableTileInteraction interaction, SelectableTileStyle style,
     float corner_radius) {
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
     const auto hovered = huxerui::UseState(false);
     const SelectableTileColors colors =
         ResolveSelectableTileColors(theme, selected);
@@ -26,7 +27,7 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                              static_cast<bool>(on_click);
     const bool dragPreview = style == SelectableTileStyle::DragPreview;
     // 表面/圆角/描边在建树时就落在 Column 上（不能在返回值外面补修饰符，原因见
-    // Card 的注释）。选中卡用中性底色与 primary 描边。
+    // Card 的注释）。选中卡的底色和描边由各自的主题样式处理。
     huxerui::View tile =
         huxerui::Column {std::move(content)}
             .With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(10.0F, 8.0F)),
@@ -41,13 +42,13 @@ SelectableTileColors ResolveSelectableTileColors(const huxerui::ThemeSpec& theme
                   huxerui::Focusable(interactive),
                   huxerui::Enabled(interaction != SelectableTileInteraction::Disabled));
     if (!interactive && (selected || dragPreview)) {
-        tile = std::move(tile).With(huxerui::Border(theme.colors.primary, kCardOutlineWidth));
+        tile = WithStaticCardSelectionOutline(std::move(tile), theme, corner_radius, selected && fourColor);
     }
     if (dragPreview) {
         tile = std::move(tile).With(ResolveFluxShadows(theme).profile_drag_preview);
     }
     if (interactive) {
-        tile = WithSelectableCardHover(std::move(tile), theme, hovered, corner_radius, selected, dragPreview)
+        tile = WithSelectableCardHover(std::move(tile), theme, hovered, corner_radius, selected, fourColor, dragPreview)
             .OnClick(std::move(on_click));
     }
     return tile;

@@ -246,7 +246,8 @@ private:
         };
         const float width = viewport.size.width;
         const huxerui::Constraints itemConstraints{width, width, 0.0F, std::numeric_limits<float>::infinity()};
-        const float cache = std::max(200.0F, viewport.size.height * 0.5F);
+        // Like the tabbed node grid, keep a bounded runway even in a tall window.
+        constexpr float cache = 200.0F;
         const auto rangeFor = [&](float top) {
             return std::pair{rows.IndexAt(std::max(0.0F, top - cache)),
                 std::min(count, rows.IndexAt(top + viewport.size.height + cache) + 1)};
@@ -296,6 +297,23 @@ StickyProxyGroupList MakeStickyProxyGroupList(std::size_t count, Factory factory
     }).LayoutValue<PinnedProxyGroup>(pinned)
         .With(TrackProxyGroupScroll{std::move(pinned)}, huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
+
+class ProxyGroupViewport final : public huxerui::Layout<ProxyGroupViewport> {
+public:
+    using Layout::Layout;
+
+    static huxerui::LayoutResult Measure(huxerui::LayoutContext& context, huxerui::ViewNode& node,
+        huxerui::Constraints constraints) {
+        // The grouped view fills the page body. Fix the scroll area's cross size so its row
+        // can assign the gutter widths before measuring the virtual list.
+        if (constraints.HasBoundedWidth()) constraints = constraints.TightWidth(constraints.max_width);
+        if (constraints.HasBoundedHeight()) constraints = constraints.TightHeight(constraints.max_height);
+        auto& content = node.ChildAt(0);
+        const auto size = context.Measure(content, constraints);
+        huxerui::LayoutResult result;
+        return result.SetSize(size).Place(content, {});
+    }
+};
 
 inline huxerui::View ProxyGroupHeader(std::string title, std::string type, std::size_t nodeCount,
     bool degraded, bool expanded, std::string selectedNode, huxerui::View speed, std::function<void()> toggle) {

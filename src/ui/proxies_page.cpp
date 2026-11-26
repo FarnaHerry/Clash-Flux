@@ -787,7 +787,7 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
                 .LayoutValue<ProxyGroupRow>(row)
                 .Key("proxy-group-row-" + group->name + "::" + group->nodes[section.matches.NodeIndex(start)].name);
         }, pinned).With(RememberPageScroll{offset}, MeasureProxyGroupColumns{columnCount, tasks, compact});
-        return ScrollArea(list, controller, offset, {}, insets);
+        return ProxyGroupViewport{ScrollArea(list, controller, offset, {}, insets)};
     })
         .With(huxerui::Grow(1.0F)).Key("proxy-grouped-grid");
 }

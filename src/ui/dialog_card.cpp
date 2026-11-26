@@ -49,7 +49,8 @@ struct EditorDismissBinding {
 [[huxerui::composable]] huxerui::View DialogAction(huxerui::StringVariant label,
     std::function<void()> action, bool primary, bool enabled, bool danger) {
     const auto& theme = huxerui::UseTheme();
-    auto style = ResolveFluxButtonStyle(theme, primary);
+    const auto& gradient = huxerui::UseEnvironment<FluxGradientStyle>();
+    auto style = ResolveFluxButtonStyle(theme, primary, gradient.enabled && !danger);
     style.minimum_height = 40.0F;
     if (!primary) {
         style.background = huxerui::Color::Transparent();

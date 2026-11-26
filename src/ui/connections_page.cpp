@@ -587,7 +587,7 @@ huxerui::XYChartData ConnectionChartData(
                 huxerui::Font::Monospace(font_size::kMonoBody), theme.colors.on_surface_variant}),
         }.With(huxerui::Spacing(8.0F));
     };
-    const auto trafficColors = ResolveTrafficColors(theme);
+    const auto trafficColors = ResolveTrafficColors(theme, huxerui::UseEnvironment<FluxGradientStyle>().enabled);
     huxerui::Color fillDown = trafficColors.download;
     fillDown.alpha = 0.18F;
     const auto upColor = trafficColors.upload;
