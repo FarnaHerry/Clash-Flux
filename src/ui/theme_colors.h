@@ -488,13 +488,17 @@ inline const huxerui::VectorAsset& FourColorSelectionGradient(bool dark) {
     return gradient;
 }
 
-inline huxerui::VisualFill ResolveFluxPrimaryFill(const huxerui::ThemeSpec& theme, bool fourColor) {
-    if (!fourColor) return theme.colors.primary;
+inline const huxerui::VectorAsset& FourColorPrimaryGradient() {
     static const auto gradient = MakeFourColorGradient(huxerui::Color::Rgb(219, 231, 251), {
         huxerui::Color::Rgb(255, 224, 139), huxerui::Color::Rgb(137, 221, 178),
         huxerui::Color::Rgb(145, 185, 255), huxerui::Color::Rgb(255, 154, 146),
     });
     return gradient;
+}
+
+inline huxerui::VisualFill ResolveFluxPrimaryFill(const huxerui::ThemeSpec& theme, bool fourColor) {
+    if (fourColor) return FourColorPrimaryGradient();
+    return theme.colors.primary;
 }
 
 inline huxerui::Color ResolveFluxPrimaryForeground(const huxerui::ThemeSpec& theme, bool fourColor) {

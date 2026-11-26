@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include "inbound_settings.h"
 #include "../tun_settings.h"
 #include "../network_settings.h"
@@ -23,6 +24,16 @@
 #include "../subscription_user_agents.h"
 
 namespace clashflux::ui {
+
+inline constexpr char kProxyViewSetting[] = "ui.proxy_view";
+
+inline constexpr const char* SavedProxyView(bool grouped) {
+    return grouped ? "grouped" : "swipe";
+}
+
+inline constexpr bool ParseProxyGroupedView(std::string_view saved) {
+    return saved != SavedProxyView(false);
+}
 
 struct SettingsView {
     // persistence 是否已 hydrate：为 false 时下面各项都是默认值，消费者不要
@@ -32,6 +43,7 @@ struct SettingsView {
     std::string themeColor = "blue"; // ui.theme_color: kFluxAccents 的稳定 ID
     std::string customThemeColors;  // ui.custom_theme_colors: 换行分隔的 #RRGGBB
     std::string hiddenThemeColors;  // ui.hidden_theme_colors: 换行分隔的隐藏预设 ID
+    bool proxyGroupedView = true;
     bool autoStart = false;       // app.autostart
     bool autoRun = false;         // app.auto_run: automatically connect, core readiness is unconditional
     bool trayEnabled = true;      // tray.enabled
@@ -67,6 +79,7 @@ struct SettingsModel {
     void SetEnvShell(std::string shell);
     void SetSubscriptionUserAgentOrder(std::size_t index);
     void SetLogLevel(logging::Level level);
+    void SetProxyGroupedView(bool grouped);
     void PublishNetwork(const clashflux::network::Settings& value) {
         Update([&](SettingsView& next) {
             next.network = value;

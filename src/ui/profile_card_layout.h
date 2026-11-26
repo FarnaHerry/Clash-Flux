@@ -81,13 +81,52 @@ inline float ProfileTrafficProgress(std::int64_t used, std::int64_t total) {
     return total > 0 ? std::clamp(static_cast<float>(used) / static_cast<float>(total), 0.0F, 1.0F) : 1.0F;
 }
 
+namespace detail {
+
+struct QuotaGradientFill {
+    class Extension;
+    float fraction;
+    float cornerRadius;
+    bool operator==(const QuotaGradientFill&) const = default;
+};
+
+class QuotaGradientFill::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const QuotaGradientFill& fill) : fill_(fill) {}
+
+    void Update(huxerui::ViewNode&, const QuotaGradientFill& fill) {
+        fill_ = fill;
+        InvalidatePaint(PaintInvalidation::Foreground);
+    }
+
+    void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        auto bounds = node.Bounds();
+        bounds.width *= fill_.fraction;
+        if (bounds.IsEmpty()) return;
+        const float radius = std::clamp(fill_.cornerRadius, 0.0F, std::min(bounds.width, bounds.height) * 0.5F);
+        paint.PushClip(bounds, huxerui::CornerRadii{radius});
+        paint.DrawImage(FourColorPrimaryGradient(), bounds);
+        paint.PopClip();
+    }
+
+private:
+    QuotaGradientFill fill_;
+};
+
+} // namespace detail
+
 inline huxerui::View ProfileQuotaBar(float fraction) {
     return huxerui::Scope([fraction] {
-        const auto& colors = huxerui::UseTheme().colors;
+        const bool fourColor = huxerui::UseEnvironment<FluxGradientStyle>().enabled;
         auto style = huxerui::UseEnvironment<huxerui::ProgressBarStyle>();
         style.height = kProfileQuotaBarHeight;
-        style.indicator_color = colors.secondary;
-        style.track_color = colors.secondary_container;
+        if (fourColor) {
+            // Keep native measurement, track and semantics. Paint the determinate segment with the shared vector.
+            style.indicator_color = huxerui::Color::Transparent();
+            const float progress = fraction > 0.0F ? std::min(fraction, 1.0F) : 0.0F;
+            return huxerui::ProvideEnvironment(style, huxerui::ProgressBar(progress)
+                .With(detail::QuotaGradientFill{progress, style.corner_radius}));
+        }
         return huxerui::ProvideEnvironment(style, huxerui::ProgressBar(fraction));
     });
 }

@@ -1,5 +1,19 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-26 默认主题配额条四色渐变
+
+- 基于 `42511ace` 加工作区及 HuxerUI `b581978c`。首页、订阅卡片的配额填充复用默认主按钮的 Gemini 四色渐变，保留原生进度条的轨道与比例语义。Linux 原生夹具核对深浅半格、空条、满格和紫色纯色填充，另在无窗口夹具检查 25% → 100% → 0% 更新与布局一致。
+- Linux `cmake --build build --target clash-flux test_page_transition --parallel 7`、`./run.sh --version`（v0.3.131）、`git diff --check`、`page_transition`、`ui_resources` 通过。Android ARM64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3` 通过，Android 真机及其它桌面系统原生显示未实测。
+
+## 2026-11-26 代理页视图偏好
+
+- 基于 `42511ace` 加工作区及 HuxerUI `b581978c`。代理页从已就绪的 `SettingsModel` 读取布局，缺省或未知值使用纵向分组。标题栏切换通过现有 KV 流程写入 `ui.proxy_view`。真实 SQLite 回归覆盖缺省、未知值、横滑保存后重开和切回分组后再次重开。
+- Linux `cmake --build build --target clash-flux test_page_transition test_persistence --parallel 7`、`./run.sh --version`（v0.3.131）、`git diff --check` 和 `page_transition`、`ui_resources`、`persistence` 通过。隔离环境的 Linux Wayland 应用提交首帧，Android ARM64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3` 通过。原生窗口中的按钮切换与重启联动、Android 真机和其它桌面系统未实测。
+
+## 2026-11-26 配额进度条强调色
+
+- 基于 `42511ac` 和 HuxerUI `b581978c`。首页与订阅卡片的 4pt 配额条继承主题进度条的强调色填充和中性轨道。Linux 原生夹具取样确认浅色蓝、深色蓝和紫色。主目标构建、`./run.sh --version`（v0.3.131）、`git diff --check`、`page_transition` 和 `ui_resources` 通过。其它平台原生显示未实测。
+
 ## 2026-11-25 卡片四色选中描边
 
 - 基于 `eff37870` 工作区和 HuxerUI `b581978c`。默认主题的卡片选中态共用四色 1pt 圆角描边。新选中沿边扫一圈，640ms 后收为静态。生产组件的无窗口回归核对深浅、宽窄布局、点击选择，以及亮带出现、停止时的描边命令数和卡片几何。

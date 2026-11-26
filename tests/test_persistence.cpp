@@ -12,6 +12,7 @@
 #include "sqlite_schema.h"
 #include "subscription_expiry.h"
 #include "hydrated_once.h"
+#include "ui/settings_model.h"
 #include "wire_codec.h"
 
 #include <atomic>
@@ -743,6 +744,9 @@ Task<void> OpenVpnSourceCompatibilityPhase() {
 }
 
 Task<void> RunTest(TaskScope tasks) {
+    using clashflux::ui::kProxyViewSetting;
+    using clashflux::ui::ParseProxyGroupedView;
+    using clashflux::ui::SavedProxyView;
     const std::filesystem::path path = TempPath();
     const auto missingSettings = persistence::readStartupSettings(path);
     Check(missingSettings.themeMode == 1 && missingSettings.themeColor == "blue" &&
@@ -773,6 +777,10 @@ Task<void> RunTest(TaskScope tasks) {
             Check(store.ready(), "store must be ready after open");
             Check(store.setting("ui.theme_mode", "fallback") == "fallback",
                   "missing key must return the fallback after hydrate");
+            Check(clashflux::ui::SettingsView{}.proxyGroupedView &&
+                      ParseProxyGroupedView(store.setting(kProxyViewSetting)) &&
+                      ParseProxyGroupedView("unknown") && !store.hasPendingSettings(),
+                  "unset or unknown proxy layouts default to grouped without writing settings");
             const auto defaultStartupSettings = persistence::readStartupSettings(path);
             Check(defaultStartupSettings.themeMode == 1 &&
                       defaultStartupSettings.themeColor == "blue" &&
@@ -788,6 +796,7 @@ Task<void> RunTest(TaskScope tasks) {
             store.setSetting("tray.enabled", "false");
             store.setSetting("tray.start_minimized", "true");
             store.setSetting("ui.custom_theme_colors", "#336699\n#AA44CC");
+            store.setSetting(kProxyViewSetting, SavedProxyView(false));
             store.setSetting("core.tun_enabled", "true");
             store.setSetting("app.log_level", "off");
             // 同步可见：读路径不依赖落库。
@@ -899,6 +908,9 @@ Task<void> RunTest(TaskScope tasks) {
                   "setting did not persist through the ORM database");
             Check(store.setting("ui.theme_color", "") == "#336699",
                   "theme color must persist through reopen");
+            Check(store.setting(kProxyViewSetting) == SavedProxyView(false) &&
+                      !ParseProxyGroupedView(store.setting(kProxyViewSetting)),
+                  "swipe proxy layout must persist through reopen");
             Check(store.setting("ui.custom_theme_colors", "") == "#336699\n#AA44CC",
                   "all custom color cards must survive reopen");
             Check(store.setting("core.tun_enabled", "") == "true",
@@ -908,6 +920,7 @@ Task<void> RunTest(TaskScope tasks) {
             Check(reopened.size() == 1 && reopened.front().name == "主订阅-改名",
                   "profile did not persist through the ORM database");
             store.setSetting("ui.theme_mode", "1");
+            store.setSetting(kProxyViewSetting, SavedProxyView(true));
             Trace(7, "第二次 flush");
             Check(co_await store.flushSettings(), "second flush failed");
             co_await store.close();
@@ -919,6 +932,9 @@ Task<void> RunTest(TaskScope tasks) {
             Check(co_await store.open(path), "third open failed");
             Check(store.setting("ui.theme_mode", "") == "1",
                   "overwritten setting did not persist");
+            Check(store.setting(kProxyViewSetting) == SavedProxyView(true) &&
+                      ParseProxyGroupedView(store.setting(kProxyViewSetting)),
+                  "switching back to the grouped proxy layout must persist through reopen");
             co_await store.close();
         }
 

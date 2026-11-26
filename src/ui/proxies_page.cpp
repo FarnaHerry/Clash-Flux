@@ -48,6 +48,7 @@
 
 #include "country_flag.h"
 #include "proxies_model.h"
+#include "settings_model.h"
 #include "ui.h"
 #include "page_layout.h"
 #include "page_loading.h"
@@ -801,6 +802,7 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
     // 策略组快照 / 内核状态的全局唯一来源（见 *_model.h）。
     const auto proxiesModel = huxerui::UseService<ProxiesModel>();
     const auto coreModel = huxerui::UseService<CoreModel>();
+    const auto settingsModel = huxerui::UseService<SettingsModel>();
     const auto control = UseCoreControl();
     auto groups = huxerui::UseStateList<ProxyGroupPtr>();
     auto loaded = huxerui::UseState(proxiesModel->snapshot.Get().loaded);
@@ -808,7 +810,6 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
     auto degradedGroups = huxerui::UseState<std::set<std::string>>({});
     const auto [proxySearch, searchExpanded] = UsePageSearch(active);
     auto sectionMotion = UseSectionTabMotion();
-    auto grouped = huxerui::UseState(false);
     auto expandedGroups = huxerui::UseState<std::set<std::string>>({});
     auto groupedColumns = huxerui::UseState<std::size_t>(2);
     const auto groupedScroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
@@ -941,7 +942,8 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
         };
 
 
-    if (!loaded.Get()) {
+    const auto& settings = settingsModel->view.Get();
+    if (!loaded.Get() || !settings.ready) {
         huxerui::View loading = (kPageTitlesInWindow && !compact)
             ? PageLoadingScaffold(Localized("代理"), theme)
             : PageScaffold(Localized("代理"), huxerui::View{}, ProxyLoadingSkeleton(theme),
@@ -964,7 +966,7 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
     };
     const std::string query = proxySearch.Get().text;
     const auto& degraded = degradedGroups.Get();
-    const bool groupedMode = grouped.Get();
+    const bool groupedMode = settings.proxyGroupedView;
 
     huxerui::View content;
     if (direct) {
@@ -1025,7 +1027,9 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
         }
         toolbarActions = huxerui::Row {
           speed,
-          huxerui::IconButton(icon, actionLabel).OnClick([grouped] { grouped = !grouped.Get(); })
+          huxerui::IconButton(icon, actionLabel).OnClick([settingsModel] {
+              settingsModel->SetProxyGroupedView(!settingsModel->view.Get().proxyGroupedView);
+          })
               .With(huxerui::Tooltip(actionLabel)).Key("proxy-view-toggle"),
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     }

@@ -1339,6 +1339,13 @@ void SettingsModel::SetLogLevel(logging::Level level) {
     Update([level](SettingsView& next) { next.logLevel = level; });
 }
 
+void SettingsModel::SetProxyGroupedView(bool grouped) {
+    const auto& current = view.Get();
+    if (!current.ready || current.proxyGroupedView == grouped) return;
+    store::coreStore().setSetting(kProxyViewSetting, SavedProxyView(grouped));
+    Update([grouped](SettingsView& next) { next.proxyGroupedView = grouped; });
+}
+
 void SettingsModel::PublishCached() {
     // Never publish fallback settings before the database has hydrated.
     if (!clashflux::data::session().ready()) return;
@@ -1350,6 +1357,7 @@ void SettingsModel::PublishCached() {
     next.themeColor = core.setting("ui.theme_color", "blue");
     next.customThemeColors = core.setting("ui.custom_theme_colors", "");
     next.hiddenThemeColors = core.setting("ui.hidden_theme_colors", "");
+    next.proxyGroupedView = ParseProxyGroupedView(core.setting(kProxyViewSetting));
     next.autoStart = core.setting("app.autostart", "false") == "true";
     next.autoRun = core.setting("app.auto_run", "false") == "true";
     next.trayEnabled = core.setting("tray.enabled", "true") == "true";
