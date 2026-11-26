@@ -582,7 +582,7 @@ jobs:
           print(plan["name"], plan["target"], plan["version"], plan["installComponent"])
           PY
           )
-          package_root=".huxerui/package/macos/release"
+          package_root="$PWD/.huxerui/package/macos/release"
           staging="$package_root/staging"
           dmg_path="$package_root/${app_target}-${app_version}.dmg"
           cmake -E rm -rf "$staging"
