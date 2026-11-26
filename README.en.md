@@ -14,7 +14,7 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.133 release notes](docs/releases/v0.3.133.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.134 release notes](docs/releases/v0.3.134.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
 
 [简体中文](README.md) | English
 
@@ -542,7 +542,7 @@ Jobs follow the `build-<os>-<arch>` naming convention:
 | build-linux-x86_64 | Ubuntu container + clang-21/libc++ | Supported |
 | build-linux-arm64 | Native ubuntu-24.04-arm | Experimental |
 | build-windows-x86_64 | MSVC + preinstalled runner OpenSSL + HuxerUI installer | Supported |
-| build-macos-arm64 | macos-15 + Homebrew LLVM | Release gate |
+| build-macos-arm64 | macos-15 + Homebrew LLVM + HuxerUI DMG packaging | Release gate |
 | build-android | HuxerUI CLI arm64 APK build: GUI/native shell + sing-box libbox | Release gate |
 | build-ios-simulator-arm64 | macOS + iOS Simulator SDK; unsigned app/Packet Tunnel and pinned sing-box device/Simulator Libbox.xcframework | TODO / deferred; experimental diagnostics, does not block releases |
 

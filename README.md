@@ -4,7 +4,7 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.133 发布说明](docs/releases/v0.3.133.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.134 发布说明](docs/releases/v0.3.134.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 简体中文 | [English](README.en.md)
 
@@ -394,7 +394,7 @@ GUI 直接启动，详细授权、退出行为和验证范围见 [Windows 服务
 | build-linux-x86_64 | ubuntu 容器 + clang-21/libc++ | 正式 |
 | build-linux-arm64 | ubuntu-24.04-arm 原生 | 实验性 |
 | build-windows-x86_64 | MSVC + runner 预装 OpenSSL + HuxerUI 安装器 | 正式 |
-| build-macos-arm64 | macos-15 + brew LLVM | 正式发布门禁 |
+| build-macos-arm64 | macos-15 + brew LLVM + HuxerUI DMG 打包 | 正式发布门禁 |
 | build-android | HuxerUI CLI 打 arm64 APK（GUI/native shell + sing-box libbox） | 正式发布门禁 |
 | build-ios-simulator-arm64 | macOS + iOS Simulator SDK 编译未签名 app/Packet Tunnel，并构建固定 sing-box 的 iOS device/Simulator Libbox.xcframework | TODO / 暂缓；实验性诊断，不阻塞发布 |
 

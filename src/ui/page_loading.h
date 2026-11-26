@@ -1,19 +1,24 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 #include <huxerui/huxerui.h>
 #include "page_layout.h"
+#include "theme_colors.h"
 
 namespace clashflux::ui {
 
 struct SkeletonShimmerRegion;
 struct SkeletonShimmerStyle {
     huxerui::Color base;
-    huxerui::Color highlight;
+    std::vector<huxerui::Color> highlights;
     bool animated = false;
     std::shared_ptr<SkeletonShimmerRegion> region;
     bool operator==(const SkeletonShimmerStyle&) const = default;
 };
+
+std::vector<huxerui::Color> ResolveSkeletonShimmerHighlights(
+    const huxerui::ThemeSpec& theme, huxerui::Color base, const FluxGradientStyle& gradient);
 
 // Resolve hooks before capturing this owning style in deferred virtual-item factories.
 SkeletonShimmerStyle UseSkeletonShimmer(const huxerui::ThemeSpec& theme, bool active = true);

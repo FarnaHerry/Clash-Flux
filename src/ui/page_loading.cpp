@@ -91,20 +91,35 @@ public:
         return changed ? PaintInvalidation::Foreground : PaintInvalidation::None;
     }
     void PaintAboveContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
-        if (!moving_ || bounds_.width <= 0 || bounds_.height <= 0) {
+        if (!moving_ || bounds_.width <= 0 || bounds_.height <= 0 || style_.highlights.empty()) {
             paint.DrawRect(node.Bounds(), style_.base, huxerui::CornerRadii{4.0F});
             return;
         }
         // One diagonal band in page coordinates also aligns newly materialized
         // virtual rows. Animation updates retained paint, never layout or State.
-        const float halfBand = std::clamp(region_.width * 0.18F, 64.0F, 220.0F);
+        const bool multiColor = style_.highlights.size() > 1U;
+        const float halfBand = multiColor
+            ? std::clamp(region_.width * 0.26F, 88.0F, 280.0F)
+            : std::clamp(region_.width * 0.18F, 64.0F, 220.0F);
         const float center = region_.x - halfBand + phase_ * (region_.width + halfBand * 2.0F);
+        std::vector<huxerui::GradientStop> stops;
+        stops.reserve(style_.highlights.size() + 2U);
+        stops.push_back({0.0F, style_.base});
+        if (style_.highlights.size() == 1U) {
+            stops.push_back({0.5F, style_.highlights.front()});
+        } else {
+            const float denom = static_cast<float>(style_.highlights.size() - 1U);
+            for (std::size_t i = 0; i < style_.highlights.size(); ++i) {
+                stops.push_back({0.20F + 0.60F * static_cast<float>(i) / denom, style_.highlights[i]});
+            }
+        }
+        stops.push_back({1.0F, style_.base});
         huxerui::LinearGradient gradient{
             .start = {(center - halfBand - bounds_.x) / bounds_.width,
                       (region_.y - bounds_.y) / bounds_.height},
             .end = {(center + halfBand - bounds_.x) / bounds_.width,
                     (region_.y + halfBand * 0.4F - bounds_.y) / bounds_.height},
-            .stops = {{0.0F, style_.base}, {0.5F, style_.highlight}, {1.0F, style_.base}},
+            .stops = std::move(stops),
         };
         paint.DrawRect(node.Bounds(), gradient, huxerui::CornerRadii{4.0F});
     }
@@ -131,11 +146,31 @@ huxerui::View SkeletonCard(huxerui::View content, const huxerui::ThemeSpec& them
 
 } // namespace
 
+std::vector<huxerui::Color> ResolveSkeletonShimmerHighlights(
+    const huxerui::ThemeSpec& theme, huxerui::Color base, const FluxGradientStyle& gradient) {
+    const bool dark = IsDarkTheme(theme);
+    if (gradient.enabled) {
+        const auto palette = ResolveGradientPalette(gradient);
+        const auto& stops = dark ? palette.darkStops : palette.lightStops;
+        if (!stops.empty()) {
+            std::vector<huxerui::Color> highlights;
+            highlights.reserve(stops.size());
+            const auto lift = dark ? base : Mix(base, huxerui::Color::White(), 0.50F);
+            for (const auto& stop : stops) {
+                highlights.push_back(Mix(lift, stop, 0.22F));
+            }
+            return highlights;
+        }
+    }
+    return {Mix(base, huxerui::Color::White(), dark ? 0.10F : 0.65F)};
+}
+
 SkeletonShimmerStyle UseSkeletonShimmer(const huxerui::ThemeSpec& theme, bool active) {
     const auto region = huxerui::UseState(std::make_shared<SkeletonShimmerRegion>());
+    const auto gradient = huxerui::UseEnvironment<FluxGradientStyle>();
     const auto base = Mix(ResolveIslandTheme(theme).raised, theme.colors.on_surface, 0.08F);
     const bool foreground = huxerui::UseWindow().LifecycleState() != huxerui::WindowLifecycleState::Background;
-    return {base, Mix(base, huxerui::Color::White(), IsDarkTheme(theme) ? 0.10F : 0.65F),
+    return {base, ResolveSkeletonShimmerHighlights(theme, base, gradient),
             active && foreground && !theme.motion.reduced_motion, region.Get()};
 }
 

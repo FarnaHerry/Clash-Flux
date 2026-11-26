@@ -1,5 +1,15 @@
 # L1 / L2 / L3 开发完成度复核
 
+## 2026-11-26 macOS DMG 打包与 CI 发布流程接入
+
+- 基于 `1ab6b79`（`v0.3.133`）准备 `v0.3.134`（Android `versionCode 211`），HuxerUI `b581978c`。参考 `third_party/huxerui/tools/huxerui_cli/templates/platform/macos/app/huxerui.cmake` 与 `tools/huxerui_cli/platform/macos.cpp` 新增 `platform/macos/huxerui.cmake`，并在 `CMakeLists.txt` 接入 `HUXERUI_PACKAGE=ON` 时的 `.app` 安装、HuxerUI 运行时 dylib 收集/重定位/ad-hoc 签名、HuxerUI 资源包与内置 `sing-box` 部署；同步更新 `.github/workflows/build.yml` 的 `build-macos`（`cmake --install` + `/Applications` 软链 + `hdiutil create -format UDZO`）与 `publish-release`（收集并检查 `clash-flux-<version>-macos-<arch>.dmg`）。
+- 本地 `python3` PyYAML 校验 `.github/workflows/build.yml`、`cmake --build build --parallel`、`./run.sh --version`（`Clash-Flux v0.3.134（sing-box 客户端）`）、`git diff --check`、`./build/test_page_transition --accent-roles`、`ctest --test-dir build --output-on-failure --no-tests=error -j 4 -L clashflux-required`（38/38，`131.87s`）及 Android arm64 `./gradlew :app:assembleDebug --offline --console=plain --max-workers=3`（1m 4s，含 `:app:testAppUpdatePolicy`、`:app:testProfileHttpPolicy`、`:app:testRuntimeModeReconciler`、`:app:testRuntimeStartPolicy`、`:app:testVpnUptime`）全部通过。实际 `macos-15` 构建、`hdiutil` DMG 打包、`codesign --verify --deep --strict`、Windows/macOS/Android Release 打包与实机验收交由标签 CI / 硬件完成。
+
+## 2026-11-26 侧栏齿轮路径、猫咪状态点与加载骨架多色扫光
+
+- 基于 `1ab6b79`（`v0.3.133`）与 HuxerUI `b581978c`。修复 `navigation_gradient_icons.h` 中 `ParseSvgPath` 缺少平滑三次贝塞尔 `S`/`s`（并补齐 `Q`/`q`/`T`/`t`）及 `gear` 使用 `EvenOdd` 填充规则，解决侧栏设置齿轮半截与中心未镂空问题；将桌面左上角猫咪内核状态点（`ResolveCoreStatusDotFill`）接入多色/Gemini 配色；同步重构 `page_loading.cpp` 的加载骨架扫光（`ResolveSkeletonShimmerHighlights`），在多色/Gemini 主题下将参考图灰扫光高光带混入当前多色调色板（单色保持中性扫光，减弱动态效果退回静态底色），并将 `external_resources_page.cpp` 的纯文本加载态统一为 `PageLoadingSkeleton`（清理废弃文案 `msg_9dac984c8422806f`）。
+- Linux `cmake --build build --target clash-flux test_page_transition --parallel`、`./run.sh --version`（`Clash-Flux v0.3.133（sing-box 客户端）`）、`git diff --check`、`./build/test_page_transition --accent-roles` 与 `ctest --test-dir build --output-on-failure --no-tests=error -R '^(page_transition|ui_resources)$'`（2/2：`page_transition` 119.53s、`ui_resources` 0.04s）全部通过。Linux 原生窗口肉眼对比未在本次重启验证。
+
 ## 2026-11-26 通用 1–4 色混合主题与全主题参考图灰
 
 - 基于 `ee308d2`（`v0.3.133`，Android `versionCode 210`）与 HuxerUI `b581978c`。将 Gemini 四色主题通用化为数据驱动的 1–4 色混合引擎，拆出独立默认预设 ID `gemini`（展示名 `Gemini`）并恢复单色 `blue`（`蓝色`）预设，全路径默认主题色同步切换为 `gemini`；全主题统一参考图灰表面色板；添加/编辑颜色支持 1–4 色混合管理；一级导航图标改由 `navigation_gradient_icons.h` 运行期 `VectorAsset` 生成（移除 16 份静态渐变 SVG 与生成脚本）；延迟色阶保持固定 Gemini 四色。

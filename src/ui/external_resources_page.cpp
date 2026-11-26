@@ -14,6 +14,7 @@
 #include "app_resources.h"
 #include "empty_state.h"
 #include "page_layout.h"
+#include "page_loading.h"
 #include "task_bridge.h"
 #include "ui.h"
 
@@ -181,11 +182,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
 
     huxerui::View content;
     if (loading.Get()) {
-        content = PageBodyFrame(huxerui::Column {
-            huxerui::Text(Localized("正在识别外部资源…")),
-        }.With(huxerui::Grow(1.0F), huxerui::Padding(24.0F),
-               huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
-               huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))).With(huxerui::Grow(1.0F));
+        content = PageLoadingSkeleton(theme, true);
     } else if (rows.empty()) {
         huxerui::View empty = EmptyState(
             Localized("未识别到外部资源"), app::images::link);

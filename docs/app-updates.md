@@ -17,7 +17,7 @@ Linux 授权取消或安装失败恢复原窗口与同一持久化会话并反�
 | 其它平台 / 架构 / 包格式 | 保留 Release 页面手动下载入口 |
 
 对外 Release 文件名统一为 `clash-flux-<version>-<platform>-<arch>.<format>`，版本不带 `v`，
-格式可为 `exe`、`zip`、`deb`、`rpm`、`tar.gz` 或 `apk`。Windows 安装器与便携归档
+格式可为 `exe`、`zip`、`deb`、`rpm`、`dmg`、`tar.gz` 或 `apk`。Windows 安装器与便携归档
 分别使用 `clash-flux-<version>-windows-x86_64.exe` / `.zip`。
 Windows 更新优先匹配新名称；仅当新名称完全不存在时，兼容历史
 `clash-flux-Setup-<version>.exe`，旧名称仍须满足相同来源、摘要和唯一性校验。

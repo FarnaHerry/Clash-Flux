@@ -122,6 +122,10 @@ inline huxerui::Path ParseSvgPath(std::string_view d) {
     SvgPathReader reader(d);
     huxerui::Point current{};
     huxerui::Point subpathStart{};
+    huxerui::Point lastCubicControl{};
+    huxerui::Point lastQuadControl{};
+    bool hasLastCubicControl = false;
+    bool hasLastQuadControl = false;
     char command = '\0';
 
     while (reader.HasNextCommand()) {
@@ -136,6 +140,8 @@ inline huxerui::Path ParseSvgPath(std::string_view d) {
         if (upper == 'Z') {
             path.Close();
             current = subpathStart;
+            hasLastCubicControl = false;
+            hasLastQuadControl = false;
             command = '\0';
             continue;
         }
@@ -151,6 +157,8 @@ inline huxerui::Path ParseSvgPath(std::string_view d) {
             current = relative ? huxerui::Point{current.x + x, current.y + y} : huxerui::Point{x, y};
             subpathStart = current;
             path.MoveTo(current);
+            hasLastCubicControl = false;
+            hasLastQuadControl = false;
             command = relative ? 'l' : 'L';
             break;
         }
@@ -159,18 +167,24 @@ inline huxerui::Path ParseSvgPath(std::string_view d) {
             const float y = reader.ReadNumber();
             current = relative ? huxerui::Point{current.x + x, current.y + y} : huxerui::Point{x, y};
             path.LineTo(current);
+            hasLastCubicControl = false;
+            hasLastQuadControl = false;
             break;
         }
         case 'H': {
             const float x = reader.ReadNumber();
             current.x = relative ? current.x + x : x;
             path.LineTo(current);
+            hasLastCubicControl = false;
+            hasLastQuadControl = false;
             break;
         }
         case 'V': {
             const float y = reader.ReadNumber();
             current.y = relative ? current.y + y : y;
             path.LineTo(current);
+            hasLastCubicControl = false;
+            hasLastQuadControl = false;
             break;
         }
         case 'C': {
@@ -186,6 +200,53 @@ inline huxerui::Path ParseSvgPath(std::string_view d) {
                                                : huxerui::Point{x2, y2};
             current = relative ? huxerui::Point{current.x + x, current.y + y} : huxerui::Point{x, y};
             path.CubicTo(c1, c2, current);
+            lastCubicControl = c2;
+            hasLastCubicControl = true;
+            hasLastQuadControl = false;
+            break;
+        }
+        case 'S': {
+            const huxerui::Point c1 = hasLastCubicControl
+                ? huxerui::Point{2.0F * current.x - lastCubicControl.x, 2.0F * current.y - lastCubicControl.y}
+                : current;
+            const float x2 = reader.ReadNumber();
+            const float y2 = reader.ReadNumber();
+            const float x = reader.ReadNumber();
+            const float y = reader.ReadNumber();
+            const huxerui::Point c2 = relative ? huxerui::Point{current.x + x2, current.y + y2}
+                                               : huxerui::Point{x2, y2};
+            current = relative ? huxerui::Point{current.x + x, current.y + y} : huxerui::Point{x, y};
+            path.CubicTo(c1, c2, current);
+            lastCubicControl = c2;
+            hasLastCubicControl = true;
+            hasLastQuadControl = false;
+            break;
+        }
+        case 'Q': {
+            const float x1 = reader.ReadNumber();
+            const float y1 = reader.ReadNumber();
+            const float x = reader.ReadNumber();
+            const float y = reader.ReadNumber();
+            const huxerui::Point c = relative ? huxerui::Point{current.x + x1, current.y + y1}
+                                              : huxerui::Point{x1, y1};
+            current = relative ? huxerui::Point{current.x + x, current.y + y} : huxerui::Point{x, y};
+            path.QuadraticTo(c, current);
+            lastQuadControl = c;
+            hasLastQuadControl = true;
+            hasLastCubicControl = false;
+            break;
+        }
+        case 'T': {
+            const huxerui::Point c = hasLastQuadControl
+                ? huxerui::Point{2.0F * current.x - lastQuadControl.x, 2.0F * current.y - lastQuadControl.y}
+                : current;
+            const float x = reader.ReadNumber();
+            const float y = reader.ReadNumber();
+            current = relative ? huxerui::Point{current.x + x, current.y + y} : huxerui::Point{x, y};
+            path.QuadraticTo(c, current);
+            lastQuadControl = c;
+            hasLastQuadControl = true;
+            hasLastCubicControl = false;
             break;
         }
         case 'A': {
@@ -201,10 +262,14 @@ inline huxerui::Path ParseSvgPath(std::string_view d) {
                        largeArc ? huxerui::ArcSize::Large : huxerui::ArcSize::Small,
                        sweep ? huxerui::ArcDirection::Clockwise : huxerui::ArcDirection::CounterClockwise,
                        current);
+            hasLastCubicControl = false;
+            hasLastQuadControl = false;
             break;
         }
         default:
             command = '\0';
+            hasLastCubicControl = false;
+            hasLastQuadControl = false;
             break;
         }
     }
@@ -279,7 +344,8 @@ inline constexpr std::array<NavIconShapeSpec, 8> kNavIconSpecs{{
      .fillRule = huxerui::PathFillRule::EvenOdd},
     // 7: gear
     {.fillPath =
-         "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"},
+         "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z",
+     .fillRule = huxerui::PathFillRule::EvenOdd},
 }};
 
 struct NavIconGeometry {

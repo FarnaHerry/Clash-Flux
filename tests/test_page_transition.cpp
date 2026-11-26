@@ -2628,6 +2628,7 @@ struct LoadingSkeletonFixture {
     huxerui::State<bool> active{true};
     huxerui::State<bool> reduced{false};
     huxerui::State<bool> dark{false};
+    huxerui::State<std::string> accent{"gemini"};
     huxerui::State<int> kind{0};
     int compositions = 0;
 };
@@ -2643,23 +2644,27 @@ void InstallLoadingSkeletonFixture(huxerui::ApplicationContext& context) {
 huxerui::View LoadingSkeletonRoot() {
     return huxerui::Scope([] {
         const auto model = huxerui::UseService<LoadingSkeletonFixture>();
-        auto theme = model->dark.Get() ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
-        auto spec = huxerui::FlatLightThemeSpec();
-        spec.colors = theme;
+        const bool dark = model->dark.Get();
+        const auto accent = model->accent.Get();
+        auto spec = dark ? huxerui::FlatDarkThemeSpec() : huxerui::FlatLightThemeSpec();
+        spec.colors = dark ? clashflux::ui::FluxDarkColors(accent)
+                           : clashflux::ui::FluxLightColors(accent);
         spec.motion.reduced_motion = model->reduced.Get();
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
         const auto gridColumns = huxerui::UseState<std::size_t>(2);
         const float side = compact && model->kind.Get() >= 3 ? clashflux::ui::kProfileCardSpacing : 4.0F;
-        return huxerui::FlatTheme(spec, clashflux::ui::PageBodyRegion(huxerui::Scope([model, compact, gridColumns] {
-            ++model->compositions;
-            if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
-            if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
-            const auto& current = huxerui::UseTheme();
-            if (model->kind.Get() >= 3) return clashflux::ui::ProfileLoadingSkeleton(current, compact,
-                model->kind.Get() == 3, gridColumns);
-            return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
-                : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
-        }), side));
+        return huxerui::FlatTheme(spec, huxerui::ProvideEnvironment(
+            clashflux::ui::ResolveFluxGradientStyle(accent),
+            clashflux::ui::PageBodyRegion(huxerui::Scope([model, compact, gridColumns] {
+                ++model->compositions;
+                if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
+                if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
+                const auto& current = huxerui::UseTheme();
+                if (model->kind.Get() >= 3) return clashflux::ui::ProfileLoadingSkeleton(current, compact,
+                    model->kind.Get() == 3, gridColumns);
+                return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
+                    : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
+            }), side)));
     });
 }
 const huxerui::Application kLoadingSkeletonApplication{LoadingSkeletonRoot,
@@ -2667,6 +2672,21 @@ const huxerui::Application kLoadingSkeletonApplication{LoadingSkeletonRoot,
      .application_hooks = {InstallLoadingSkeletonFixture}}};
 
 void testSkeletonShimmer() {
+    for (bool dark : {false, true}) {
+        auto spec = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+        spec.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
+        const auto base = clashflux::ui::ResolveIslandTheme(spec).raised;
+        const auto gem = clashflux::ui::ResolveSkeletonShimmerHighlights(
+            spec, base, clashflux::ui::ResolveFluxGradientStyle("gemini"));
+        const auto custom = clashflux::ui::ResolveSkeletonShimmerHighlights(
+            spec, base, clashflux::ui::ResolveFluxGradientStyle("#FF3366,#33AA55"));
+        const auto mono = clashflux::ui::ResolveSkeletonShimmerHighlights(
+            spec, base, clashflux::ui::ResolveFluxGradientStyle("blue"));
+        check(gem.size() == 4U && gem[0] != gem[1] && gem[1] != gem[2] && gem[2] != gem[3] &&
+                  custom.size() == 2U && custom[0] != custom[1] &&
+                  mono.size() == 1U && mono[0] != base,
+              "skeleton shimmer resolves multi-color highlights for Gemini/custom mixes and neutral for monochrome");
+    }
     skeletonInitiallyReady = false;
     huxerui::testing::UiTest ui(kLoadingSkeletonApplication, {.viewport = {960.0F, 600.0F}});
     ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
@@ -8303,6 +8323,53 @@ void testCustomThemeColors() {
                       "runtime navigation gradient icon builds a 24x24 vector asset for every mix");
             }
         }
+    }
+    {
+        const auto& geos = detail::NavIconGeometries();
+        for (const auto& geo : geos) {
+            check(!geo.fills.empty() || !geo.stroke.IsEmpty(),
+                  "every navigation icon parses into non-empty vector geometry");
+            for (const auto& fill : geo.fills) {
+                const auto b = fill.Bounds();
+                check(b.width > 0.0F && b.height > 0.0F &&
+                          b.x >= -0.5F && b.y >= -0.5F && b.x + b.width <= 24.5F && b.y + b.height <= 24.5F,
+                      "parsed navigation icon fill fits inside the 24x24 viewbox");
+            }
+        }
+        const auto& gearGeo = geos[7];
+        const auto& gearPath = gearGeo.fills.front();
+        const auto gearBounds = gearPath.Bounds();
+        check(gearBounds.x <= 3.0F && gearBounds.x + gearBounds.width >= 21.0F &&
+                  gearBounds.y <= 2.5F && gearBounds.y + gearBounds.height >= 21.5F &&
+                  !gearPath.Contains({12.0F, 12.0F}, gearGeo.fillRule) &&
+                  gearPath.Contains({12.0F, 4.0F}, gearGeo.fillRule) &&
+                  gearPath.Contains({12.0F, 20.0F}, gearGeo.fillRule) &&
+                  gearPath.Contains({6.5F, 12.0F}, gearGeo.fillRule) &&
+                  gearPath.Contains({17.5F, 12.0F}, gearGeo.fillRule),
+              "settings gear icon parses S-curve inner ring and teeth with center hole");
+    }
+    for (bool dark : {false, true}) {
+        auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+        theme.colors = dark ? FluxDarkColors() : FluxLightColors();
+        const auto geminiPalette = ResolveFourColorForegroundPalette(theme.brightness);
+        const auto gemStyle = ResolveFluxGradientStyle("gemini");
+        const auto customStyle = ResolveFluxGradientStyle("#FF3366,#33AA55");
+        const auto monoStyle = ResolveFluxGradientStyle("blue");
+        const auto runningGem = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Running, gemStyle);
+        const auto runningCustom = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Running, customStyle);
+        const auto runningMono = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Running, monoStyle);
+        const auto starting = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Starting, gemStyle);
+        const auto failed = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Failed, gemStyle);
+        const auto stopped = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Stopped, gemStyle);
+        check(runningGem == huxerui::VisualFill{MultiColorLinearGradient(
+                                ResolveGradientPalette(gemStyle), theme.brightness)} &&
+                  runningCustom == huxerui::VisualFill{MultiColorLinearGradient(
+                                       ResolveGradientPalette(customStyle), theme.brightness)} &&
+                  runningMono == huxerui::VisualFill{geminiPalette.green} &&
+                  starting == huxerui::VisualFill{geminiPalette.gold} &&
+                  failed == huxerui::VisualFill{geminiPalette.red} &&
+                  stopped == huxerui::VisualFill{theme.colors.on_surface_variant},
+              "sidebar cat status dot follows active multi-color gradient when running and Gemini palette by state");
     }
     for (bool dark : {false, true}) {
         auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();

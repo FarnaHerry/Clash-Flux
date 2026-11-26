@@ -609,6 +609,27 @@ inline huxerui::LinearGradient FourColorLinearGradient(huxerui::ThemeBrightness 
     return MultiColorLinearGradient(DefaultMultiColorPalette(), brightness);
 }
 
+enum class FluxCoreStatusKind { Stopped, Starting, Running, Failed };
+
+inline huxerui::VisualFill ResolveCoreStatusDotFill(
+    const huxerui::ThemeSpec& theme, FluxCoreStatusKind status, const FluxGradientStyle& gradient) {
+    const auto gemini = ResolveFourColorForegroundPalette(theme.brightness);
+    switch (status) {
+    case FluxCoreStatusKind::Running:
+        if (gradient.enabled) {
+            return MultiColorLinearGradient(ResolveGradientPalette(gradient), theme.brightness);
+        }
+        return gemini.green;
+    case FluxCoreStatusKind::Starting:
+        return gemini.gold;
+    case FluxCoreStatusKind::Failed:
+        return gemini.red;
+    case FluxCoreStatusKind::Stopped:
+        break;
+    }
+    return theme.colors.on_surface_variant;
+}
+
 inline huxerui::Path RoundedRectStrokePath(
     huxerui::Rect bounds, huxerui::CornerRadii corners, float strokeWidth) {
     if (strokeWidth <= 0.0F || std::min(bounds.width, bounds.height) <= strokeWidth) return {};

@@ -772,29 +772,31 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
     static_cast<void>(islands);
     const auto model = huxerui::UseState(std::make_shared<DesktopSettingsNavigationModel>()).Get();
     const huxerui::ThemeSpec& theme = huxerui::UseTheme();
+    const auto gradient = huxerui::UseEnvironment<FluxGradientStyle>();
     const auto coreModel = huxerui::UseService<CoreModel>();
     const CoreView coreView = coreModel->view.Get();
-    huxerui::Color coreStatusColor = theme.colors.on_surface_variant;
+    FluxCoreStatusKind statusKind = FluxCoreStatusKind::Stopped;
     huxerui::StringVariant coreStatusLabel = Localized("内核已停止");
     switch (coreView.core.state) {
     case core::CoreState::Running:
-        coreStatusColor = SemanticSuccessColor(theme);
+        statusKind = FluxCoreStatusKind::Running;
         coreStatusLabel = LocalizedFormat(
             "内核运行中 · {}", coreView.core.version.empty()
                                   ? cfg::singboxFallbackLabel()
                                   : coreView.core.version);
         break;
     case core::CoreState::Starting:
-        coreStatusColor = SemanticWarningColor(theme);
+        statusKind = FluxCoreStatusKind::Starting;
         coreStatusLabel = Localized("内核启动中");
         break;
     case core::CoreState::Failed:
-        coreStatusColor = theme.colors.error;
+        statusKind = FluxCoreStatusKind::Failed;
         coreStatusLabel = Localized("内核启动失败");
         break;
     case core::CoreState::Stopped:
         break;
     }
+    huxerui::VisualFill coreStatusFill = ResolveCoreStatusDotFill(theme, statusKind, gradient);
     huxerui::View logoArt = huxerui::Image(
         IsDarkTheme(spec) ? app::images::clash_flux_logo_vector_dark_current
                          : app::images::clash_flux_logo_vector_light_current)
@@ -802,9 +804,9 @@ void QueueProfileActivation(const huxerui::ApplicationActivation& activation,
         .With(huxerui::Frame{.width = 32.0F, .height = 32.0F});
     huxerui::View coreStatusDot = huxerui::Stack{}.With(
         huxerui::Frame{.width = 9.0F, .height = 9.0F},
-        huxerui::Background(coreStatusColor),
+        huxerui::Background(std::move(coreStatusFill)),
         huxerui::Border{theme.colors.background, 1.5F},
-        huxerui::CornerRadius(4.5F));
+        huxerui::CornerRadius(4.5F)).Key("core-status-dot");
     huxerui::View logoStatusPlacement = huxerui::Column {
         huxerui::Row {
             huxerui::Spacer(),

@@ -38,7 +38,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(clash-flux VERSION 0.3.133 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
+project(clash-flux VERSION 0.3.134 DESCRIPTION "sing-box proxy client (Clash Verge Rev style)" LANGUAGES NONE)
 
 # 独立于 CTest 的 BUILD_TESTING 变量：curl 等子项目会把它改成 OFF，不能让它
 # 决定 clash-flux 自己的测试。测试需要 HuxerUI 的公开无窗口测试库
@@ -743,11 +743,63 @@ file(CREATE_LINK "/opt/clash-flux/clash-flux" "$ENV{DESTDIR}/usr/bin/clash-flux"
         )
     endif ()
 
+    # ---- macOS DMG 应用包 ---------------------------------------------------
+    # `HUXERUI_PACKAGE=ON` 时生效：安装自包含 .app bundle、自带 sing-box 内核与
+    # HuxerUI 资源包，并由 HuxerUI 运行时部署脚本收集非系统 dylib（libhuxerui、
+    # Homebrew libc++/OpenSSL 等）到 Contents/Frameworks、重写 @rpath 并做 ad-hoc 签名。
+    if (APPLE AND NOT IOS AND COMMAND huxerui_configure_macos_project_package)
+        get_target_property(CLASHFLUX_MACOS_INSTALL_COMPONENT clash-flux
+            HUXERUI_APPLICATION_INSTALL_COMPONENT)
+        get_target_property(CLASHFLUX_MACOS_RESOURCE_PACKAGE clash-flux
+            HUXERUI_RESOURCE_PACKAGE)
+        if (CLASHFLUX_MACOS_INSTALL_COMPONENT
+                AND NOT CLASHFLUX_MACOS_INSTALL_COMPONENT MATCHES "-NOTFOUND$")
+            huxerui_configure_macos_project_package(clash-flux
+                "${CLASHFLUX_MACOS_INSTALL_COMPONENT}")
+            if (HUXERUI_PACKAGE)
+                set(_clashflux_macos_runtime_dirs)
+                if (CMAKE_CXX_COMPILER)
+                    get_filename_component(_clashflux_cxx_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+                    get_filename_component(_clashflux_cxx_prefix "${_clashflux_cxx_bin}" DIRECTORY)
+                    foreach (_subdir IN ITEMS "lib/c++" "lib/unwind")
+                        if (IS_DIRECTORY "${_clashflux_cxx_prefix}/${_subdir}")
+                            list(APPEND _clashflux_macos_runtime_dirs "${_clashflux_cxx_prefix}/${_subdir}")
+                        endif ()
+                    endforeach ()
+                endif ()
+                if (OPENSSL_ROOT_DIR AND IS_DIRECTORY "${OPENSSL_ROOT_DIR}/lib")
+                    list(APPEND _clashflux_macos_runtime_dirs "${OPENSSL_ROOT_DIR}/lib")
+                endif ()
+                if (_clashflux_macos_runtime_dirs)
+                    huxerui_add_runtime_dependencies(clash-flux
+                        SEARCH_DIRECTORIES ${_clashflux_macos_runtime_dirs})
+                endif ()
+                if (CLASHFLUX_MACOS_RESOURCE_PACKAGE
+                        AND NOT CLASHFLUX_MACOS_RESOURCE_PACKAGE MATCHES "-NOTFOUND$")
+                    install(DIRECTORY "${CLASHFLUX_MACOS_RESOURCE_PACKAGE}/"
+                        DESTINATION "$<TARGET_FILE_NAME:clash-flux>.app/Contents/Resources/HuxerUI"
+                        COMPONENT "${CLASHFLUX_MACOS_INSTALL_COMPONENT}"
+                    )
+                endif ()
+                if (CLASHFLUX_BUNDLE_SINGBOX AND CLASHFLUX_SINGBOX_BUNDLED_BINARY)
+                    install(FILES "${CLASHFLUX_SINGBOX_BUNDLED_BINARY}"
+                        DESTINATION "$<TARGET_FILE_NAME:clash-flux>.app/Contents/MacOS/engines"
+                        RENAME "${CLASHFLUX_SINGBOX_BUNDLED_NAME}"
+                        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                                    GROUP_READ GROUP_EXECUTE
+                                    WORLD_READ WORLD_EXECUTE
+                        COMPONENT "${CLASHFLUX_MACOS_INSTALL_COMPONENT}"
+                    )
+                endif ()
+            endif ()
+        endif ()
+    endif ()
+
     # 图标资源放 <exe>/assets；HuxerUI 资源包（内置+app 合并，由 huxerui_add_app 的
     # 资源构建生成）放 <exe>.resources。最新运行时除了 resources.bin 索引外，
     # 还会按索引读取同目录下的 .huxv/.png 等实际 payload，必须把整个 package
     # 目录复制到运行目录。
-    if (NOT ANDROID AND NOT IOS)
+    if (NOT ANDROID AND NOT IOS AND NOT APPLE)
         add_custom_command(TARGET clash-flux POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${CMAKE_CURRENT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:clash-flux>/assets"
