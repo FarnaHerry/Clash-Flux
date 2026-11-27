@@ -85,6 +85,51 @@ private:
     std::shared_ptr<PinnedProxyGroup> position_;
 };
 
+struct PinnedProxyGroupCornerMask {
+    class Extension;
+    std::shared_ptr<PinnedProxyGroup> pinned;
+    std::size_t headerIndex = 0;
+    huxerui::Color backdrop;
+    float radius = 0.0F;
+    bool operator==(const PinnedProxyGroupCornerMask&) const = default;
+};
+
+class PinnedProxyGroupCornerMask::Extension final : public huxerui::NodeExtension {
+public:
+    Extension(huxerui::ViewNode&, const PinnedProxyGroupCornerMask& spec) : spec_(spec) {}
+
+    void Update(huxerui::ViewNode&, const PinnedProxyGroupCornerMask& spec) {
+        const bool visualChanged = spec_.backdrop != spec.backdrop || spec_.radius != spec.radius;
+        spec_ = spec;
+        if (visualChanged && masked_) InvalidatePaint(PaintInvalidation::Content);
+    }
+
+    PaintInvalidation PrepareGeometry(huxerui::ViewNode& node, huxerui::TextMeasurer&) override {
+        const bool masked = spec_.pinned && spec_.pinned->index && *spec_.pinned->index == spec_.headerIndex;
+        const auto bounds = node.Bounds();
+        if (masked == masked_ && (!masked || bounds == bounds_)) return PaintInvalidation::None;
+        masked_ = masked;
+        bounds_ = bounds;
+        return PaintInvalidation::Content;
+    }
+
+    void PaintBehindContent(const huxerui::ViewNode& node, huxerui::PaintContext& paint) const override {
+        if (!masked_ || spec_.radius <= 0.0F) return;
+        const auto bounds = node.Bounds();
+        if (bounds.width <= 0.0F || bounds.height <= 0.0F) return;
+        // Extend 1pt beneath the opaque rounded header to avoid half-pixel corner seams on fractional DPI scales.
+        const float cornerWidth = std::min(spec_.radius + 1.0F, bounds.width * 0.5F);
+        const float cornerHeight = std::min(spec_.radius + 1.0F, bounds.height);
+        paint.DrawRect({0.0F, 0.0F, cornerWidth, cornerHeight}, spec_.backdrop);
+        paint.DrawRect({bounds.width - cornerWidth, 0.0F, cornerWidth, cornerHeight}, spec_.backdrop);
+    }
+
+private:
+    PinnedProxyGroupCornerMask spec_;
+    bool masked_ = false;
+    huxerui::Rect bounds_{};
+};
+
 class ProxyGroupRowMetrics {
 public:
     void Prepare(std::size_t count, std::optional<std::size_t> unchangedRows) {
@@ -398,13 +443,15 @@ inline huxerui::View ProxyGroupHeader(std::string title, std::string type, std::
 // The list virtualizes individual rows. Each row paints its part of the
 // same panel, so a large expanded group never needs to mount all its nodes.
 inline huxerui::View ProxyGroupPanelPart(huxerui::View content,
-    bool first, bool last, bool followedByGroup) {
+    bool first, bool last, bool followedByGroup,
+    std::shared_ptr<PinnedProxyGroup> pinned = {},
+    std::optional<std::size_t> headerIndex = std::nullopt) {
     return huxerui::Scope([=] {
         const auto islands = ResolveIslandTheme(huxerui::UseTheme());
         const float radius = islands.nested_radius;
         const float top = first ? radius : 0.0F;
         const float bottom = last ? radius : 0.0F;
-        return huxerui::Column {
+        auto root = huxerui::Column {
           huxerui::Column {content}.With(
               huxerui::Background(islands.raised), huxerui::CornerRadius(top, top, bottom, bottom),
               huxerui::ClipChildren(), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
@@ -412,6 +459,10 @@ inline huxerui::View ProxyGroupPanelPart(huxerui::View content,
               ? huxerui::View{huxerui::Spacer().With(huxerui::Frame{.height = radius})}
               : huxerui::View{},
         }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+        if (first && !last && pinned && headerIndex) {
+            root = std::move(root).With(PinnedProxyGroupCornerMask{pinned, *headerIndex, islands.base, radius});
+        }
+        return root;
     });
 }
 

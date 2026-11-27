@@ -775,7 +775,7 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
                 const bool last = !row.expanded && !section.showOverview;
                 const auto header = ProxyGroupSectionHeader(
                     section, expanded, actions.model->tests, triggerGroupTest, pinned);
-                return ProxyGroupPanelPart(header, true, last, last && hasNextGroup)
+                return ProxyGroupPanelPart(header, true, last, last && hasNextGroup, pinned, row.headerIndex)
                     .LayoutValue<ProxyGroupRow>(row)
                     .LayoutValue<ProxyGroupHeaderName>(group->name)
                     .Key("proxy-group-header-" + group->name);

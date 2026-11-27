@@ -4701,7 +4701,7 @@ huxerui::View ProxyGridProfileRoot() {
                 ProxyGroupRow::Value row{.headerIndex = 1, .expanded = true};
                 if (index == 0) {
                     return ProxyGroupPanelPart(ProxyGroupHeader("Group", "Selector", model->count,
-                        false, true, "", {}, [] {}), true, false, false)
+                        false, true, "", {}, [] {}), true, false, false, pinned, row.headerIndex)
                         .LayoutValue<ProxyGroupHeaderName>("group").LayoutValue<ProxyGroupRow>(row);
                 }
                 std::vector<huxerui::View> cards;
@@ -6246,6 +6246,9 @@ struct PaintedCard {
 std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
     std::optional<float> width, std::optional<float> height, std::optional<float> top = {});
 
+std::vector<huxerui::Rect> paintedStickyCornerMasks(huxerui::testing::UiTest& ui,
+    float size, float panelWidth, float panelRadius);
+
 void testProxyGroupPanelLayout() {
     using namespace clashflux::ui;
     using namespace std::chrono_literals;
@@ -6525,7 +6528,8 @@ void testStickyProxyGroupHeader() {
                             fixture->lastDisclosure = !fixture->lastDisclosure.Get().value();
                         };
                         return ProxyGroupPanelPart(ProxyGroupHeader(first ? "First sticky group" : "Second sticky group",
-                            "Selector", rowsPerGroup, first, row.expanded, "", speed, toggle), true, false, false)
+                            "Selector", rowsPerGroup, first, row.expanded, "", speed, toggle),
+                            true, false, false, fixture->pinned, row.headerIndex)
                             .LayoutValue<ProxyGroupRow>(row)
                             .LayoutValue<ProxyGroupHeaderName>(tag)
                             .Key(first ? "first-sticky-header" : "second-sticky-header");
@@ -6566,7 +6570,23 @@ void testStickyProxyGroupHeader() {
     const auto first = ui.Find(UiSelector::Key("first-sticky-header"));
     const auto second = ui.Find(UiSelector::Key("second-sticky-header"));
     const float initialY = first.One().bounds.y;
+    const float panelRadius = ResolveIslandTheme(huxerui::FlatLightThemeSpec()).nested_radius;
+    const float cornerMaskSize = panelRadius + 1.0F;
+    const auto checkCornerMasks = [&](std::optional<float> expectedY, const char* message) {
+        const auto masks = paintedStickyCornerMasks(ui, cornerMaskSize, viewport.width, panelRadius);
+        if (!expectedY) {
+            check(masks.empty(), message);
+            return;
+        }
+        check(masks.size() == 2 &&
+              std::abs(masks[0].x - viewport.x) < 0.1F &&
+              std::abs(masks[0].y - *expectedY) < 0.1F &&
+              std::abs(masks[1].x - (viewport.x + viewport.width - cornerMaskSize)) < 0.1F &&
+              std::abs(masks[1].y - *expectedY) < 0.1F,
+              message);
+    };
     check(initialY > viewport.y && !fixture->pinned->index, "the first header starts below the scrolling whitespace");
+    checkCornerMasks(std::nullopt, "an unpinned header paints no corner masks");
     first.Find(UiSelector::Key("proxy-group-title-region")).Tap();
     ui.PumpAndSettle();
     check(!fixture->open.Get() && first.One().bounds.y == initialY &&
@@ -6582,6 +6602,7 @@ void testStickyProxyGroupHeader() {
     check(first.One().bounds.y == viewport.y && fixture->pinned->index == 1 &&
           first.Find(UiSelector::Key("proxy-group-count")).Exists(),
           "the original group header and controls stay mounted beyond their normal cache range");
+    checkCornerMasks(viewport.y, "a pinned header paints top corner masks behind its rounded panel");
     first.Find(UiSelector::Key("proxy-group-count")).Tap();
     check(fixture->open.Get() && fixture->selections == 0, "the pinned badge stays passive and shields covered nodes");
     first.Find(UiSelector::Key("speed-test-action")).Tap();
@@ -6627,6 +6648,7 @@ void testStickyProxyGroupHeader() {
     ui.PumpAndSettle();
     check(first.One().bounds.y < viewport.y && fixture->pinned->index == 1,
           "the joined header moves out with its own panel instead of disappearing when nodes are covered");
+    checkCornerMasks(first.One().bounds.y, "departing pinned header moves its top corner masks with its panel");
     checkJoined();
     static_cast<void>(controller.ScrollTo(firstEnd - kProxyGroupInset * 0.5F));
     ui.PumpAndSettle();
@@ -6642,6 +6664,7 @@ void testStickyProxyGroupHeader() {
     ui.PumpAndSettle();
     check(!first.Exists() && second.One().bounds.y == viewport.y && fixture->pinned->index == rowsPerGroup + 1,
           "the next section takes over the frozen header");
+    checkCornerMasks(viewport.y, "the next frozen header paints top corner masks at the viewport edge");
     ui.TapAt({x, viewport.y + 16.0F});
     check(fixture->selections == 1, "a pinned read-only header also shields covered nodes");
 
@@ -6664,6 +6687,7 @@ void testStickyProxyGroupHeader() {
     check(!fixture->open.Get() && std::abs(first.One().bounds.y - viewport.y) < 0.1F &&
           ui.Find(UiSelector::Key("sticky-overview")).Exists(),
           "the frozen arrow collapses its group and returns to that header with its overview visible");
+    checkCornerMasks(std::nullopt, "collapsing the pinned header removes its corner masks");
     check(std::abs(fixture->pinned->remembered->value - controller.Offset()) < 0.1F,
           "the collapse anchor is remembered when the grouped view is remounted");
     static_cast<void>(controller.ScrollBy(rowHeight * 0.5F));
@@ -6713,6 +6737,7 @@ void testStickyProxyGroupHeader() {
     ui.PumpAndSettle();
     check(first.One().bounds.y == initialY && !fixture->pinned->index,
           "scrolling back restores the natural header and initial whitespace");
+    checkCornerMasks(std::nullopt, "scrolling back to the start clears the corner masks");
 
     fixture->lastDisclosure = true;
     ui.PumpAndSettle();
@@ -9063,6 +9088,66 @@ std::optional<PaintedCard> paintedCard(huxerui::testing::UiTest& ui,
     if (const auto* render = snapshot.Find("render"))
         for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{});
     if (result) result->outlineWidth = outlineWidth;
+    return result;
+}
+
+std::vector<huxerui::Rect> paintedStickyCornerMasks(huxerui::testing::UiTest& ui,
+    float size, float panelWidth, float panelRadius) {
+    std::istringstream input(ui.CaptureSnapshot().ToString());
+    std::string line;
+    std::getline(input, line); std::getline(input, line);
+    const auto snapshot = readCatPaintNode(input, line);
+    std::vector<huxerui::Rect> result;
+    const auto visit = [&](auto&& self, const CatPaintNode& node, huxerui::Transform2D parent,
+                           bool* hasRoundedPanel) -> void {
+        if (const auto* visible = node.Find("visible"); visible && visible->value == "false") return;
+        auto local = catPaintTransform(node.Find("transform"));
+        if (const auto* offset = node.Find("offset")) {
+            local.translate_x += offset->Number("x");
+            local.translate_y += offset->Number("y");
+        }
+        const auto world = composeCatPaint(parent, local);
+        std::vector<huxerui::Rect> nodeMasks;
+        if (const auto* content = node.Find("content")) {
+            for (const auto& command : content->children) {
+                if (hasRoundedPanel && command.name == "fill-path") {
+                    const auto* bounds = command.Find("brush_bounds");
+                    if (bounds && std::abs(world.m11 * bounds->Number("width") - panelWidth) < 0.5F) {
+                        *hasRoundedPanel = true;
+                    }
+                    continue;
+                }
+                const auto* bounds = command.Find("bounds");
+                if (command.name != "rect" || !bounds) continue;
+                const float width = world.m11 * bounds->Number("width");
+                const float height = world.m22 * bounds->Number("height");
+                const float radius = command.Number("corner_radius");
+                if (hasRoundedPanel && std::abs(width - panelWidth) < 0.5F &&
+                    std::abs(radius - panelRadius) < 0.1F) {
+                    *hasRoundedPanel = true;
+                }
+                if (std::abs(width - size) < 0.1F && std::abs(height - size) < 0.1F && radius == 0.0F) {
+                    nodeMasks.push_back({world.m11 * bounds->Number("x") + world.translate_x,
+                                         world.m22 * bounds->Number("y") + world.translate_y,
+                                         width, height});
+                }
+            }
+        }
+        bool childHasRoundedPanel = false;
+        if (const auto* children = node.Find("children")) {
+            const auto childTransform = composeCatPaint(world, catPaintTransform(node.Find("children_transform")));
+            for (const auto& child : children->children) {
+                self(self, child, childTransform, &childHasRoundedPanel);
+            }
+        }
+        if (hasRoundedPanel && childHasRoundedPanel) *hasRoundedPanel = true;
+        if (!nodeMasks.empty() && childHasRoundedPanel) {
+            result.insert(result.end(), nodeMasks.begin(), nodeMasks.end());
+        }
+    };
+    if (const auto* render = snapshot.Find("render")) {
+        for (const auto& node : render->children) visit(visit, node, huxerui::Transform2D{}, nullptr);
+    }
     return result;
 }
 
