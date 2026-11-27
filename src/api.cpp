@@ -14,9 +14,11 @@ module;
 #include <windows.h>
 #endif
 #include <curl/curl.h>
+#include <curl/multi.h>
 #include <cstdio>
 #include <cerrno>
 #include <thread>
+#include <unordered_map>
 #ifdef _WIN32
 #include <io.h>
 #else
@@ -172,8 +174,12 @@ std::string extractMessage(const std::string& body) {
 class CurlHandle {
 public:
     CurlHandle() : handle_(curl_easy_init()) {}
-    ~CurlHandle() {
-        if (handle_ != nullptr) curl_easy_cleanup(handle_);
+    ~CurlHandle() { reset(); }
+    void reset() noexcept {
+        if (handle_ != nullptr) {
+            curl_easy_cleanup(handle_);
+            handle_ = nullptr;
+        }
     }
     CurlHandle(const CurlHandle&) = delete;
     CurlHandle& operator=(const CurlHandle&) = delete;
@@ -284,8 +290,12 @@ private:
 class CurlHeaderList {
 public:
     CurlHeaderList() = default;
-    ~CurlHeaderList() {
-        if (list_ != nullptr) curl_slist_free_all(list_);
+    ~CurlHeaderList() { reset(); }
+    void reset() noexcept {
+        if (list_ != nullptr) {
+            curl_slist_free_all(list_);
+            list_ = nullptr;
+        }
     }
     CurlHeaderList(const CurlHeaderList&) = delete;
     CurlHeaderList& operator=(const CurlHeaderList&) = delete;
@@ -301,6 +311,517 @@ public:
 private:
     curl_slist* list_ = nullptr;
 };
+
+void ensureCurlGlobalInitialized() {
+    static std::once_flag flag;
+    std::call_once(flag, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+}
+
+class CurlMultiHandle {
+public:
+    CurlMultiHandle() {
+        ensureCurlGlobalInitialized();
+        handle_ = curl_multi_init();
+    }
+    ~CurlMultiHandle() {
+        if (handle_ != nullptr) curl_multi_cleanup(handle_);
+    }
+    CurlMultiHandle(const CurlMultiHandle&) = delete;
+    CurlMultiHandle& operator=(const CurlMultiHandle&) = delete;
+    [[nodiscard]] CURLM* get() const noexcept { return handle_; }
+    explicit operator bool() const noexcept { return handle_ != nullptr; }
+
+private:
+    CURLM* handle_ = nullptr;
+};
+
+struct AsyncDownloadSink {
+    std::ofstream* out = nullptr;
+    std::size_t maxBytes = 0;
+    std::size_t received = 0;
+    bool limitExceeded = false;
+};
+
+size_t onAsyncFileWrite(char* ptr, size_t size, size_t nmemb, void* userdata) noexcept {
+    try {
+        if (size && nmemb > std::numeric_limits<std::size_t>::max() / size) return CURL_WRITEFUNC_ERROR;
+        const size_t n = size * nmemb;
+        auto& sink = *static_cast<AsyncDownloadSink*>(userdata);
+        if (sink.maxBytes && n > sink.maxBytes - sink.received) {
+            sink.limitExceeded = true;
+            return CURL_WRITEFUNC_ERROR;
+        }
+        if (!sink.out) return CURL_WRITEFUNC_ERROR;
+        sink.out->write(ptr, static_cast<std::streamsize>(n));
+        sink.received += n;
+        return sink.out->good() ? n : CURL_WRITEFUNC_ERROR;
+    } catch (...) {
+        return CURL_WRITEFUNC_ERROR;
+    }
+}
+
+struct MultiTransfer {
+    enum class Kind { RestRequest, FileDownload, TextFetch };
+    struct LimitedRestBody {
+        std::string* body = nullptr;
+        std::size_t limit = 65536;
+    };
+
+    Kind kind = Kind::RestRequest;
+    std::atomic<bool> cancelled{false};
+    std::atomic<bool> completed{false};
+    CurlHandle handle;
+    CurlHeaderList headers;
+
+    std::string url, method, requestBody, userAgent, path, verb, authHeader, proxyUrl;
+    long timeoutSec = 10;
+    bool bounded = false;
+    std::size_t responseLimit = 65536;
+    LimitedRestBody limitedRestBody;
+    std::string responseBody;
+
+    std::filesystem::path tempPath;
+    std::ofstream out;
+    AsyncDownloadSink sink;
+    ClashApi::DownloadOptions options;
+    std::map<std::string, std::string> responseHeaders;
+
+    char errorDetail[CURL_ERROR_SIZE]{};
+    std::chrono::steady_clock::time_point began{};
+    std::function<void(ApiResult)> onComplete;
+
+    void invokeComplete(ApiResult result) noexcept {
+        auto cb = std::move(onComplete);
+        onComplete = {};
+        if (!cb) return;
+        try { cb(std::move(result)); } catch (...) {}
+    }
+
+    void finishError(std::string error, std::string phase, bool retryable = false) noexcept {
+        if (completed.exchange(true, std::memory_order_acq_rel)) return;
+        if (out.is_open()) {
+            try { out.flush(); out.close(); } catch (...) {}
+        }
+        handle.reset();
+        headers.reset();
+        ApiResult result;
+        result.ok = false;
+        result.error = std::move(error);
+        result.failurePhase = std::move(phase);
+        result.download.retryable = retryable;
+        invokeComplete(std::move(result));
+    }
+
+    bool start(CURLM* multi) noexcept {
+        try {
+            if (!handle) {
+                finishError(kind == Kind::RestRequest ? "curl_easy_init failed" : "curl_easy_init failed",
+                            "initialization");
+                return false;
+            }
+            CURL* const easy = handle.get();
+            curl_easy_setopt(easy, CURLOPT_FORBID_REUSE, 1L);
+            curl_easy_setopt(easy, CURLOPT_FRESH_CONNECT, 1L);
+            curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+            curl_easy_setopt(easy, CURLOPT_NOPROGRESS, 0L);
+            curl_easy_setopt(easy, CURLOPT_XFERINFODATA, &cancelled);
+            curl_easy_setopt(easy, CURLOPT_XFERINFOFUNCTION,
+                +[](void* value, curl_off_t, curl_off_t, curl_off_t, curl_off_t) noexcept -> int {
+                    return static_cast<std::atomic<bool>*>(value)->load(std::memory_order_acquire) ? 1 : 0;
+                });
+
+            if (kind == Kind::RestRequest) {
+                if (!headers.append("Content-Type: application/json") ||
+                    (!authHeader.empty() && !headers.append(authHeader.c_str()))) {
+                    finishError("无法分配请求头", "initialization");
+                    return false;
+                }
+                curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+                curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http");
+                curl_easy_setopt(easy, CURLOPT_NOPROXY, "*");
+                if (!method.empty()) {
+                    curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, method.c_str());
+                }
+                curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
+                limitedRestBody = {&responseBody, responseLimit};
+                curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, bounded ? +[](char* data, size_t size, size_t count, void* context) noexcept -> size_t {
+                    const auto& target = *static_cast<LimitedRestBody*>(context);
+                    auto& output = *target.body;
+                    if (size && count > (target.limit - output.size()) / size) return 0;
+                    const size_t bytes = size * count;
+                    try { output.append(data, bytes); return bytes; }
+                    catch (...) { return 0; }
+                } : &onBodyWrite);
+                curl_easy_setopt(easy, CURLOPT_WRITEDATA, bounded ? static_cast<void*>(&limitedRestBody) : static_cast<void*>(&responseBody));
+                curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec);
+                curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 3L);
+                curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+                if (!requestBody.empty()) {
+                    curl_easy_setopt(easy, CURLOPT_POSTFIELDS, requestBody.data());
+                    curl_easy_setopt(easy, CURLOPT_POSTFIELDSIZE, static_cast<long>(requestBody.size()));
+                }
+            } else if (kind == Kind::TextFetch) {
+                curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+                curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "https");
+                limitedRestBody = {&responseBody, 4096};
+                curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION,
+                    +[](char* data, size_t size, size_t count, void* context) noexcept -> size_t {
+                        const auto& target = *static_cast<LimitedRestBody*>(context);
+                        auto& output = *target.body;
+                        if (size && count > (target.limit - output.size()) / size) return 0;
+                        const size_t bytes = size * count;
+                        try { output.append(data, bytes); return bytes; }
+                        catch (...) { return 0; }
+                    });
+                curl_easy_setopt(easy, CURLOPT_WRITEDATA, &limitedRestBody);
+                curl_easy_setopt(easy, CURLOPT_TIMEOUT, timeoutSec > 0 ? timeoutSec : 8L);
+                curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 4L);
+                curl_easy_setopt(easy, CURLOPT_USERAGENT, "clash-flux/0.1");
+                curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+                curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
+                curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, errorDetail);
+#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+                curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_NATIVE_CA));
+#endif
+                curl_easy_setopt(easy, CURLOPT_PROXY, proxyUrl.empty() ? "" : proxyUrl.c_str());
+                curl_easy_setopt(easy, CURLOPT_NOPROXY, "");
+            } else {
+                out.open(tempPath, std::ios::binary | std::ios::trunc);
+                if (!out) {
+                    finishError("无法写入: " + tempPath.string(), "transport");
+                    return false;
+                }
+                sink = AsyncDownloadSink{&out, options.maxBytes, 0, false};
+                curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+                curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+                curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+                curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, options.headers.empty() ? 1L : 0L);
+                for (const auto& [name, value] : options.headers) {
+                    const auto line = name + ": " + value;
+                    if (!headers.append(line.c_str())) {
+                        finishError("无法分配下载请求头", "initialization");
+                        return false;
+                    }
+                }
+                curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers.get());
+                curl_easy_setopt(easy, CURLOPT_HEADEROPT, CURLHEADER_SEPARATE);
+                curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &onAsyncFileWrite);
+                curl_easy_setopt(easy, CURLOPT_WRITEDATA, &sink);
+                curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, &onHeaderLine);
+                curl_easy_setopt(easy, CURLOPT_HEADERDATA, &responseHeaders);
+                curl_easy_setopt(easy, CURLOPT_TIMEOUT, options.timeoutSecs > 0 ? options.timeoutSecs : 60L);
+                curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 10L);
+                curl_easy_setopt(easy, CURLOPT_USERAGENT, userAgent.c_str());
+                curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
+                curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, errorDetail);
+#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+                curl_easy_setopt(easy, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_NATIVE_CA));
+#endif
+                curl_easy_setopt(easy, CURLOPT_SSL_VERIFYPEER, 1L);
+                curl_easy_setopt(easy, CURLOPT_SSL_VERIFYHOST, 2L);
+                if (!options.proxyUrl.empty()) {
+                    curl_easy_setopt(easy, CURLOPT_PROXY, options.proxyUrl.c_str());
+                } else if (!options.allowProxyEnv) {
+                    curl_easy_setopt(easy, CURLOPT_PROXY, "");
+                }
+            }
+
+            began = std::chrono::steady_clock::now();
+            const CURLMcode added = curl_multi_add_handle(multi, easy);
+            if (added != CURLM_OK) {
+                finishError(std::string("curl_multi_add_handle failed: ") + curl_multi_strerror(added),
+                            "transport");
+                return false;
+            }
+            return true;
+        } catch (const std::exception& error) {
+            finishError(error.what(), "transport");
+            return false;
+        } catch (...) {
+            finishError("异步请求初始化失败", "transport");
+            return false;
+        }
+    }
+
+    void finish(CURLcode code) noexcept {
+        if (completed.exchange(true, std::memory_order_acq_rel)) return;
+        ApiResult result;
+        try {
+            const bool aborted = cancelled.load(std::memory_order_acquire) || code == CURLE_ABORTED_BY_CALLBACK;
+            CURL* const easy = handle.get();
+            if (kind == Kind::RestRequest) {
+                result.body = std::move(responseBody);
+                if (aborted) {
+                    result.ok = false;
+                    result.failurePhase = "cancelled";
+                    result.error = verb + " " + path + "：已取消";
+                } else if (code == CURLE_OK && easy) {
+                    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
+                    result.ok = result.status >= 200 && result.status < 300;
+                    if (!result.ok) {
+                        const std::string message = extractMessage(result.body);
+                        result.error = verb + " " + path + " → HTTP " +
+                                       std::to_string(result.status) +
+                                       (message.empty() ? std::string{} : " · " + message);
+                        result.failurePhase = result.status >= 400 ? "http" : "transport";
+                    }
+                } else {
+                    result.error = verb + " " + path + "：" +
+                                   curl_easy_strerror(code) + "（curl " +
+                                   std::to_string(static_cast<int>(code)) + "）";
+                    result.failurePhase = code == CURLE_OPERATION_TIMEDOUT ? "timeout" : "transport";
+                }
+            } else if (kind == Kind::TextFetch) {
+                result.body = std::move(responseBody);
+                if (aborted) {
+                    result.ok = false;
+                    result.failurePhase = "cancelled";
+                    result.error = "已取消";
+                } else if (code == CURLE_OK && easy) {
+                    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
+                    result.ok = result.status >= 200 && result.status < 300;
+                    if (!result.ok) {
+                        result.error = "HTTP " + std::to_string(result.status);
+                        result.failurePhase = result.status >= 400 ? "http" : "transport";
+                    }
+                } else {
+                    const std::string detail = errorDetail[0] != '\0'
+                        ? std::string(errorDetail)
+                        : std::string(curl_easy_strerror(code));
+                    result.error = detail;
+                    result.failurePhase = (code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE)
+                        ? "tls"
+                        : code == CURLE_OPERATION_TIMEDOUT ? "timeout" : "transport";
+                }
+            } else {
+                result.headers = std::move(responseHeaders);
+                if (easy && began != std::chrono::steady_clock::time_point{}) {
+                    result.download.networkMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - began).count();
+                    result.download.transportKnown = true;
+                    result.download.attempts = 1;
+                    curl_off_t downloadedBytes = 0;
+                    curl_easy_getinfo(easy, CURLINFO_SIZE_DOWNLOAD_T, &downloadedBytes);
+                    result.download.bytes = static_cast<std::uint64_t>(std::max<curl_off_t>(0, downloadedBytes));
+                    curl_easy_getinfo(easy, CURLINFO_NUM_CONNECTS, &result.download.newConnections);
+                }
+                result.download.retryable = !aborted &&
+                    (code == CURLE_PARTIAL_FILE || code == CURLE_RECV_ERROR || code == CURLE_OPERATION_TIMEDOUT);
+
+                if (out.is_open()) {
+                    out.flush();
+                    out.close();
+                }
+
+                if (aborted) {
+                    result.ok = false;
+                    result.error = "下载已取消";
+                    result.failurePhase = "cancelled";
+                } else if (code == CURLE_OK && easy) {
+                    curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status);
+                    result.ok = (result.status >= 200 && result.status < 300) ||
+                                (options.acceptNotModified && result.status == 304);
+                    if (!result.ok) {
+                        result.error = "HTTP " + std::to_string(result.status);
+                        result.failurePhase = result.status >= 400 ? "http" : "transport";
+                    } else if (result.status != 304) {
+                        curl_off_t expected = -1;
+                        curl_off_t received = -1;
+                        curl_easy_getinfo(easy, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &expected);
+                        curl_easy_getinfo(easy, CURLINFO_SIZE_DOWNLOAD_T, &received);
+                        if (expected > 0 && received >= 0 && received < expected) {
+                            result.ok = false;
+                            result.error = "下载不完整（收到 " + std::to_string(received) +
+                                           "/" + std::to_string(expected) + " 字节）";
+                            result.failurePhase = "transport";
+                        }
+                    }
+                    if (result.ok && out.fail()) {
+                        result.ok = false;
+                        result.error = "无法完成下载文件写入: " + tempPath.string();
+                        result.failurePhase = "transport";
+                    }
+                } else {
+                    const std::string detail = errorDetail[0] != '\0'
+                        ? std::string(errorDetail)
+                        : std::string(curl_easy_strerror(code));
+                    const std::string codeText = std::to_string(static_cast<int>(code));
+                    if (code == CURLE_PEER_FAILED_VERIFICATION || code == CURLE_SSL_CACERT_BADFILE) {
+                        result.error = "TLS 证书校验失败（curl " + codeText + "）：" + detail;
+                        result.failurePhase = "tls";
+                    } else {
+                        result.error = detail + "（curl " + codeText + "）";
+                        result.failurePhase = code == CURLE_OPERATION_TIMEDOUT ? "timeout" : "transport";
+                    }
+                }
+                if (sink.limitExceeded && !aborted) {
+                    result.ok = false;
+                    result.error = "下载超过大小上限";
+                    result.failurePhase = "limit";
+                }
+            }
+        } catch (const std::exception& error) {
+            result.ok = false;
+            if (result.error.empty()) result.error = error.what();
+            if (result.failurePhase.empty()) result.failurePhase = "transport";
+        } catch (...) {
+            result.ok = false;
+            if (result.error.empty()) result.error = "异步请求失败";
+            if (result.failurePhase.empty()) result.failurePhase = "transport";
+        }
+        if (out.is_open()) {
+            try { out.flush(); out.close(); } catch (...) {}
+        }
+        handle.reset();
+        headers.reset();
+        invokeComplete(std::move(result));
+    }
+};
+
+class CurlMultiEngine final {
+public:
+    CurlMultiEngine() {
+        if (multi_) {
+            worker_ = std::thread([this] { Loop(); });
+        }
+    }
+
+    ~CurlMultiEngine() {
+        {
+            std::lock_guard lock(mutex_);
+            stopping_ = true;
+            if (multi_) curl_multi_wakeup(multi_.get());
+        }
+        if (worker_.joinable()) worker_.join();
+    }
+
+    CurlMultiEngine(const CurlMultiEngine&) = delete;
+    CurlMultiEngine& operator=(const CurlMultiEngine&) = delete;
+
+    AsyncCancelHandle Submit(std::shared_ptr<MultiTransfer> transfer) {
+        if (!transfer) return {};
+        if (!multi_) {
+            transfer->finishError("curl_multi_init failed", "initialization");
+            return {};
+        }
+        {
+            std::lock_guard lock(mutex_);
+            if (stopping_) {
+                transfer->finishError("curl_multi 引擎已关闭", "cancelled");
+                return {};
+            }
+            pendingAdd_.push_back(transfer);
+            curl_multi_wakeup(multi_.get());
+        }
+        return AsyncCancelHandle{[this, weak = std::weak_ptr<MultiTransfer>(transfer)]() noexcept {
+            const auto locked = weak.lock();
+            if (!locked) return;
+            locked->cancelled.store(true, std::memory_order_release);
+            try {
+                std::lock_guard lock(mutex_);
+                if (!stopping_ && multi_.get()) {
+                    pendingCancel_.push_back(locked);
+                    curl_multi_wakeup(multi_.get());
+                }
+            } catch (...) {}
+        }};
+    }
+
+private:
+    void Loop() {
+        for (;;) {
+            std::deque<std::shared_ptr<MultiTransfer>> toAdd;
+            std::vector<std::shared_ptr<MultiTransfer>> toCancel;
+            bool stop = false;
+            {
+                std::lock_guard lock(mutex_);
+                toAdd.swap(pendingAdd_);
+                toCancel.swap(pendingCancel_);
+                stop = stopping_;
+            }
+
+            if (stop) {
+                for (auto& item : toAdd) {
+                    if (item) item->finish(CURLE_ABORTED_BY_CALLBACK);
+                }
+                std::vector<std::shared_ptr<MultiTransfer>> remaining;
+                remaining.reserve(active_.size());
+                for (auto& [easy, item] : active_) {
+                    curl_multi_remove_handle(multi_.get(), easy);
+                    remaining.push_back(std::move(item));
+                }
+                active_.clear();
+                for (auto& item : remaining) {
+                    if (item) item->finish(CURLE_ABORTED_BY_CALLBACK);
+                }
+                return;
+            }
+
+            for (const auto& item : toCancel) {
+                if (!item) continue;
+                CURL* const easy = item->handle.get();
+                if (!easy) continue;
+                const auto it = active_.find(easy);
+                if (it == active_.end()) continue;
+                auto target = std::move(it->second);
+                active_.erase(it);
+                curl_multi_remove_handle(multi_.get(), easy);
+                target->finish(CURLE_ABORTED_BY_CALLBACK);
+            }
+
+            for (auto& item : toAdd) {
+                if (!item) continue;
+                if (item->cancelled.load(std::memory_order_acquire)) {
+                    item->finish(CURLE_ABORTED_BY_CALLBACK);
+                    continue;
+                }
+                if (item->start(multi_.get())) {
+                    active_.emplace(item->handle.get(), std::move(item));
+                }
+            }
+
+            int stillRunning = 0;
+            curl_multi_perform(multi_.get(), &stillRunning);
+
+            std::vector<std::pair<std::shared_ptr<MultiTransfer>, CURLcode>> finished;
+            int messagesLeft = 0;
+            while (CURLMsg* msg = curl_multi_info_read(multi_.get(), &messagesLeft)) {
+                if (msg->msg != CURLMSG_DONE) continue;
+                CURL* const easy = msg->easy_handle;
+                const CURLcode code = msg->data.result;
+                const auto it = active_.find(easy);
+                if (it != active_.end()) {
+                    finished.emplace_back(std::move(it->second), code);
+                    active_.erase(it);
+                }
+                curl_multi_remove_handle(multi_.get(), easy);
+            }
+            for (auto& [item, code] : finished) {
+                if (item) item->finish(code);
+            }
+
+            {
+                std::lock_guard lock(mutex_);
+                if (stopping_) continue;
+                if (!pendingAdd_.empty() || !pendingCancel_.empty()) continue;
+            }
+            curl_multi_poll(multi_.get(), nullptr, 0, 1000, nullptr);
+        }
+    }
+
+    CurlMultiHandle multi_;
+    std::mutex mutex_;
+    std::deque<std::shared_ptr<MultiTransfer>> pendingAdd_;
+    std::vector<std::shared_ptr<MultiTransfer>> pendingCancel_;
+    std::unordered_map<CURL*, std::shared_ptr<MultiTransfer>> active_;
+    bool stopping_ = false;
+    std::thread worker_;
+};
+
+CurlMultiEngine& SharedMultiEngine() {
+    static CurlMultiEngine engine;
+    return engine;
+}
 
 } // namespace
 
@@ -416,6 +937,17 @@ ApiResult fetchTextObserved(const std::string& url, const std::string& proxyUrl,
     return fetchTextImpl(url, proxyUrl, timeoutSec, &observe);
 }
 
+AsyncCancelHandle fetchTextAsync(const std::string& url, const std::string& proxyUrl,
+                                 long timeoutSec, std::function<void(ApiResult)> onComplete) {
+    auto transfer = std::make_shared<MultiTransfer>();
+    transfer->kind = MultiTransfer::Kind::TextFetch;
+    transfer->url = url;
+    transfer->proxyUrl = proxyUrl;
+    transfer->timeoutSec = timeoutSec;
+    transfer->onComplete = std::move(onComplete);
+    return SharedMultiEngine().Submit(std::move(transfer));
+}
+
 struct ClashApi::Impl {
     mutable std::mutex endpointMutex;
     std::shared_ptr<DownloadHandlePool> downloadPool = std::make_shared<DownloadHandlePool>();
@@ -494,6 +1026,32 @@ struct ClashApi::Impl {
                            std::to_string(static_cast<int>(code)) + "）";
         }
         return result;
+    }
+
+    AsyncCancelHandle requestAsync(const std::string& method, const std::string& path,
+                                   const std::string& body, long timeoutSec,
+                                   bool bounded, std::size_t responseLimit,
+                                   std::function<void(ApiResult)> onComplete) {
+        auto transfer = std::make_shared<MultiTransfer>();
+        transfer->kind = MultiTransfer::Kind::RestRequest;
+        std::string requestSecret;
+        {
+            std::lock_guard lock(endpointMutex);
+            transfer->url = base + path;
+            requestSecret = secret;
+        }
+        if (!requestSecret.empty()) {
+            transfer->authHeader = "Authorization: Bearer " + requestSecret;
+        }
+        transfer->method = method;
+        transfer->path = path;
+        transfer->verb = method.empty() ? std::string{"GET"} : method;
+        transfer->requestBody = body;
+        transfer->timeoutSec = timeoutSec;
+        transfer->bounded = bounded;
+        transfer->responseLimit = responseLimit;
+        transfer->onComplete = std::move(onComplete);
+        return SharedMultiEngine().Submit(std::move(transfer));
     }
 };
 
@@ -658,11 +1216,26 @@ ApiResult ClashApi::proxyDelay(const std::string& name, const std::string& testU
     return impl_->request("", path, {}, timeoutMs / 1000 + 5);
 }
 
+AsyncCancelHandle ClashApi::proxyDelayAsync(const std::string& name, const std::string& testUrl,
+                                            int timeoutMs, std::function<void(ApiResult)> onComplete) {
+    const std::string path = appendQuery("/proxies/" + percentEncode(name) + "/delay",
+                                         {{"url", testUrl},
+                                          {"timeout", std::to_string(timeoutMs)}});
+    return impl_->requestAsync("", path, {}, timeoutMs / 1000 + 5, false, 65536, std::move(onComplete));
+}
+
 ApiResult ClashApi::groupDelay(const std::string& name, int timeoutMs) {
     const std::string path = appendQuery("/group/" + percentEncode(name) + "/delay",
                                          {{"timeout", std::to_string(timeoutMs)}});
     // 组测速在服务端并发测试所有成员，传输预算同样要比单个测速宽。
     return impl_->request("", path, {}, timeoutMs / 1000 + 5);
+}
+
+AsyncCancelHandle ClashApi::groupDelayAsync(const std::string& name, int timeoutMs,
+                                            std::function<void(ApiResult)> onComplete) {
+    const std::string path = appendQuery("/group/" + percentEncode(name) + "/delay",
+                                         {{"timeout", std::to_string(timeoutMs)}});
+    return impl_->requestAsync("", path, {}, timeoutMs / 1000 + 5, false, 65536, std::move(onComplete));
 }
 
 ApiResult ClashApi::connections() { return impl_->request("", "/connections"); }
@@ -998,6 +1571,52 @@ ApiResult ClashApi::downloadOnce(const std::string& url,
         }
     }
     return result;
+}
+
+AsyncCancelHandle ClashApi::downloadOnceAsync(const std::string& url,
+                                              const std::filesystem::path& tempFile,
+                                              const DownloadOptions& inputOptions,
+                                              const std::string& userAgent,
+                                              std::function<void(ApiResult)> onComplete) {
+#if defined(__ANDROID__) || defined(CLASHFLUX_IOS)
+    static_cast<void>(url);
+    static_cast<void>(tempFile);
+    static_cast<void>(inputOptions);
+    static_cast<void>(userAgent);
+    ApiResult result;
+    result.ok = false;
+    result.error = "当前平台不走 libcurl 异步下载";
+    result.failurePhase = "transport";
+    if (onComplete) {
+        try { onComplete(std::move(result)); } catch (...) {}
+    }
+    return {};
+#else
+    auto options = inputOptions;
+    options.validate = {};
+    if (options.subscriptionRequest &&
+        (!options.maxBytes || options.maxBytes > clashflux::download::kSubscriptionMaxBytes)) {
+        options.maxBytes = clashflux::download::kSubscriptionMaxBytes;
+    }
+    if (!clashflux::http_request::ValidHeaders(options.headers)) {
+        ApiResult result;
+        result.ok = false;
+        result.error = "下载请求头非法或不支持";
+        result.failurePhase = "transport";
+        if (onComplete) {
+            try { onComplete(std::move(result)); } catch (...) {}
+        }
+        return {};
+    }
+    auto transfer = std::make_shared<MultiTransfer>();
+    transfer->kind = MultiTransfer::Kind::FileDownload;
+    transfer->url = url;
+    transfer->tempPath = tempFile;
+    transfer->options = std::move(options);
+    transfer->userAgent = userAgent.empty() ? std::string{"clash-flux/0.1"} : userAgent;
+    transfer->onComplete = std::move(onComplete);
+    return SharedMultiEngine().Submit(std::move(transfer));
+#endif
 }
 
 } // namespace api

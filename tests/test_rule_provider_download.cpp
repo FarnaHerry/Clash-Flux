@@ -214,9 +214,146 @@ int testDownloadPool(char** argv) {
     std::cout << "download pool: credentials, validators, bounds, concurrency, failure, proxy and TLS checks passed\n";
     return 0;
 }
+
+api::ApiResult runAsyncDownload(api::ClashApi& client, const std::string& url,
+                                const std::filesystem::path& file,
+                                const api::ClashApi::DownloadOptions& options) {
+    std::promise<api::ApiResult> promise;
+    auto future = promise.get_future();
+    client.downloadOnceAsync(url, file, options, "clash-flux/0.1",
+                             [&promise](api::ApiResult result) { promise.set_value(std::move(result)); });
+    return future.get();
+}
+
+int testAsyncMulti(char** argv) {
+    const std::string base = argv[2], tls = argv[3];
+    const std::filesystem::path root = argv[4];
+    api::ClashApi client(base, "async-secret");
+    api::ClashApi::DownloadOptions options;
+    options.timeoutSecs = 5;
+    options.maxBytes = 1024;
+
+    // 1. 6 concurrent async downloads driven by the single curl_multi thread.
+    std::vector<std::promise<api::ApiResult>> promises(6);
+    std::vector<std::future<api::ApiResult>> futures;
+    for (int i = 0; i < 6; ++i) futures.push_back(promises[i].get_future());
+    for (int i = 0; i < 6; ++i) {
+        const auto file = root / ("async-concurrent-" + std::to_string(i));
+        client.downloadOnceAsync(base + "/async-concurrent-" + std::to_string(i), file, options,
+                                 "clash-flux/0.1",
+                                 [&p = promises[i]](api::ApiResult result) { p.set_value(std::move(result)); });
+    }
+    for (int i = 0; i < 6; ++i) {
+        const auto result = futures[i].get();
+        require(result.ok && result.status == 200, "concurrent async download failed");
+        require(readFile(root / ("async-concurrent-" + std::to_string(i))) ==
+                    "payload: [async-concurrent-" + std::to_string(i) + ".test]\n",
+                "async download body mismatch");
+    }
+
+    // 2. Cancellation of a slow download finishes promptly.
+    {
+        std::promise<api::ApiResult> cancelPromise;
+        auto cancelFuture = cancelPromise.get_future();
+        const auto began = std::chrono::steady_clock::now();
+        auto handle = client.downloadOnceAsync(
+            base + "/slow-cancel", root / "slow-cancel", options, "clash-flux/0.1",
+            [&cancelPromise](api::ApiResult result) { cancelPromise.set_value(std::move(result)); });
+        std::this_thread::sleep_for(std::chrono::milliseconds{80});
+        handle();
+        const auto cancelled = cancelFuture.get();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - began).count();
+        require(!cancelled.ok && cancelled.failurePhase == "cancelled" && elapsedMs < 1000,
+                "async download cancellation did not abort promptly");
+    }
+
+    // 3. maxBytes and TLS verification enforcement on curl_multi.
+    {
+        auto capped = options;
+        capped.maxBytes = 1;
+        const auto tooLarge = runAsyncDownload(client, base + "/reuse", root / "async-capped", capped);
+        require(!tooLarge.ok && tooLarge.failurePhase == "limit", "async download ignored maxBytes");
+    }
+    if (!tls.empty()) {
+        const auto rejected = runAsyncDownload(client, tls + "/reuse", root / "async-tls", options);
+        require(!rejected.ok && rejected.failurePhase == "tls" &&
+                    rejected.error.find("TLS") != std::string::npos,
+                "async download must reject invalid TLS certificates");
+    }
+
+    // 4. Async proxyDelayAsync / groupDelayAsync + cancellation.
+    {
+        std::promise<api::ApiResult> nodePromise, groupPromise, slowPromise;
+        auto nodeFuture = nodePromise.get_future();
+        auto groupFuture = groupPromise.get_future();
+        auto slowFuture = slowPromise.get_future();
+        client.proxyDelayAsync("node-a", "", 2000,
+                               [&nodePromise](api::ApiResult r) { nodePromise.set_value(std::move(r)); });
+        client.groupDelayAsync("auto", 2000,
+                               [&groupPromise](api::ApiResult r) { groupPromise.set_value(std::move(r)); });
+        const auto slowBegan = std::chrono::steady_clock::now();
+        auto slowCancel = client.proxyDelayAsync("slow", "", 5000,
+                                                 [&slowPromise](api::ApiResult r) { slowPromise.set_value(std::move(r)); });
+        std::this_thread::sleep_for(std::chrono::milliseconds{80});
+        slowCancel();
+
+        const auto nodeResult = nodeFuture.get();
+        const auto groupResult = groupFuture.get();
+        const auto slowResult = slowFuture.get();
+        const auto slowElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - slowBegan).count();
+        require(nodeResult.ok && nodeResult.status == 200 && nodeResult.body == "{\"delay\":42}",
+                "proxyDelayAsync returned unexpected payload");
+        require(groupResult.ok && groupResult.status == 200 &&
+                    groupResult.body == "{\"node-a\":42,\"node-b\":88}",
+                "groupDelayAsync returned unexpected payload");
+        require(!slowResult.ok && slowResult.failurePhase == "cancelled" && slowElapsedMs < 1000,
+                "proxyDelayAsync cancellation did not abort promptly");
+    }
+
+    // 5. api::fetchTextAsync protocol guard, TLS rejection, and cancellation.
+    {
+        std::promise<api::ApiResult> httpPromise;
+        auto httpFuture = httpPromise.get_future();
+        api::fetchTextAsync(base + "/reuse", "", 2,
+                            [&httpPromise](api::ApiResult r) { httpPromise.set_value(std::move(r)); });
+        const auto httpRejected = httpFuture.get();
+        require(!httpRejected.ok, "fetchTextAsync must reject non-HTTPS URL");
+
+        if (!tls.empty()) {
+            std::promise<api::ApiResult> tlsPromise;
+            auto tlsFuture = tlsPromise.get_future();
+            api::fetchTextAsync(tls + "/reuse", "", 2,
+                                [&tlsPromise](api::ApiResult r) { tlsPromise.set_value(std::move(r)); });
+            const auto tlsRejected = tlsFuture.get();
+            require(!tlsRejected.ok && tlsRejected.failurePhase == "tls",
+                    "fetchTextAsync must reject invalid TLS certificate");
+
+            std::promise<api::ApiResult> cancelPromise;
+            auto cancelFuture = cancelPromise.get_future();
+            const auto began = std::chrono::steady_clock::now();
+            auto handle = api::fetchTextAsync(
+                tls + "/slow-cancel", "", 5,
+                [&cancelPromise](api::ApiResult r) { cancelPromise.set_value(std::move(r)); });
+            handle();
+            const auto aborted = cancelFuture.get();
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - began).count();
+            require(!aborted.ok && aborted.failurePhase == "cancelled" && elapsedMs < 1000,
+                    "fetchTextAsync cancellation did not abort promptly");
+        }
+    }
+    std::cout << "async multi: concurrency, cancellation, limits, TLS and delay probes passed\n";
+    return 0;
+}
 }
 
 int main(int argc, char** argv) {
+    if (argc == 5 && std::string_view(argv[1]) == "--async-multi") {
+        try { return testAsyncMulti(argv); }
+        catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
+    }
     if (argc == 7 && std::string_view(argv[1]) == "--download-pool") {
         try { return testDownloadPool(argv); }
         catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

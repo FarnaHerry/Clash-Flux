@@ -60,19 +60,18 @@ import clashflux.vpn;
 namespace clashflux::ui {
 
 // Application scope survives window closure. Runtime shutdown owns cancellation;
-// WorkerSequence forwards shutdown cancellation into preparation/commit checks;
-// synchronous in-flight IO retains the existing bounded download timeout.
+// RunOnTaskThreadWithStop isolates blocking refreshes in DomainWorkerPool while
+// forwarding TaskScope shutdown via std::stop_token.
 void StartExternalResourceRefreshPump(huxerui::TaskScope tasks) {
     const auto runtime = huxerui::UseService<AppRuntimeServices>();
     if (runtime->externalResourceRefreshStarted) return;
     runtime->externalResourceRefreshStarted = true;
-    const huxerui::WorkerSequence worker;
     const auto profiles = huxerui::UseService<ProfilesModel>();
-    tasks.Launch([worker, profiles]() -> huxerui::Task<void> {
+    tasks.Launch([profiles]() -> huxerui::Task<void> {
         for (;;) {
             co_await huxerui::Delay(std::chrono::seconds{30});
             try {
-                const auto batch = co_await worker.Run([](std::stop_token cancel) {
+                const auto batch = co_await RunOnTaskThreadWithStop([](std::stop_token cancel) {
                     return store::coreStore().refreshDueExternalResources(cancel);
                 });
                 if (batch.updated) ++profiles->externalResourcesRevision;

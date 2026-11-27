@@ -39,6 +39,15 @@ export struct DownloadMetrics {
     long newConnections = 0;
 };
 
+export struct AsyncCancelHandle {
+    std::function<void()> cancel;
+    inline void operator()() const noexcept {
+        if (cancel) {
+            try { cancel(); } catch (...) {}
+        }
+    }
+};
+
 export struct ApiResult {
     bool ok = false;
     long status = 0;          // HTTP 状态码；传输失败为 0
@@ -65,6 +74,8 @@ export ApiResult fetchText(const std::string& url, const std::string& proxyUrl,
 // for this request. observe runs on the calling task thread.
 export ApiResult fetchTextObserved(const std::string& url, const std::string& proxyUrl,
                                    long timeoutSec, const std::function<void()>& observe);
+export AsyncCancelHandle fetchTextAsync(const std::string& url, const std::string& proxyUrl,
+                                        long timeoutSec, std::function<void(ApiResult)> onComplete);
 
 export struct NativeRuntime {
     bool ok = false;
@@ -106,9 +117,13 @@ public:
     // 单节点测速：ok 时 body 是 {"delay":N}；超时/失败 ok=false。
     // testUrl 为空或 http:// 时，sing-box 使用默认 HTTPS 测速地址。
     ApiResult proxyDelay(const std::string& name, const std::string& testUrl, int timeoutMs);
+    AsyncCancelHandle proxyDelayAsync(const std::string& name, const std::string& testUrl,
+                                        int timeoutMs, std::function<void(ApiResult)> onComplete);
     // 策略组测速：ok 时 body 是 {"tag":delay,...}。URLTest 组使用组自身
     // 的 url（订阅 url-test.url），不会回落到单节点默认地址。
     ApiResult groupDelay(const std::string& name, int timeoutMs);
+    AsyncCancelHandle groupDelayAsync(const std::string& name, int timeoutMs,
+                                        std::function<void(ApiResult)> onComplete);
 
     ApiResult connections();
     ApiResult rules();
@@ -142,6 +157,10 @@ public:
     // 默认参数 + 花括号临时量的组合 GCC 不接受）。
     ApiResult downloadToFile(const std::string& url, const std::filesystem::path& dest,
                              const DownloadOptions& options);
+    // 非阻塞单次文件下载（仅写 tempFile，由调用方负责校验与原子提交；桌面端走 curl_multi）。
+    AsyncCancelHandle downloadOnceAsync(const std::string& url, const std::filesystem::path& tempFile,
+                                        const DownloadOptions& options, const std::string& userAgent,
+                                        std::function<void(ApiResult)> onComplete);
 
 private:
     ApiResult downloadOnce(const std::string& url, const std::filesystem::path& dest,

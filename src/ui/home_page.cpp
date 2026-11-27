@@ -693,21 +693,22 @@ huxerui::Task<wire::PublicIpLookup> FetchPublicIp(std::shared_ptr<AppHttpClient>
     co_return wire::PublicIpLookup{};
 }
 #else
-// 桌面：内核代理监听时经 mixed 入站测量代理出口；只有待命内核时测直连。
+// 桌面：内核代理监听时经 mixed 入站测量代理出口；只有待命内核时测直连（curl_multi 非阻塞协程）。
 huxerui::Task<wire::PublicIpLookup> FetchPublicIp(std::shared_ptr<AppHttpClient> http,
                                                   bool proxyActive, std::string mixedPort) {
     static_cast<void>(http);
-    co_return co_await RunOnTaskThread([proxyActive, mixedPort = std::move(mixedPort)] {
-        const std::string proxyUrl =
-            proxyActive ? "http://127.0.0.1:" + mixedPort : std::string{};
-        for (const std::string_view url : kPublicIpLookupUrls) {
-            const api::ApiResult result = api::fetchText(std::string(url), proxyUrl, 8);
-            if (!result.ok) continue;
-            if (auto decoded = wire::DecodePublicIpLookup(result.body))
-                return std::move(decoded.value);
-        }
-        return wire::PublicIpLookup{};
-    });
+    const std::string proxyUrl =
+        proxyActive ? "http://127.0.0.1:" + mixedPort : std::string{};
+    for (const std::string_view url : kPublicIpLookupUrls) {
+        const api::ApiResult result = co_await AwaitAsyncResult<api::ApiResult>(
+            [target = std::string(url), proxyUrl](std::function<void(api::ApiResult)> done) {
+                return api::fetchTextAsync(target, proxyUrl, 8, std::move(done)).cancel;
+            });
+        if (!result.ok) continue;
+        if (auto decoded = wire::DecodePublicIpLookup(result.body))
+            co_return std::move(decoded.value);
+    }
+    co_return wire::PublicIpLookup{};
 }
 #endif
 

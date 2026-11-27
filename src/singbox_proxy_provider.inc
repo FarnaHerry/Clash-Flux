@@ -115,10 +115,12 @@ bool appendProxyProviderNodes(Context& ctx, const std::string& content,
         using ProviderNode = std::variant<YAML::Node, protocol::NodeSpec>;
         std::vector<ProviderNode> candidates;
         std::set<std::string> tlsTransportAliases;
+        std::set<std::string> unusedTcpPaths;
         std::set<std::string> legacyShadowsocks;
         if (auto text = nodeSubscriptionText(content)) {
             auto document = parseNodeSubscription(*text);
             for (auto& name : document.tlsTransportAliases) tlsTransportAliases.insert(std::move(name));
+            for (auto& name : document.unusedTcpPaths) unusedTcpPaths.insert(std::move(name));
             for (auto& name : document.legacyShadowsocks) legacyShadowsocks.insert(std::move(name));
             for (auto& node : document.nodes) candidates.emplace_back(std::move(node));
         } else {
@@ -176,6 +178,8 @@ bool appendProxyProviderNodes(Context& ctx, const std::string& content,
         // when a later node fails. Filtered-out aliases do not enter the ledger.
         for (const auto index : selected)
             if (tlsTransportAliases.contains(names[index])) noteNodeSubscriptionTlsAlias(ctx, names[index]);
+        for (const auto index : selected)
+            if (unusedTcpPaths.contains(names[index])) noteNodeSubscriptionTcpPath(ctx, names[index]);
         for (const auto index : selected)
             if (legacyShadowsocks.contains(names[index])) noteNodeSubscriptionLegacySs(ctx);
         for (const auto index : selected) {

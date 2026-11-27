@@ -26,6 +26,7 @@
 #endif
 #endif
 
+import clashflux.api;
 import clashflux.model;
 import clashflux.data;
 import clashflux.pptp;
@@ -232,14 +233,137 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
     });
 }
 
-// All platforms share the domain refresh transaction and bounded file downloader.
-huxerui::Task<std::string> RefreshProfileForPlatform(
-    std::shared_ptr<AppHttpClient> http, std::int64_t id) {
-    static_cast<void>(http);
-    co_return co_await RunOnTaskThread([id] {
-        auto& profiles = store::profilesStore();
-        return profiles.refresh(id) ? std::string{} : profiles.lastError();
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+namespace {
+
+huxerui::Task<std::string> RunDesktopRemoteDownloadAsync(
+    std::int64_t id, bool importing, bool forceProviders) {
+    struct DraftGuard {
+        std::int64_t id = 0;
+        bool active = false;
+        ~DraftGuard() {
+            if (active && id != 0) {
+                try { store::profilesStore().discardRemoteDraft(id); } catch (...) {}
+            }
+        }
+    } draftGuard{id, importing};
+
+    auto stage = std::make_shared<store::RemoteDownloadStage>(
+        co_await RunOnTaskThread([id, forceProviders] {
+            return store::profilesStore().prepareRemoteDownload(id, forceProviders);
+        }));
+    if (!stage->ok) co_return stage->error;
+
+    api::ClashApi::DownloadOptions opts = stage->options;
+    const unsigned transportAttempts = std::clamp(opts.attempts, 1u, 3u);
+    std::size_t userAgentIndex = 0;
+    api::DownloadMetrics totals;
+    api::ApiResult result;
+    for (unsigned attempt = 0; attempt < transportAttempts;) {
+        const std::string userAgent =
+            (opts.subscriptionRequest && userAgentIndex < stage->userAgents.size())
+                ? stage->userAgents[userAgentIndex]
+                : std::string{"clash-flux/0.1"};
+        result = co_await AwaitAsyncResult<api::ApiResult>(
+            [url = stage->initial.url, tempPath = stage->tempPath, opts, userAgent](
+                std::function<void(api::ApiResult)> done) {
+                return store::profilesStore().remoteDownloader().downloadOnceAsync(
+                    url, tempPath, opts, userAgent, std::move(done)).cancel;
+            });
+        totals.attempts += std::max(1u, result.download.attempts);
+        totals.networkMicros += result.download.networkMicros;
+        totals.bytes += result.download.bytes;
+        totals.newConnections += result.download.newConnections;
+        if (stage->allowUserAgentFallback && result.status == 403 &&
+            userAgentIndex + 1 < stage->userAgents.size()) {
+            ++userAgentIndex;
+            opts.headers.clear();
+            opts.acceptNotModified = false;
+            continue;
+        }
+        if (result.ok || !result.download.retryable) break;
+        if (++attempt < transportAttempts) {
+            co_await huxerui::Delay(std::chrono::duration<double>{0.25});
+        }
+    }
+    if (opts.acceptNotModified && result.status >= 300 && result.status < 400 &&
+        result.status != 304) {
+        opts.headers.clear();
+        opts.acceptNotModified = false;
+        const std::string userAgent =
+            (opts.subscriptionRequest && userAgentIndex < stage->userAgents.size())
+                ? stage->userAgents[userAgentIndex]
+                : std::string{"clash-flux/0.1"};
+        auto retryResult = co_await AwaitAsyncResult<api::ApiResult>(
+            [url = stage->initial.url, tempPath = stage->tempPath, opts, userAgent](
+                std::function<void(api::ApiResult)> done) {
+                return store::profilesStore().remoteDownloader().downloadOnceAsync(
+                    url, tempPath, opts, userAgent, std::move(done)).cancel;
+            });
+        totals.attempts += std::max(1u, retryResult.download.attempts);
+        totals.networkMicros += retryResult.download.networkMicros;
+        totals.bytes += retryResult.download.bytes;
+        totals.newConnections += retryResult.download.newConnections;
+        result = std::move(retryResult);
+    }
+    if (!result.ok && (result.failurePhase.empty() || result.failurePhase == "none")) {
+        result.failurePhase = result.status >= 400 ? "http" : "transport";
+    }
+    result.download.attempts = totals.attempts;
+    result.download.networkMicros = totals.networkMicros;
+    result.download.bytes = totals.bytes;
+    result.download.newConnections = totals.newConnections;
+
+    auto staged = std::make_shared<store::StagedRemoteCommit>(
+        co_await RunOnTaskThread([stage, result = std::move(result)]() mutable {
+            return store::profilesStore().validateAndStageRemoteDownload(
+                *stage, std::move(result));
+        }));
+    stage.reset();
+    if (!staged->ok) co_return staged->error;
+
+    try {
+        const bool committed = co_await clashflux::data::session().commitProfile(
+            staged->next, staged->expectedRevision);
+        if (!committed) co_return clashflux::data::session().lastError();
+    } catch (const std::exception& error) {
+        co_return std::string{error.what()};
+    }
+    draftGuard.active = false;
+
+    const auto applied = co_await RunOnTaskThread([staged] {
+        return store::profilesStore().applyCommittedRemote(*staged);
     });
+    if (applied.needsRollback) {
+        bool dbRestored = false;
+        try {
+            dbRestored = co_await clashflux::data::session().commitProfile(
+                *staged->previous, applied.committedRevision);
+        } catch (...) {
+            dbRestored = false;
+        }
+        co_return co_await RunOnTaskThread([staged, dbRestored, err = applied.error] {
+            return store::profilesStore().rollbackAppliedRemote(*staged, dbRestored, err);
+        });
+    }
+    co_return applied.ok ? std::string{} : applied.error;
+}
+
+} // namespace
+#endif
+
+// All platforms share the domain refresh transaction; desktop runs network I/O via curl_multi coroutines.
+huxerui::Task<std::string> RefreshProfileForPlatform(
+    std::shared_ptr<AppHttpClient> http, std::int64_t id, bool forceProviders) {
+    static_cast<void>(http);
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    co_return co_await RunDesktopRemoteDownloadAsync(id, false, forceProviders);
+#else
+    co_return co_await RunOnTaskThread([id, forceProviders] {
+        auto& profiles = store::profilesStore();
+        return profiles.refresh(id, forceProviders) ? std::string{} : profiles.lastError();
+    });
+#endif
 }
 
 // 所有平台共用领域导入事务；下载后端在 API 层选择。弹窗只提交 request。
@@ -261,6 +385,19 @@ huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<AppHttpClient>, ProfileImportRequest request) {
     if (auto error = NormalizeProfileImportLink(request); !error.empty())
         co_return ProfileImportResult{0, std::move(error)};
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+    if (request.remote) {
+        const auto draft = co_await RunOnTaskThread([request = std::move(request)] {
+            auto& ps = store::profilesStore();
+            const std::int64_t id = ps.createRemote(request.name, request.url, request.options);
+            return std::pair{id, id ? std::string{} : ps.lastError()};
+        });
+        if (!draft.first) co_return ProfileImportResult{0, draft.second};
+        auto error = co_await RunDesktopRemoteDownloadAsync(draft.first, true, false);
+        if (!error.empty()) co_return ProfileImportResult{0, std::move(error)};
+        co_return ProfileImportResult{draft.first, {}};
+    }
+#endif
     const ProfileImportResult result = co_await RunOnTaskThread(
         [request = std::move(request)] {
             auto& ps = store::profilesStore();
@@ -328,5 +465,27 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     }
     co_return updated;
 }
+
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+huxerui::Task<int> DesktopRefreshProfilesDueOnce(
+    std::shared_ptr<ProfilesModel> profilesModel) {
+    const std::vector<model::Profile> due = co_await RunOnTaskThread(
+        [] { return store::profilesStore().dueForUpdate(); });
+    int updated = 0;
+    for (const auto& row : due) {
+        if (profilesModel && profilesModel->Refreshing(row.id)) continue;
+        auto error = co_await profile_detail::RefreshProfileForPlatform(
+            nullptr, row.id, false);
+        if (error.empty()) {
+            ++updated;
+            if (profilesModel) profilesModel->ClearProfileRefreshFailure(row.id);
+        } else if (profilesModel) {
+            profilesModel->ReportProfileRefreshFailure(
+                row.id, row.name, std::move(error));
+        }
+    }
+    co_return updated;
+}
+#endif
 
 } // namespace clashflux::ui

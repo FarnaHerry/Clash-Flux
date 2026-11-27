@@ -13,6 +13,7 @@
 #include "subscription_expiry.h"
 #include "hydrated_once.h"
 #include "ui/settings_model.h"
+#include "ui/task_bridge.h"
 #include "wire_codec.h"
 
 #include <atomic>
@@ -320,6 +321,58 @@ Task<void> DurableProfilePhase(TaskScope tasks) {
     Check(co_await RunWorker([&store, next, beforeFailure] {
         return store.commitProfileOnWorker(next, beforeFailure);
     }), "worker adapter awaits the actual async transaction without blocking UI");
+    {
+        auto domainGate = std::make_shared<std::mutex>();
+        const auto poolSize = clashflux::ui::detail::SharedDomainWorkerPool().WorkerCount();
+        const std::size_t waiterCount = std::max<std::size_t>(poolSize, 8U);
+        const auto holderEntered = std::make_shared<std::atomic<bool>>(false);
+        const auto holderRelease = std::make_shared<std::atomic<bool>>(false);
+        const auto holderDone = std::make_shared<std::atomic<bool>>(false);
+        const auto holderCommitted = std::make_shared<std::atomic<bool>>(false);
+        const auto waitersEntered = std::make_shared<std::atomic<std::size_t>>(0);
+        const auto waitersDone = std::make_shared<std::atomic<std::size_t>>(0);
+
+        auto contended = next;
+        contended.name = "domain pool saturated";
+        const auto contendedVersion = store.profileRevision(contended.id);
+        tasks.Launch([&store, domainGate, holderEntered, holderRelease, holderDone, holderCommitted,
+                      contended, contendedVersion]() -> Task<void> {
+            *holderCommitted = co_await clashflux::ui::RunOnTaskThread([&store, domainGate, holderEntered,
+                    holderRelease, contended, contendedVersion]() {
+                std::lock_guard lock(*domainGate);
+                holderEntered->store(true, std::memory_order_release);
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{5};
+                while (!holderRelease->load(std::memory_order_acquire) &&
+                       std::chrono::steady_clock::now() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+                }
+                return store.commitProfileOnWorker(contended, contendedVersion);
+            });
+            holderDone->store(true, std::memory_order_release);
+        });
+        co_await WaitFor([holderEntered] { return holderEntered->load(std::memory_order_acquire); });
+
+        for (std::size_t i = 0; i < waiterCount; ++i) {
+            tasks.Launch([domainGate, waitersEntered, waitersDone]() -> Task<void> {
+                co_await clashflux::ui::RunOnTaskThread([domainGate, waitersEntered]() {
+                    waitersEntered->fetch_add(1, std::memory_order_acq_rel);
+                    std::lock_guard lock(*domainGate);
+                });
+                waitersDone->fetch_add(1, std::memory_order_acq_rel);
+            });
+        }
+        co_await WaitFor([waitersEntered, poolSize] {
+            return waitersEntered->load(std::memory_order_acquire) >= (poolSize > 1 ? poolSize - 1 : 0);
+        });
+        holderRelease->store(true, std::memory_order_release);
+        co_await WaitFor([holderDone, waitersDone, waiterCount] {
+            return holderDone->load(std::memory_order_acquire) &&
+                waitersDone->load(std::memory_order_acquire) == waiterCount;
+        });
+        Check(*holderCommitted && store.listProfiles().front().name == contended.name,
+              "saturated domain worker pool does not starve SQLite commitProfileOnWorker");
+        next = contended;
+    }
     Check(ReadFile(fixture.files / "shared.yaml") == "remote and local stable content\n" &&
           ReadFile(fixture.files / "unique.yaml") == "other remote stable content\n" &&
           ReadFile(fixture.files / next.file) == "new complete source\n",

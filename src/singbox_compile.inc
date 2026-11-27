@@ -460,6 +460,8 @@ void compileClashDocument(Context& ctx, const std::string& trimmed, bool exportO
                 "可在个人规则或全局规则中配置分流");
             for (const auto& name : nodes->tlsTransportAliases)
                 noteNodeSubscriptionTlsAlias(ctx, name);
+            for (const auto& name : nodes->unusedTcpPaths)
+                noteNodeSubscriptionTcpPath(ctx, name);
             for (const auto& name : nodes->legacyShadowsocks) {
                 (void)name; noteNodeSubscriptionLegacySs(ctx);
             }

@@ -87,6 +87,7 @@ struct NodeSubscriptionDocument {
     std::vector<protocol::NodeSpec> nodes;
     YAML::Node root; // Generated selection policy only; never protocol nodes.
     std::vector<std::string> tlsTransportAliases;
+    std::vector<std::string> unusedTcpPaths;
     std::vector<std::string> legacyShadowsocks;
 };
 
@@ -236,7 +237,7 @@ NodeSubscriptionDocument parseNodeSubscription(const std::string& text) {
             fail("insecure 与 allowInsecure 存在冲突");
         if (!tlsEnabled && (!sni.empty() || !alpn.empty() || !fingerprint.empty() || insecure || allowInsecure))
             fail("未启用 TLS，不能应用 TLS 字段");
-        if (network == "tcp" && !path.empty() && path != "/") fail("TCP 不支持传输路径");
+        if (network == "tcp" && !path.empty() && path != "/") result.unusedTcpPaths.push_back(name);
         if (network == "grpc" && !host.empty()) fail("gRPC authority 尚无等价映射");
         protocol::NodeSpec node;
         node.origin.name = name;

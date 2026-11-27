@@ -52,12 +52,12 @@ method/非空密码与现有 SS 子集共用校验，但旧格式不接受 SS 20
   旧版握手仍使用原 `aid`，TLS 仍按用户配置校验。该兼容规则也用于 file/HTTP 节点链接集合。
   内核行为见 [固定版本的 VMess 出站](https://github.com/SagerNet/sing-box/blob/c005f35300ce76427dc285481ec5695f5b179cd2/protocol/vmess/outbound.go)。
 - 支持 TCP、WebSocket、HTTP/2（h2/http）、gRPC 的现有映射；保留 WS Host/path、HTTP host/path、
-  gRPC serviceName（path）。gRPC authority、KCP/QUIC、TCP HTTP 伪装及其它模式不能等价表达时拒绝。
+  gRPC serviceName（path）。普通 TCP 传输（`net` 为空/`tcp` 或兼容 `net=tls`）且无伪装（`type` 为空/`none`）时，非空且非 `/` 的残留 `path` 不在线路发送，按忽略未生效字段处理并记节点 approx（诊断不回显原 `path`）；gRPC authority、KCP/QUIC、TCP HTTP 伪装（`type=http`）及其它模式不能等价表达时拒绝。
 - TLS 必须显式 `tls=tls`；默认验证证书。仅显式 insecure/allowInsecure 才跳过验证，两者冲突拒绝。
   保留显式 SNI、ALPN 和指纹；无显式 SNI 时用首个 transport host，否则由内核按服务器处理。
   非空 vcn/pcs 证书约束尚未转换，拒绝候选，不忽略约束。
-- 部分服务商使用非标准 `net=tls`；仅同时显式 `tls=tls`、无伪装且路径为空或 `/` 时，按 TCP+TLS
-  兼容并记节点 approx。其它未知传输不降为 TCP。
+- 部分服务商使用非标准 `net=tls`；仅同时显式 `tls=tls`、无伪装时，按 TCP+TLS
+  兼容并记节点 approx（若同时携带非空且非 `/` 的 `path`，另按上述普通 TCP 规则忽略并记节点 approx）。其它未知传输不降为 TCP。
 
 ## VLESS / Trojan URI 子集（P6 第二批）
 

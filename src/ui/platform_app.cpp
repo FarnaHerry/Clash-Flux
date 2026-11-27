@@ -617,15 +617,7 @@ void DesktopPreparePlatformDataDirectory(
                 tasks.Launch([profilesModel]() -> huxerui::Task<void> {
                     for (;;) {
                         co_await huxerui::Delay(std::chrono::duration<double>{30.0});
-                        const auto batch = co_await RunOnTaskThread([] {
-                            return store::profilesStore().refreshDue();
-                        });
-                        for (const auto id : batch.updated)
-                            profilesModel->ClearProfileRefreshFailure(id);
-                        for (const auto& failure : batch.failures)
-                            profilesModel->ReportProfileRefreshFailure(
-                                failure.profileId, failure.profileName,
-                                failure.error);
+                        co_await DesktopRefreshProfilesDueOnce(profilesModel);
                     }
                 });
             }

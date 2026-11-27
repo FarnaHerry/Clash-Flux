@@ -50,11 +50,47 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             authorized = False
         if self.path == "/no-validator":
             authorized = authorized and self.headers.get("If-None-Match") is None
+        if self.path.startswith("/proxies/") and "/delay" in self.path:
+            time.sleep(2.0 if "slow" in self.path else 0.05)
+            body = b'{"delay":42}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+        if self.path.startswith("/group/") and "/delay" in self.path:
+            time.sleep(0.05)
+            body = b'{"node-a":42,"node-b":88}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+        if self.path == "/slow-cancel":
+            time.sleep(2.0)
+            body = b"slow\n"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         status = 200 if authorized else 403
         body = b"payload: [pool.test]\n"
         if self.path == "/conditional" and self.headers.get("If-None-Match") == '"pool"':
             status, body = 304, b""
-        if self.path.startswith("/concurrent-"):
+        if self.path.startswith("/concurrent-") or self.path.startswith("/async-concurrent-"):
             with self.lock:
                 type(self).active += 1
                 type(self).peak = max(type(self).peak, type(self).active)
@@ -108,6 +144,15 @@ def pool_test(binary, folder, key=None, cert=None):
             "sing-box/1.14.4", "ClashMeta/1.19.32; mihomo/1.19.32"]
         print(result.stdout, end="")
         print(f"download pool: observed concurrent HTTP handlers={PoolHandler.peak}")
+        PoolHandler.peak = 0
+        async_result = subprocess.run(
+            [binary, "--async-multi", addresses[0], tls_address, str(folder)],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "NO_PROXY": "", "no_proxy": ""})
+        assert async_result.returncode == 0, (async_result.returncode, async_result.stdout, async_result.stderr)
+        assert PoolHandler.peak >= 2, "curl_multi serialized independent async downloads"
+        print(async_result.stdout, end="")
+        print(f"async multi: observed concurrent HTTP handlers={PoolHandler.peak}")
     finally:
         for server in servers:
             server.shutdown()

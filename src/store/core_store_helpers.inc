@@ -664,8 +664,10 @@
                           const std::filesystem::path& workDir) {
 #if defined(__ANDROID__)
         // Android GEO 使用 Gradle 固定来源资产；不能改为运行时刷新。
+        static_cast<void>(resources);
+        static_cast<void>(workDir);
         return false;
-#endif
+#elif defined(CLASHFLUX_IOS)
         if (resources.empty()) return false;
         // Legacy built-in SRS owns shared paths; isolate its repair/download
         // sequence without blocking HTTP/Geo snapshot preparation.
@@ -681,7 +683,6 @@
             bool stale = true;
             if (std::filesystem::exists(dest, ec) && !ec) {
                 if (!singbox::RuleSetCacheValid(dest)) {
-                    // 坏缓存必须重下，否则内核会一直读同一个坏文件。
                     std::error_code removeError;
                     std::filesystem::remove(dest, removeError);
                 } else {
@@ -701,16 +702,12 @@
                     : std::string{"文件不是兼容的 SRS 规则集（文件头校验失败）"};
             };
             const auto result = providerDownloader_.downloadToFile(url, dest, download);
-            // 校验临时文件后才提交，HTTP 200 错误页也不能毁掉旧缓存。
-            // 校验仅筛文件头，完整解压与规则校验仍由内核负责。
             const bool cacheUsable = singbox::RuleSetCacheValid(dest);
             if (!result.ok || !cacheUsable) {
                 if (!cacheUsable) {
                     std::error_code removeError;
                     std::filesystem::remove(dest, removeError);
                 }
-                // 用拼接而非 std::format：clang-21/libc++ 对含 std::string 实参的
-                // 多参数 std::format 会实例化宽字符候选并硬错误（见 src/api.cpp）。
                 const std::string reason = result.ok
                                                ? std::string{"文件内容不是规则集"}
                                                : result.error;
@@ -723,6 +720,145 @@
             }
         }
         return attempted;
+#else
+        if (resources.empty()) return false;
+        // Legacy built-in SRS owns shared paths; isolate its repair/download
+        // sequence without blocking HTTP/Geo snapshot preparation.
+        std::lock_guard lock(builtinGeoMutex_);
+        struct PendingRuleSet {
+            std::string tag;
+            std::string url;
+            std::filesystem::path dest;
+            std::filesystem::path tempDir;
+            std::filesystem::path tempFile;
+            api::ApiResult result;
+        };
+        std::vector<PendingRuleSet> pending;
+        std::set<std::string> seenTags;
+        for (const auto& resource : resources) {
+            const auto& tag = resource.tag;
+            const auto& url = resource.url;
+            const auto ownedUrl = singbox::BuiltinRuleSetUrl(tag);
+            if (ownedUrl.empty() || url != ownedUrl) continue;
+            if (!seenTags.insert(tag).second) continue;
+            const auto dest = workDir / (tag + ".srs");
+            std::error_code ec;
+            bool stale = true;
+            if (std::filesystem::exists(dest, ec) && !ec) {
+                if (!singbox::RuleSetCacheValid(dest)) {
+                    // 坏缓存必须重下，否则内核会一直读同一个坏文件。
+                    std::error_code removeError;
+                    std::filesystem::remove(dest, removeError);
+                } else {
+                    const auto mtime = std::filesystem::last_write_time(dest, ec);
+                    if (!ec) {
+                        stale = decltype(mtime)::clock::now() - mtime >
+                                std::chrono::hours{24 * 7};
+                    }
+                }
+            }
+            if (!stale) continue;
+            pending.push_back({tag, url, dest, {}, {}, {}});
+        }
+        if (pending.empty()) return false;
+
+        struct TempCleanup {
+            std::vector<PendingRuleSet>& items;
+            ~TempCleanup() {
+                for (const auto& item : items) {
+                    if (item.tempDir.empty()) continue;
+                    std::error_code ignored;
+                    std::filesystem::remove_all(item.tempDir, ignored);
+                }
+            }
+        } cleanup{pending};
+
+        std::error_code dirError;
+        std::filesystem::create_directories(workDir, dirError);
+        std::size_t submitted = 0;
+        for (auto& item : pending) {
+            for (int attempt = 0; attempt < 8; ++attempt) {
+                const auto candidate = workDir / (".clash-flux-srs-" + cfg::randomSecret() + ".tmp");
+                std::error_code ec;
+                if (std::filesystem::create_directory(candidate, ec)) {
+                    item.tempDir = candidate;
+                    item.tempFile = candidate / "payload";
+                    ++submitted;
+                    break;
+                }
+                if (ec && ec != std::errc::file_exists) break;
+            }
+            if (item.tempFile.empty()) {
+                item.result.ok = false;
+                item.result.error = "无法创建规则集暂存目录";
+            }
+        }
+
+        if (submitted > 0) {
+            struct BatchState {
+                std::mutex mutex;
+                std::condition_variable cv;
+                std::size_t remaining = 0;
+            };
+            auto batch = std::make_shared<BatchState>();
+            batch->remaining = submitted;
+            api::ClashApi::DownloadOptions opts;
+            opts.timeoutSecs = 8;  // 直连快速失败，不拖慢启动
+            opts.allowProxyEnv = false;
+            opts.proxyUrl.clear();
+            for (auto& item : pending) {
+                if (item.tempFile.empty()) continue;
+                providerDownloader_.downloadOnceAsync(
+                    item.url, item.tempFile, opts, "clash-flux/0.1",
+                    [batch, &item](api::ApiResult result) {
+                        {
+                            std::lock_guard batchLock(batch->mutex);
+                            item.result = std::move(result);
+                            --batch->remaining;
+                        }
+                        batch->cv.notify_one();
+                    });
+            }
+            std::unique_lock waitLock(batch->mutex);
+            batch->cv.wait(waitLock, [&batch] { return batch->remaining == 0; });
+        }
+
+        for (auto& item : pending) {
+            if (item.result.ok) {
+                if (!singbox::RuleSetCacheValid(item.tempFile)) {
+                    item.result.ok = false;
+                    item.result.error = "文件不是兼容的 SRS 规则集（文件头校验失败）";
+                } else {
+                    std::string commitError;
+                    if (!api::CommitFile(item.tempFile, item.dest, commitError)) {
+                        item.result.ok = false;
+                        item.result.error = std::move(commitError);
+                    }
+                }
+            }
+            // 校验临时文件后才提交，HTTP 200 错误页也不能毁掉旧缓存。
+            // 校验仅筛文件头，完整解压与规则校验仍由内核负责。
+            const bool cacheUsable = singbox::RuleSetCacheValid(item.dest);
+            if (!item.result.ok || !cacheUsable) {
+                if (!cacheUsable) {
+                    std::error_code removeError;
+                    std::filesystem::remove(item.dest, removeError);
+                }
+                // 用拼接而非 std::format：clang-21/libc++ 对含 std::string 实参的
+                // 多参数 std::format 会实例化宽字符候选并硬错误（见 src/api.cpp）。
+                const std::string reason = item.result.ok
+                                               ? std::string{"文件内容不是规则集"}
+                                               : item.result.error;
+                stream::logApplication(
+                    "warning",
+                    cacheUsable ? "规则集 " + item.tag + " 刷新失败，沿用本地缓存：" +
+                                      reason
+                                : "规则集 " + item.tag + " 预取失败，改由内核在线拉取：" +
+                                      reason);
+            }
+        }
+        return true;
+#endif
     }
 
     long readPidFile() {

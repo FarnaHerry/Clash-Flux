@@ -940,12 +940,15 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
             bool downloaded = false;
             auto saved = std::make_shared<singbox::RuleSetLibrary>();
             try {
-                error = co_await RunOnTaskThread([=, &downloaded] {
+                auto outcome = co_await RunOnTaskThread([id, library, saved] {
                     std::string failure;
-                    if (store::coreStore().refreshPersonalRuleSet(id, library->revision, downloaded, failure))
+                    bool fetched = false;
+                    if (store::coreStore().refreshPersonalRuleSet(id, library->revision, fetched, failure))
                         *saved = store::coreStore().ruleSetLibrary();
-                    return failure;
+                    return std::pair<std::string, bool>{std::move(failure), fetched};
                 });
+                error = std::move(outcome.first);
+                downloaded = outcome.second;
             } catch (const std::exception& exception) { error = exception.what(); }
             auto pending = model->ruleSetsRefreshing.Get();
             std::erase(pending, id); model->ruleSetsRefreshing = std::move(pending);

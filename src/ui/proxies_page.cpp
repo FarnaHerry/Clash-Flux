@@ -60,6 +60,7 @@
 #include "proxy_speed_button.h"
 
 #include "wire_codec.h"
+import clashflux.api;
 import clashflux.core;
 import clashflux.singbox;
 import clashflux.store.core;
@@ -306,29 +307,33 @@ void RunSingleProxyProbe(huxerui::TaskScope tasks, const std::shared_ptr<Proxies
     };
 #else
     static_cast<void>(toast);
-    const auto measure = [](const std::string& target) {
-        return RunOnTaskThread([target] {
-            // Let sing-box choose its default URL, as it does on Android.
-            const auto result = store::coreStore().api().proxyDelay(target, "", kProxyDelayTimeoutMs);
-            if (!result.ok) return 0;
-            const auto delay = wire::DecodeDelay(result.body);
-            return delay ? delay.value : 0;
-        });
+    const auto measure = [](const std::string& target) -> huxerui::Task<int> {
+        // Let sing-box choose its default URL, as it does on Android.
+        const auto result = co_await AwaitAsyncResult<api::ApiResult>(
+            [target](std::function<void(api::ApiResult)> done) {
+                return store::coreStore().api().proxyDelayAsync(
+                    target, "", kProxyDelayTimeoutMs, std::move(done)).cancel;
+            });
+        if (!result.ok) co_return 0;
+        const auto delay = wire::DecodeDelay(result.body);
+        co_return delay ? delay.value : 0;
     };
 #endif
     LaunchSingleProxyProbe(tasks, model->tests, tag, probe, measure, valid);
 }
 
 huxerui::Task<std::map<std::string, int>> MeasureProxyGroupDelay(const std::string& group) {
-    co_return co_await RunOnTaskThread([group] {
-        // Native group test: URLTest groups use their own url-test.url;
-        // other groups use the kernel's default test URL. The kernel runs
-        // the batch itself with its native concurrency and history updates.
-        const auto result = store::coreStore().api().groupDelay(group, kProxyDelayTimeoutMs);
-        if (!result.ok) return std::map<std::string, int>{};
-        auto decoded = wire::DecodeGroupDelays(result.body);
-        return decoded ? std::move(decoded.value) : std::map<std::string, int>{};
-    });
+    // Native group test: URLTest groups use their own url-test.url;
+    // other groups use the kernel's default test URL. The kernel runs
+    // the batch itself with its native concurrency and history updates.
+    const auto result = co_await AwaitAsyncResult<api::ApiResult>(
+        [group](std::function<void(api::ApiResult)> done) {
+            return store::coreStore().api().groupDelayAsync(
+                group, kProxyDelayTimeoutMs, std::move(done)).cancel;
+        });
+    if (!result.ok) co_return std::map<std::string, int>{};
+    auto decoded = wire::DecodeGroupDelays(result.body);
+    co_return decoded ? std::move(decoded.value) : std::map<std::string, int>{};
 }
 
 huxerui::Task<void> RunGroupProxyProbe(huxerui::TaskScope tasks, CoreControl control,

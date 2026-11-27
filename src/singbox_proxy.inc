@@ -48,6 +48,12 @@ void noteNodeSubscriptionTlsAlias(Context& ctx, const std::string& name) {
         "建议服务商使用标准 net=tcp、tls=tls 字段");
 }
 
+void noteNodeSubscriptionTcpPath(Context& ctx, const std::string& name) {
+    ctx.note(FidelityScope::Node, Fidelity::Approx, name,
+        "普通 TCP 传输（无伪装）不发送传输路径，已忽略未生效的 path 字段",
+        "与 V2Ray/Mihomo 行为一致；若需要伪装或路径传输请检查服务商的 net/type 配置");
+}
+
 void noteNodeSubscriptionLegacySs(Context& ctx) {
     // Format recognition is lossless; do not label unchanged protocol semantics approximate.
     ctx.warn("已读取 SS 历史整串 Base64 格式；密码按原文字节保留，不进行百分号解码");

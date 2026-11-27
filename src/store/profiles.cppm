@@ -7,6 +7,7 @@ module;
 #include "subscription_expiry.h"
 #include "download_policy.h"
 #include "http_representation.h"
+#include "http_request_headers.h"
 
 export module clashflux.store.profiles;
 
@@ -43,6 +44,49 @@ export struct ProfileRefreshFailure {
 export struct ProfileRefreshBatch {
     std::vector<std::int64_t> updated;
     std::vector<ProfileRefreshFailure> failures;
+};
+
+export struct RemoteDownloadStage {
+    bool ok = false;
+    std::string error;
+    std::int64_t profileId = 0;
+    bool importing = false;
+    bool forceProviders = false;
+    std::uint64_t revision = 0;
+    model::Profile initial;
+    std::string previousContent;
+    std::string userAgentOrder;
+    std::string userAgentIdentity;
+    std::vector<std::string> userAgents;
+    bool allowUserAgentFallback = false;
+    std::optional<clashflux::http_cache::Representation> cached;
+    std::string versionFile;
+    std::filesystem::path tempPath;
+    std::shared_ptr<void> tempCleanup;
+    api::ClashApi::DownloadOptions options;
+};
+
+export struct StagedRemoteCommit {
+    bool ok = false;
+    std::string error;
+    bool importing = false;
+    model::Profile next;
+    std::optional<model::Profile> previous;
+    std::uint64_t expectedRevision = 0;
+    std::function<bool()> apply;
+    std::shared_ptr<const std::string> validatedBody;
+    std::map<std::string, std::string> headers;
+    long status = 0;
+    unsigned attempts = 0;
+    std::string userAgentIdentity;
+    std::optional<clashflux::http_cache::Representation> cached;
+};
+
+export struct AppliedRemoteCommit {
+    bool ok = false;
+    bool needsRollback = false;
+    std::uint64_t committedRevision = 0;
+    std::string error;
 };
 
 export class ProfilesStore {
@@ -468,6 +512,263 @@ public:
         // File cleanup is performed by persistence only after the delete
         // commits and no other persisted or cached source references it.
         if (selectedProfile) coreStore().invalidateProxyGroupsSnapshot();
+    }
+
+    api::ClashApi& remoteDownloader() { return downloader_; }
+
+    void discardRemoteDraft(std::int64_t id) { discardDraft(id); }
+
+    RemoteDownloadStage prepareRemoteDownload(std::int64_t id, bool forceProviders) {
+        RemoteDownloadStage stage;
+        stage.profileId = id;
+        stage.forceProviders = forceProviders;
+        auto planLock = coreStore().lockPlanLifecycle();
+        auto& data = clashflux::data::session();
+        stage.revision = data.profileRevision(id);
+        const auto initial = findById(id);
+        if (!initial) {
+            stage.error = "订阅不存在";
+            return stage;
+        }
+        if (initial->url.empty()) {
+            stage.error = "本地导入的订阅不支持更新";
+            return stage;
+        }
+        stage.importing = stage.revision == 0;
+        stage.initial = *initial;
+        stage.previousContent = yamlOf(*initial);
+        stage.userAgentOrder = data.setting(std::string{clashflux::subscription_http::kOrderSetting});
+        stage.userAgentIdentity = clashflux::subscription_http::Identity(stage.userAgentOrder);
+        for (const auto agent : clashflux::subscription_http::UserAgents(stage.userAgentOrder)) {
+            stage.userAgents.emplace_back(agent);
+        }
+#if !defined(CLASHFLUX_IOS)
+        stage.cached = readRemoteCache(*initial, stage.previousContent, stage.userAgentIdentity);
+#endif
+        stage.versionFile = std::format("{}.{}.yaml", id, cfg::randomSecret());
+        auto& opts = stage.options;
+        opts.timeoutSecs = initial->timeoutSecs > 0 ? initial->timeoutSecs : 60;
+        opts.maxBytes = clashflux::download::kSubscriptionMaxBytes;
+        opts.subscriptionRequest = true;
+        opts.subscriptionUserAgentOrder = stage.userAgentOrder;
+        if (stage.cached) {
+            opts.headers = clashflux::download::ConditionalHeaders({}, stage.cached->etag, stage.cached->modified);
+            opts.acceptNotModified = clashflux::download::HasCondition(opts.headers);
+        }
+        stage.allowUserAgentFallback = opts.subscriptionRequest &&
+            std::ranges::all_of(opts.headers, [](const auto& entry) {
+                const auto name = clashflux::http_request::LowerHeaderName(entry.first);
+                return name == "if-none-match" || name == "if-modified-since";
+            });
+#if defined(__ANDROID__)
+        opts.allowProxyEnv = true;
+#else
+        if (initial->useCoreProxy) {
+            opts.proxyUrl = std::format("http://127.0.0.1:{}", coreStore().snapshot().mixedPort);
+        } else {
+            opts.allowProxyEnv = initial->useSystemProxy;
+        }
+#endif
+        planLock.unlock();
+
+        const auto dest = cfg::profilesDir() / stage.versionFile;
+        std::error_code ec;
+        std::filesystem::create_directories(cfg::profilesDir(), ec);
+        if (ec) {
+            stage.error = "创建订阅目录失败：" + ec.message();
+            return stage;
+        }
+        const auto directory = std::filesystem::path(dest.string() + "." + cfg::randomSecret() + ".tmp");
+        if (!std::filesystem::create_directory(directory, ec)) {
+            stage.error = "无法创建独占订阅暂存目录：" + ec.message();
+            return stage;
+        }
+        struct StageCleanup {
+            std::filesystem::path dir;
+            ~StageCleanup() {
+                std::error_code ignored;
+                std::filesystem::remove_all(dir, ignored);
+            }
+        };
+        stage.tempCleanup = std::make_shared<StageCleanup>(directory);
+        stage.tempPath = directory / "payload";
+        stage.ok = true;
+        return stage;
+    }
+
+    StagedRemoteCommit validateAndStageRemoteDownload(const RemoteDownloadStage& stage, api::ApiResult result) {
+        StagedRemoteCommit staged;
+        staged.importing = stage.importing;
+        staged.expectedRevision = stage.revision;
+        staged.userAgentIdentity = stage.userAgentIdentity;
+        staged.cached = stage.cached;
+
+        auto& data = clashflux::data::session();
+        auto validateCandidateFile = [&](const std::filesystem::path& file) -> std::string {
+            std::ifstream input(file, std::ios::binary);
+            if (!input) return "无法读取候选订阅";
+            const std::string content(std::istreambuf_iterator<char>(input), {});
+            if (input.bad()) return "读取候选订阅失败";
+            staged.validatedBody = std::make_shared<const std::string>(content);
+            auto planLock = coreStore().lockPlanLifecycle();
+            const auto current = findById(stage.profileId);
+            if (data.profileRevision(stage.profileId) != stage.revision || !current ||
+                *current != stage.initial || yamlOf(*current) != stage.previousContent) {
+                return "订阅在下载期间已变化，请重新更新";
+            }
+            std::string error;
+            if (stage.importing) {
+                return singbox::ValidateProfileDocument(content, error) ? std::string{} : error;
+            }
+            planLock.unlock();
+            const bool accepted = coreStore().validateSourceUpdate(
+                stage.profileId, content, error, stage.forceProviders, staged.apply);
+            planLock.lock();
+            if (!accepted) return error;
+            const auto latest = findById(stage.profileId);
+            if (data.profileRevision(stage.profileId) != stage.revision || !latest ||
+                *latest != stage.initial || yamlOf(*latest) != stage.previousContent) {
+                return "订阅在准备期间已变化，请重新更新";
+            }
+            return {};
+        };
+
+        if (result.ok && result.status == 304) {
+            if (!stage.cached) {
+                staged.error = "HTTP 304 没有对应的已验证订阅";
+                return staged;
+            }
+            const auto began = std::chrono::steady_clock::now();
+            const auto error = validateCandidateFile(cfg::profilesDir() / stage.initial.file);
+            result.download.validationMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - began).count();
+            if (!error.empty()) {
+                result.ok = false;
+                result.error = error;
+                result.failurePhase = "validation";
+            }
+        } else if (result.ok) {
+            if (stage.options.maxBytes) {
+                std::error_code sizeError;
+                const auto size = std::filesystem::file_size(stage.tempPath, sizeError);
+                if (sizeError || size > stage.options.maxBytes) {
+                    result.ok = false;
+                    result.error = "下载超过大小上限或无法核对长度";
+                    result.failurePhase = "limit";
+                }
+            }
+            if (result.ok) {
+                const auto began = std::chrono::steady_clock::now();
+                std::string error;
+                try {
+                    error = validateCandidateFile(stage.tempPath);
+                } catch (const std::exception& exception) {
+                    error = std::string("下载内容校验失败: ") + exception.what();
+                } catch (...) {
+                    error = "下载内容校验失败";
+                }
+                result.download.validationMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - began).count();
+                if (!error.empty()) {
+                    result.ok = false;
+                    result.error = error;
+                    result.failurePhase = "validation";
+                }
+            }
+            if (result.ok) {
+                const auto dest = cfg::profilesDir() / stage.versionFile;
+                const auto began = std::chrono::steady_clock::now();
+                std::string error;
+                const bool committed = api::CommitFile(stage.tempPath, dest, error) && api::SyncFile(dest, error);
+                result.download.commitMicros = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - began).count();
+                if (!committed) {
+                    result.ok = false;
+                    result.error = error;
+                    result.failurePhase = "commit";
+                }
+            }
+        }
+
+        stream::logApplication("info", std::format(
+            "profile-download source_id={} manual={} ready={} network_us={} candidate_us={} file_commit_us={} download_bytes={} connections_known={} new_connections={} status={} attempts={} failure={}",
+            stage.profileId, stage.forceProviders, result.ok, result.download.networkMicros,
+            result.download.validationMicros, result.download.commitMicros, result.download.bytes,
+            result.download.transportKnown, result.download.newConnections, result.status,
+            result.download.attempts, result.ok ? "none" : result.failurePhase));
+
+        if (!result.ok) {
+            staged.error = "下载失败：" + result.error;
+            return staged;
+        }
+
+        model::Profile next = stage.initial;
+        next.file = result.status == 304 ? stage.initial.file : stage.versionFile;
+        applyHeaders(next, result.headers, result.status == 304);
+        next.updatedAt = nowUnix();
+        next.error.clear();
+        staged.next = std::move(next);
+        if (!stage.importing) staged.previous = stage.initial;
+        staged.headers = std::move(result.headers);
+        staged.status = result.status;
+        staged.attempts = result.download.attempts;
+        staged.ok = true;
+        return staged;
+    }
+
+    AppliedRemoteCommit applyCommittedRemote(StagedRemoteCommit& staged) {
+        AppliedRemoteCommit outcome;
+        auto planLock = coreStore().lockPlanLifecycle();
+        auto& data = clashflux::data::session();
+        coreStore().invalidateProxyGroupsSnapshot();
+        bool applied = true;
+        try {
+            if (staged.apply) {
+                const auto began = std::chrono::steady_clock::now();
+                applied = staged.apply();
+                stream::logApplication("info", std::format("profile-update source_id={} ready={} apply_us={}",
+                    staged.next.id, applied, std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - began).count()));
+                if (!applied) outcome.error = coreStore().snapshot().lastError;
+            }
+        } catch (const std::exception& e) {
+            applied = false;
+            outcome.error = e.what();
+        }
+        if (!applied) {
+            if (staged.previous) {
+                outcome.needsRollback = true;
+                outcome.committedRevision = data.profileRevision(staged.next.id);
+            }
+            return outcome;
+        }
+        discardDraft(staged.next.id);
+        if (staged.validatedBody && staged.attempts == 1) {
+            rememberRemoteCache(staged.next, *staged.validatedBody, staged.headers,
+                                staged.userAgentIdentity,
+                                staged.status == 304 && staged.cached ? &*staged.cached : nullptr);
+        }
+        outcome.ok = true;
+        return outcome;
+    }
+
+    std::string rollbackAppliedRemote(const StagedRemoteCommit& staged, bool dbRestored,
+                                      const std::string& priorError) {
+        static_cast<void>(staged);
+        auto planLock = coreStore().lockPlanLifecycle();
+        auto& data = clashflux::data::session();
+        std::string error = priorError;
+        if (!dbRestored) {
+            error += "；恢复订阅引用失败：" + data.lastError();
+            coreStore().stopCore();
+            return error;
+        }
+        coreStore().invalidateProxyGroupsSnapshot();
+        if (!coreStore().restartCore(coreStore().currentMainContent())) {
+            error += "；恢复运行配置失败：" + coreStore().snapshot().lastError;
+            coreStore().stopCore();
+        }
+        return error;
     }
 
 private:

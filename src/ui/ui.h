@@ -682,10 +682,14 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync();
 #endif
 
 // Android 订阅自动更新：任务线程列出到期订阅，应用共享 HTTP 客户端在 UI
-// 协程中抓取并由 store 收尾。桌面刷新由 DesktopProfileRefreshPump 走 curl。
+// 协程中抓取并由 store 收尾。桌面刷新由 DesktopRefreshProfilesDueOnce 走 curl_multi 协程。
 struct ProfilesModel;
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     std::shared_ptr<AppHttpClient> http,
     std::shared_ptr<ProfilesModel> profilesModel);
+#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+huxerui::Task<int> DesktopRefreshProfilesDueOnce(
+    std::shared_ptr<ProfilesModel> profilesModel);
+#endif
 
 } // namespace clashflux::ui

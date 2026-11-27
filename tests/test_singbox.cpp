@@ -2947,6 +2947,109 @@ void testNodeSubscriptions() {
             else check(!output.contains("transport"), "plain TCP does not acquire an unrelated transport");
         }
     }
+    const auto hasTcpPathApprox = [](const singbox::CompileResult& result, std::string_view name) {
+        return std::ranges::any_of(result.fidelity, [&](const auto& note) {
+            return note.scope == singbox::FidelityScope::Node && note.level == singbox::Fidelity::Approx &&
+                note.subject == name && note.detail.find("path") != std::string::npos;
+        });
+    };
+    const auto diagnosticsHideSecret = [](const singbox::CompileResult& result, std::string_view secret) {
+        return result.error.find(secret) == std::string::npos &&
+            std::ranges::all_of(result.warnings, [&](const auto& warning) {
+                return warning.find(secret) == std::string::npos;
+            }) &&
+            std::ranges::all_of(result.fidelity, [&](const auto& note) {
+                return note.detail.find(secret) == std::string::npos &&
+                    note.action.find(secret) == std::string::npos;
+            });
+    };
+    for (const std::string_view disguise : {"none", ""}) {
+        auto tcpWithPath = original;
+        tcpWithPath["ps"] = "TCP unused path";
+        tcpWithPath["net"] = "tcp";
+        tcpWithPath["type"] = std::string(disguise);
+        tcpWithPath["path"] = "/unused-secret-path";
+        const auto body = uri(tcpWithPath);
+        std::string docError;
+        check(singbox::ValidateProfileDocument(body, docError), "plain TCP VMess with unused path passes document check: " + docError);
+        singbox::CompileOptions inspectOptions;
+        inspectOptions.mainConnectionId = "node-tcp-path";
+        inspectOptions.profileYaml = body;
+        const auto inspected = singbox::inspectProfileSourceObjects(inspectOptions);
+        check(inspected.error.empty() && inspected.sourceObjects.size() >= 2, "plain TCP VMess with unused path succeeds in object inspection");
+        const auto parsed = compile(body);
+        check(parsed.error.empty() && !parsed.json.empty() &&
+            !json::parse(parsed.json)["outbounds"][1].contains("transport") &&
+            hasTcpPathApprox(parsed, "TCP unused path") &&
+            diagnosticsHideSecret(parsed, "/unused-secret-path"),
+            "plain TCP VMess ignores unused path, records Node/Approx, and omits raw path from diagnostics");
+    }
+    {
+        auto tlsAliasWithPath = original;
+        tlsAliasWithPath["ps"] = "TLS alias unused path";
+        tlsAliasWithPath["net"] = "tls";
+        tlsAliasWithPath["type"] = "none";
+        tlsAliasWithPath["path"] = "/unused-secret-path";
+        const auto parsed = compile(uri(tlsAliasWithPath));
+        const bool hasTlsAliasNote = std::ranges::any_of(parsed.fidelity, [](const auto& note) {
+            return note.scope == singbox::FidelityScope::Node && note.level == singbox::Fidelity::Approx &&
+                note.subject == "TLS alias unused path" && note.detail.find("net=tls") != std::string::npos;
+        });
+        check(parsed.error.empty() && !parsed.json.empty() &&
+            !json::parse(parsed.json)["outbounds"][1].contains("transport") &&
+            hasTlsAliasNote && hasTcpPathApprox(parsed, "TLS alias unused path") &&
+            diagnosticsHideSecret(parsed, "/unused-secret-path"),
+            "net=tls VMess with unused path records both net=tls and unused path Node/Approx notes");
+    }
+    for (const std::string_view emptyOrRoot : {"", "/"}) {
+        auto tcpRoot = original;
+        tcpRoot["ps"] = "TCP root path";
+        tcpRoot["net"] = "tcp";
+        tcpRoot["type"] = "none";
+        tcpRoot["path"] = std::string(emptyOrRoot);
+        const auto parsed = compile(uri(tcpRoot));
+        check(parsed.error.empty() && !parsed.json.empty() &&
+            !json::parse(parsed.json)["outbounds"][1].contains("transport") &&
+            !hasTcpPathApprox(parsed, "TCP root path"),
+            "plain TCP VMess with empty or '/' path does not emit unused path Node/Approx");
+    }
+    {
+        const RuleSetTestDirectory providerDir;
+        auto tcpUnused = original;
+        tcpUnused["ps"] = "Provider TCP path";
+        tcpUnused["net"] = "tcp";
+        tcpUnused["type"] = "none";
+        tcpUnused["path"] = "/unused-secret-path";
+        auto wsKeep = original;
+        wsKeep["ps"] = "Provider WS keep";
+        const auto providerBody = uri(tcpUnused) + "\n" + uri(wsKeep) + "\n";
+        for (const std::string_view kind : {"file", "http"}) {
+            for (const bool excludeTcp : {false, true}) {
+                singbox::CompileOptions opts;
+                opts.mainConnectionId = "node-provider-tcp-path";
+                opts.ruleProviderDir = providerDir.path.string();
+                std::string doc = "proxy-providers:\n  nodes:\n    type: " + std::string(kind) + "\n";
+                if (kind == "file") {
+                    doc += "    path: nodes.txt\n";
+                    std::ofstream(providerDir.path / "nodes.txt", std::ios::binary | std::ios::trunc) << providerBody;
+                } else {
+                    doc += "    url: https://fixtures.invalid/vmess-nodes\n";
+                }
+                if (excludeTcp) doc += "    filter: \"^Provider WS keep$\"\n";
+                doc += "proxy-groups:\n  - {name: select-nodes, type: select, use: [nodes]}\nrules: ['MATCH,select-nodes']\n";
+                opts.profileYaml = doc;
+                auto compiled = singbox::compileConfig(opts);
+                if (kind == "http" && compiled.httpProxyProviders.size() == 1) {
+                    opts.proxyProviderContents[compiled.httpProxyProviders.front().cacheKey] = providerBody;
+                    compiled = singbox::compileConfig(opts);
+                }
+                check(compiled.error.empty() && !compiled.json.empty() &&
+                    hasTcpPathApprox(compiled, "Provider TCP path") == !excludeTcp &&
+                    diagnosticsHideSecret(compiled, "/unused-secret-path"),
+                    "proxy-provider records unused TCP path Node/Approx only when selected");
+            }
+        }
+    }
     auto collision = original; collision["ps"] = "节点选择";
     const auto colliding = compile(uri(collision));
     check(colliding.error.empty() && json::parse(colliding.json)["outbounds"][2]["tag"] != "节点选择",
@@ -2965,6 +3068,11 @@ void testNodeSubscriptions() {
         auto bad = original; bad["ps"] = "invalid-second"; bad[key] = value;
         reject(uri(original) + "\n" + uri(bad), "invalid second node fails the whole candidate without losing a valid prefix");
     }
+    auto tcpHttpDisguise = original;
+    tcpHttpDisguise["net"] = "tcp";
+    tcpHttpDisguise["type"] = "http";
+    tcpHttpDisguise["path"] = "/disguise";
+    reject(uri(tcpHttpDisguise), "TCP HTTP disguise mode continues to be rejected instead of falling back to plain TCP");
     auto plaintext = original; plaintext["tls"] = "";
     reject(uri(plaintext), "TLS options cannot silently enable TLS on a plaintext node");
     auto conflicting = original; conflicting["insecure"] = true; conflicting["allowInsecure"] = false;

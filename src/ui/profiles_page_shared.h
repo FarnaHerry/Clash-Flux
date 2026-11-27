@@ -144,7 +144,8 @@ void OpenProfileCreate(bool compact, huxerui::State<bool> page,
                        const std::function<void()>& dialog);
 
 huxerui::Task<std::string> RefreshProfileForPlatform(
-    std::shared_ptr<AppHttpClient> http, std::int64_t id);
+    std::shared_ptr<AppHttpClient> http, std::int64_t id,
+    bool forceProviders = true);
 huxerui::Task<ProfileImportResult> ImportProfileForPlatform(
     std::shared_ptr<AppHttpClient> http, ProfileImportRequest request);
 
