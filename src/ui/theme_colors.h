@@ -922,7 +922,7 @@ inline FluxShadowScheme ResolveFluxShadows(const huxerui::ThemeSpec& theme) {
     return {
         {ThemeShadowColor(theme, dark ? 0.035F : 0.06F), {0.0F, 1.0F}, 4.0F, 0.0F},
         {ThemeShadowColor(theme, dark ? 0.12F : 0.16F), {0.0F, 2.0F}, 10.0F, 0.0F},
-        {ThemeShadowColor(theme, dark ? 0.10F : 0.14F), {0.0F, 2.0F}, 8.0F, 0.0F},
+        {ThemeShadowColor(theme, dark ? 0.44F : 0.22F), {0.0F, 0.0F}, 18.0F, 0.0F},
         {ThemeShadowColor(theme, dark ? 0.12F : 0.16F), {-2.0F, 0.0F}, 12.0F, 0.0F},
         {ThemeShadowColor(theme, dark ? 0.12F : 0.16F), {0.0F, -2.0F}, 12.0F, 0.0F},
         {ThemeShadowColor(theme, dark ? 0.14F : 0.18F), {0.0F, 4.0F}, 20.0F, 0.0F},
@@ -944,6 +944,10 @@ inline huxerui::Color CompactNavigationSurfaceColor(const huxerui::ThemeSpec& th
                                   : theme.colors.surface_container_high;
     color.alpha = 1.0F;
     return color;
+}
+
+inline huxerui::Color FluxMenuSurfaceColor(const huxerui::ThemeSpec& theme) {
+    return IsDarkTheme(theme) ? theme.colors.surface_container_high : huxerui::Color::White();
 }
 
 inline huxerui::Color CompactNavigationBorderColor(const huxerui::ThemeSpec& theme) {

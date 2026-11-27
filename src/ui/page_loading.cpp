@@ -2,6 +2,7 @@
 #include "theme_colors.h"
 #include "profile_card_layout.h"
 #include "profile_list_layout.h"
+#include "proxy_group_layout.h"
 
 #include <algorithm>
 #include <cmath>
@@ -259,24 +260,105 @@ huxerui::View SkeletonLoadingRegion(huxerui::View content, SkeletonShimmerStyle 
     return SkeletonLoadingRegion(UnifiedProfileList(grid), shimmer).Key("profile-loading-skeleton");
 }
 
-[[huxerui::composable]] huxerui::View ProxyLoadingSkeleton(const huxerui::ThemeSpec& theme) {
-    const auto shimmer = UseSkeletonShimmer(theme);
-    const auto card = [theme, shimmer] {
-        return SkeletonCard(huxerui::Column {
-          SkeletonBlock(shimmer, 112.0F, 16.0F),
-          SkeletonBlock(shimmer, 68.0F, 12.0F),
-        }.With(huxerui::Spacing(8.0F)), theme, 76.0F).With(huxerui::Grow(1.0F));
-    };
-    return SkeletonLoadingRegion(huxerui::Column {
-      huxerui::Row {
-        SkeletonBlock(shimmer, 92.0F, 20.0F).With(huxerui::Grow(1.0F)),
-        SkeletonBlock(shimmer, 76.0F, 20.0F).With(huxerui::Grow(1.0F)),
-        SkeletonBlock(shimmer, 104.0F, 20.0F).With(huxerui::Grow(1.0F)),
-      }.With(huxerui::Spacing(16.0F)),
-      huxerui::Row {card(), card()}.With(huxerui::Spacing(kSectionCardSpacing)),
-    }.With(huxerui::Padding(huxerui::EdgeInsets::Symmetric(kSectionCardSpacing, PageScrollInset(theme, true))),
-        huxerui::Spacing(16.0F), huxerui::Grow(1.0F),
-        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)), shimmer).Key("proxy-loading-skeleton");
+[[huxerui::composable]] huxerui::View ProxyLoadingSkeleton(
+    const huxerui::ThemeSpec& theme, bool compact, bool grouped, bool active) {
+    const auto shimmer = UseSkeletonShimmer(theme, active);
+    const float bottomAvoidance = compact ? kCompactFloatingNavigationInset : 0.0F;
+    if (grouped) {
+        constexpr std::size_t kGroupCount = 6;
+        constexpr float kOverviewDotSize = 7.0F;
+        constexpr float kGroupCardHeight = kProxyGroupHeaderHeight + kOverviewDotSize + kProxyGroupInset;
+        const auto islands = ResolveIslandTheme(theme);
+        const float groupGap = islands.nested_radius;
+        auto cardPadding = huxerui::EdgeInsets::Symmetric(kProxyGroupInset, 0.0F);
+        cardPadding.bottom = kProxyGroupInset;
+        auto listInsets = ScrollAreaInsets{
+            .bottom = kSectionCardSpacing,
+            .bottom_avoidance = bottomAvoidance,
+            .rail_bottom_avoidance = 0.0F,
+        };
+        auto list = PageVirtualList(kGroupCount,
+            [theme, shimmer, islands, groupGap, cardPadding](std::size_t index) -> huxerui::View {
+                constexpr float kDotSize = 7.0F;
+                constexpr float kCardHeight = kProxyGroupHeaderHeight + kDotSize + kProxyGroupInset;
+                const float titleWidth = index % 2 == 0 ? 112.0F : 92.0F;
+                std::vector<huxerui::View> dots;
+                dots.reserve(10);
+                for (std::size_t d = 0; d < 10; ++d) {
+                    dots.push_back(SkeletonBlock(shimmer, kDotSize, kDotSize));
+                }
+                auto card = SkeletonCard(
+                    huxerui::Column {
+                      huxerui::Row {
+                        huxerui::Row {
+                          SkeletonBlock(shimmer, titleWidth, 16.0F),
+                          SkeletonBlock(shimmer, 56.0F, 12.0F),
+                        }.With(huxerui::Spacing(8.0F), huxerui::Grow(1.0F),
+                            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                        huxerui::Row {
+                          SkeletonBlock(shimmer, 28.0F, 18.0F),
+                          SkeletonBlock(shimmer, 24.0F, 24.0F),
+                        }.With(huxerui::Spacing(8.0F),
+                            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                      }.With(huxerui::Frame{.height = kProxyGroupHeaderHeight},
+                          huxerui::Spacing(8.0F),
+                          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                      huxerui::Row(std::move(dots)).With(
+                          huxerui::Frame{.height = kDotSize},
+                          huxerui::Spacing(4.0F),
+                          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                    }.With(huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                    theme, kCardHeight, cardPadding, islands.nested_radius)
+                    .Key("proxy-loading-group-" + std::to_string(index));
+                return huxerui::Column {std::move(card)}.With(
+                    huxerui::Padding(huxerui::EdgeInsets{
+                        .bottom = index + 1 < 6 ? groupGap : 0.0F}),
+                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
+            }, listInsets)
+            .EstimatedItemExtent(kGroupCardHeight + groupGap)
+            .With(huxerui::Grow(1.0F));
+        return SkeletonLoadingRegion(std::move(list), shimmer).Key("proxy-loading-skeleton");
+    }
+
+    constexpr std::size_t kNodeCount = 12;
+    constexpr float kNodeCardHeight = 56.0F;
+    auto gridInsets = ScrollAreaInsets::Symmetric(kSectionCardSpacing, bottomAvoidance);
+    gridInsets.rail_bottom_avoidance = 0.0F;
+    auto tabBar = huxerui::Row {
+      SkeletonBlock(shimmer, 84.0F, 24.0F),
+      SkeletonBlock(shimmer, 72.0F, 24.0F),
+      SkeletonBlock(shimmer, 96.0F, 24.0F),
+    }.With(
+        huxerui::Padding(huxerui::EdgeInsets::Symmetric(kSectionCardSpacing, 8.0F)),
+        huxerui::Spacing(12.0F),
+        huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
+        .Key("proxy-loading-tabs");
+    auto grid = PageVirtualGrid(kNodeCount,
+        [theme, shimmer](std::size_t index) -> huxerui::View {
+            const float titleWidth = index % 2 == 0 ? 108.0F : 88.0F;
+            return SkeletonCard(
+                huxerui::Column {
+                  SkeletonBlock(shimmer, titleWidth, 14.0F),
+                  huxerui::Row {
+                    SkeletonBlock(shimmer, 48.0F, 11.0F),
+                    SkeletonBlock(shimmer, 28.0F, 11.0F),
+                  }.With(huxerui::MainAlign(huxerui::MainAxisAlignment::SpaceBetween),
+                      huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)),
+                }.With(huxerui::Spacing(10.0F),
+                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+                theme, 56.0F,
+                huxerui::EdgeInsets::Symmetric(10.0F, 8.0F),
+                kSelectableTileRadius).Key("proxy-loading-node-" + std::to_string(index));
+        }, kSectionCardSpacing, gridInsets)
+        .Columns(compact ? huxerui::GridColumns::Fixed(2) : huxerui::GridColumns::Adaptive(kProxyNodeWidth))
+        .EstimatedRowExtent(kNodeCardHeight)
+        .ColumnSpacing(kSectionCardSpacing)
+        .With(huxerui::Grow(1.0F));
+    return SkeletonLoadingRegion(
+        huxerui::Column {std::move(tabBar), std::move(grid)}.With(
+            huxerui::Grow(1.0F),
+            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
+        shimmer).Key("proxy-loading-skeleton");
 }
 
 } // namespace clashflux::ui

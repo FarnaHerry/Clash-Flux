@@ -955,10 +955,9 @@ huxerui::View GroupedProxyView(const std::vector<ProxyGroupPtr>& groups, std::st
 
     const auto& settings = settingsModel->view.Get();
     if (!loaded.Get() || !settings.ready) {
-        huxerui::View loading = (kPageTitlesInWindow && !compact)
-            ? PageLoadingScaffold(Localized("代理"), theme)
-            : PageScaffold(Localized("代理"), huxerui::View{}, ProxyLoadingSkeleton(theme),
-                           false, true, true);
+        huxerui::View loading = PageScaffold(Localized("代理"), huxerui::View{},
+            ProxyLoadingSkeleton(theme, compact, settings.proxyGroupedView, active),
+            false, true, true);
         return huxerui::Stack {
             sync,
             std::move(loading),

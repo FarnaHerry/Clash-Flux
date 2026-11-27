@@ -263,14 +263,13 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, const FluxGradientStyle
     selects.item_indication = selectIndication;
     definition.Set(selects);
 
-    // 菜单类弹层统一 8px 圆角、同表面同阴影。
+    // 菜单类弹层统一 8px 圆角，底色高于普通卡片并叠加浮层阴影以无描边区隔下层卡片。
     huxerui::MenuStyle menus = huxerui::MenuStyle::Default();
-    menus.background = spec.colors.surface_container;
+    menus.background = FluxMenuSurfaceColor(spec);
     menus.foreground = spec.colors.on_surface;
     menus.icon_tint = spec.colors.on_surface_variant;
     menus.separator_color = spec.colors.outline;
-    menus.shadow = huxerui::Shadow{ThemeShadowColor(spec, 0.24F), {}, 8.0F, 0.0F};
-    if (kPageTitlesInWindow) menus.shadow = ResolveFluxShadows(spec).popup;
+    menus.shadow = ResolveFluxShadows(spec).popup;
     menus.corner_radii = spec.shapes.small;
     menus.item_indication = selectIndication;
     definition.Set(menus);

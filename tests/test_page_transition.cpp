@@ -2660,7 +2660,8 @@ huxerui::View LoadingSkeletonRoot() {
         spec.motion.reduced_motion = model->reduced.Get();
         const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
         const auto gridColumns = huxerui::UseState<std::size_t>(2);
-        const float side = compact && model->kind.Get() >= 3 ? clashflux::ui::kProfileCardSpacing : 4.0F;
+        const float side = (compact && (model->kind.Get() == 3 || model->kind.Get() == 4))
+            ? clashflux::ui::kProfileCardSpacing : 4.0F;
         return huxerui::FlatTheme(spec, huxerui::ProvideEnvironment(
             clashflux::ui::ResolveFluxGradientStyle(accent),
             clashflux::ui::PageBodyRegion(huxerui::Scope([model, compact, gridColumns] {
@@ -2668,10 +2669,15 @@ huxerui::View LoadingSkeletonRoot() {
                 if (model->ready.Get()) return huxerui::View{huxerui::Text("SKELETON-READY")};
                 if (!model->active.Get()) return huxerui::View{huxerui::Text("SKELETON-INACTIVE")};
                 const auto& current = huxerui::UseTheme();
-                if (model->kind.Get() >= 3) return clashflux::ui::ProfileLoadingSkeleton(current, compact,
-                    model->kind.Get() == 3, gridColumns);
-                return model->kind.Get() == 2 ? clashflux::ui::ProxyLoadingSkeleton(current)
-                    : clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
+                if (model->kind.Get() == 3 || model->kind.Get() == 4) {
+                    return clashflux::ui::ProfileLoadingSkeleton(current, compact,
+                        model->kind.Get() == 3, gridColumns);
+                }
+                if (model->kind.Get() == 2 || model->kind.Get() == 5) {
+                    return clashflux::ui::ProxyLoadingSkeleton(current, compact,
+                        model->kind.Get() == 2);
+                }
+                return clashflux::ui::PageLoadingSkeleton(current, model->kind.Get() == 1);
             }), side)));
     });
 }
@@ -2703,11 +2709,11 @@ void testSkeletonShimmer() {
         model->dark = dark;
         for (float width : {320.0F, 960.0F}) {
             ui.SetWindowMetrics({.viewport = {width, 600.0F}});
-            for (int kind : {0, 1, 2, 3}) {
+            for (int kind : {0, 1, 2, 3, 5}) {
                 model->kind = kind;
                 for (int frame = 0; frame < 4; ++frame) ui.Pump(std::chrono::milliseconds(50));
                 const char* key = kind == 3 ? "profile-loading-skeleton"
-                    : kind == 2 ? "proxy-loading-skeleton" : "page-loading-skeleton";
+                    : (kind == 2 || kind == 5) ? "proxy-loading-skeleton" : "page-loading-skeleton";
                 const auto bounds = ui.Find(UiSelector::Key(key)).One().bounds;
                 const auto before = ui.CaptureSnapshot();
                 const int compositions = model->compositions;
@@ -2715,7 +2721,51 @@ void testSkeletonShimmer() {
                 check(before != ui.CaptureSnapshot(), "loading placeholders paint a moving gradient in both themes");
                 check(model->compositions == compositions && ui.Find(UiSelector::Key(key)).One().bounds == bounds &&
                       bounds.width <= width + 0.5F,
-                      "shimmer keeps narrow/wide layout and composition stable for grid, list and compact proxy cards");
+                      "shimmer keeps narrow/wide layout and composition stable for grid, list and proxy views");
+            }
+        }
+    }
+    for (int kind : {2, 5}) {
+        model->kind = kind;
+        for (float width : {320.0F, 960.0F}) {
+            ui.SetWindowMetrics({.viewport = {width, 600.0F}});
+            for (int frame = 0; frame < 3; ++frame) ui.Pump(std::chrono::milliseconds(50));
+            const bool compact = width < 540.0F;
+            const float side = compact ? 4.0F : clashflux::ui::kScrollBarGutter;
+            const auto skeleton = ui.Find(UiSelector::Key("proxy-loading-skeleton")).One().bounds;
+            if (kind == 2) {
+                check(!ui.Find(UiSelector::Key("proxy-loading-tabs")).Exists(),
+                      "grouped proxy skeleton omits the tabbed group strip");
+                const auto first = ui.Find(UiSelector::Key("proxy-loading-group-0")).One().bounds;
+                const auto second = ui.Find(UiSelector::Key("proxy-loading-group-1")).One().bounds;
+                const float expectedHeight =
+                    clashflux::ui::kProxyGroupHeaderHeight + 7.0F + clashflux::ui::kProxyGroupInset;
+                check(std::abs(first.y - skeleton.y - 14.0F) < 0.5F &&
+                      std::abs(second.y - (first.y + first.height) - 14.0F) < 0.5F &&
+                      std::abs(first.height - expectedHeight) < 0.5F &&
+                      std::abs(first.width - (width - 2.0F * side)) < 0.5F &&
+                      std::abs(first.x - side) < 0.5F,
+                      "grouped proxy skeleton matches collapsed group card insets, heights and 14pt gaps");
+                check(ui.CaptureSnapshot().ToString().contains("corner_radius=14.000000\n"),
+                      "grouped proxy skeleton uses the 14pt nested group corner radius");
+            } else {
+                const auto tabs = ui.Find(UiSelector::Key("proxy-loading-tabs")).One().bounds;
+                const auto first = ui.Find(UiSelector::Key("proxy-loading-node-0")).One().bounds;
+                const auto second = ui.Find(UiSelector::Key("proxy-loading-node-1")).One().bounds;
+                const float columns = compact ? 2.0F : static_cast<float>(
+                    huxerui::GridColumns::Adaptive(clashflux::ui::kProxyNodeWidth).Resolve(
+                        width - 2.0F * side, clashflux::ui::kSectionCardSpacing));
+                const float expectedWidth =
+                    (width - 2.0F * side - (columns - 1.0F) * clashflux::ui::kSectionCardSpacing) / columns;
+                check(first.y >= tabs.y + tabs.height &&
+                      std::abs(first.height - 56.0F) < 0.5F &&
+                      std::abs(first.width - expectedWidth) < 0.5F &&
+                      std::abs(first.x - side) < 0.5F &&
+                      std::abs(second.y - first.y) < 0.5F &&
+                      std::abs(second.x - first.x - first.width - clashflux::ui::kSectionCardSpacing) < 0.5F,
+                      "tabbed proxy skeleton renders a tab strip above a 2-column compact or adaptive desktop node grid");
+                check(ui.CaptureSnapshot().ToString().contains("corner_radius=8.000000\n"),
+                      "tabbed proxy skeleton uses the 8pt selectable node tile corner radius");
             }
         }
     }
@@ -5300,6 +5350,19 @@ void testMenuIconMotion() {
               "icon motion preserves row/text geometry and external hover callbacks without recomposing the panel");
         ui.Pump(std::chrono::milliseconds(60));
         check(icon.One().bounds.width < peak.width && !atRest(), "the icon shrinks after its pulse peak");
+        ui.Pump(std::chrono::milliseconds(60));
+        check(atRest(), "the icon returns to rest between the two bounces");
+        ui.Pump(std::chrono::milliseconds(80));
+        const auto secondPeak = icon.One().bounds;
+        check(secondPeak.width > idle.width && secondPeak.width < peak.width &&
+              secondPeak.width <= idle.width * 1.061F &&
+              std::abs(secondPeak.x + secondPeak.width * 0.5F - idle.x - idle.width * 0.5F) < 0.01F &&
+              row.One().bounds == rowBounds && ui.Find(UiSelector::Text("Motion")).One().bounds == textBounds &&
+              model->compositions == compositions,
+              "the second bounce peaks smaller than the first while preserving row geometry");
+        ui.Pump(std::chrono::milliseconds(40));
+        check(icon.One().bounds.width < secondPeak.width && !atRest(),
+              "the icon shrinks after its smaller second peak");
         ui.PumpAndSettle();
         check(atRest(), "the icon returns to its original size while the pointer remains in the row");
         move({textBounds.x + 1.0F, textBounds.y + textBounds.height * 0.5F});
@@ -5312,6 +5375,12 @@ void testMenuIconMotion() {
         check(!atRest(), "reentering the same menu item starts a fresh pulse");
         leave();
         check(atRest(), "leaving mid-pulse immediately restores the icon");
+        ui.Pump(std::chrono::milliseconds(320));
+        check(atRest(), "leaving during the first bounce cancels the delayed second bounce");
+        enter(); ui.Pump(std::chrono::milliseconds(320));
+        check(!atRest(), "reentering reaches the second bounce");
+        leave();
+        check(atRest(), "leaving during the second bounce immediately restores the icon");
         const auto disabled = ui.Find(UiSelector::Key("motion-disabled"));
         const auto disabledIcon = disabled.Find(UiSelector::Key("action-menu-icon"));
         const auto disabledBounds = disabledIcon.One().bounds;
@@ -5399,6 +5468,23 @@ void testMenuOverflow() {
 }
 
 void testCommonMenu() {
+    {
+        auto darkTheme = huxerui::FlatDarkThemeSpec();
+        darkTheme.colors = clashflux::ui::FluxDarkColors();
+        auto lightTheme = huxerui::FlatLightThemeSpec();
+        lightTheme.colors = clashflux::ui::FluxLightColors();
+        check(clashflux::ui::FluxMenuSurfaceColor(darkTheme) == darkTheme.colors.surface_container_high &&
+              clashflux::ui::FluxMenuSurfaceColor(darkTheme) != darkTheme.colors.surface_container &&
+              clashflux::ui::FluxMenuSurfaceColor(lightTheme) == huxerui::Color::White(),
+              "menu surface color elevates above ordinary cards without a border");
+        const auto darkShadow = clashflux::ui::ResolveFluxShadows(darkTheme).popup;
+        const auto lightShadow = clashflux::ui::ResolveFluxShadows(lightTheme).popup;
+        check(std::abs(darkShadow.color.alpha - 0.44F) < 0.001F &&
+              darkShadow.offset == huxerui::Point{0.0F, 0.0F} && darkShadow.blur_radius == 18.0F &&
+              std::abs(lightShadow.color.alpha - 0.22F) < 0.001F &&
+              lightShadow.offset == huxerui::Point{0.0F, 0.0F} && lightShadow.blur_radius == 18.0F,
+              "popup menu shadow uses stronger elevated parameters in both themes");
+    }
     huxerui::testing::UiTest ui(kCommonMenuApplication, {.viewport = {600.0F, 500.0F}, .resource_provider = AppResources()});
     ui.PumpAndSettle();
     ui.Find(UiSelector::Text("Open common")).Tap(); ui.PumpAndSettle();

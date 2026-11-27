@@ -38,7 +38,14 @@ inline huxerui::View ActionMenuItemView(huxerui::StringVariant label,
                     pulse ? huxerui::AnimationSpec{huxerui::TweenSpec{0.12, huxerui::Easing::EaseInOut}}
                           : huxerui::AnimationSpec{huxerui::SnapSpec{}},
                     pulse ? huxerui::AnimationPlayback{.iterations = 2, .repeat_mode = huxerui::RepeatMode::Reverse}
-                          : huxerui::AnimationPlayback{}))).Key("action-menu-icon"));
+                          : huxerui::AnimationPlayback{})),
+                huxerui::Transition(huxerui::AnimateTo(pulse ? 1.0F : 0.0F,
+                    pulse ? huxerui::AnimationSpec{huxerui::TweenSpec{0.08, huxerui::Easing::EaseInOut}}
+                          : huxerui::AnimationSpec{huxerui::SnapSpec{}},
+                    pulse ? huxerui::AnimationPlayback{
+                                .delay = 0.24, .iterations = 2, .repeat_mode = huxerui::RepeatMode::Reverse}
+                          : huxerui::AnimationPlayback{})).Scale(1.0F, 1.06F))
+            .Key("action-menu-icon"));
         content.push_back(huxerui::Text(label).Style({huxerui::Font::System(font_size::kBody), foreground})
                 .With(huxerui::Grow(1.0F)));
         content.push_back(huxerui::Text(std::move(suffix)).Style({huxerui::Font::System(font_size::kBody), foreground}));
