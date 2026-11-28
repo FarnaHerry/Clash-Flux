@@ -112,7 +112,7 @@ APK 下载与校验仍由应用持有，切页或窗口重建不清理共享下�
 
 ## 一键安装脚本与内置升级的协同约定
 
-仓库根目录提供的 [install.sh](../install.sh) 与 [install.ps1](../install.ps1)（随 Release 与 `SHA256SUMS.txt` 一并发布）用于首次安装与终端更新，与内置升级共享同一发布产物命名、Linux DEB/RPM 识别顺序与严格 SHA-256 校验，但不替代运行期原生 `clash-flux-updater`（内置升级仍由原生助手在 GUI 生命周期与 `memfd`/锁定文件句柄保护下执行，不通过 shell 拉起脚本）。
+仓库根目录提供的 [install.sh](../install.sh) 与 [install.ps1](../install.ps1)（随 Release 与 `SHA256SUMS.txt` 一并发布）用于首次安装与终端更新，与内置升级共享同一发布产物命名与严格 SHA-256 校验；其中 `install.sh` 职责单一，只负责免 `sudo` 用户态归档安装（Linux `.tar.gz` 到 `~/.local/share/Clash-Flux` 并检查 `PATH` 遮蔽，macOS `.dmg`），`.deb` / `.rpm` 系统包继续随 Release 单独提供并供运行期原生 `clash-flux-updater` 执行应用内升级（不通过 shell 拉起脚本）。
 
 ## 验证
 

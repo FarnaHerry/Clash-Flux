@@ -6,8 +6,6 @@ repository_url="https://github.com/FarnaHerry/Clash-Flux"
 api_url="https://api.github.com/repos/FarnaHerry/Clash-Flux"
 
 version=""
-format="auto"
-format_explicit=false
 prefix=""
 explicit_prefix=false
 archive=""
@@ -24,12 +22,12 @@ dmg_mount_point=""
 usage() {
   cat <<'EOF'
 Usage:
-  install.sh [--version <version>] [--format auto|deb|rpm|tar|dmg] [--portable] [--prefix <path>] [--archive <path>] [--sha256 <hex>] [--yes]
-  install.sh --uninstall [--format auto|deb|rpm|tar|dmg] [--portable] [--prefix <path>] [--yes]
+  install.sh [--version <version>] [--prefix <path>] [--archive <path>] [--sha256 <hex>] [--yes]
+  install.sh --uninstall [--prefix <path>] [--yes]
 
 Examples:
   curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh
-  curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh -s -- --portable
+  curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh -s -- --prefix "$HOME/.local/share/Clash-Flux"
 EOF
 }
 
@@ -80,17 +78,6 @@ while [ "$#" -gt 0 ]; do
     version=$2
     shift 2
     ;;
-  --format)
-    require_value "$@"
-    format=$2
-    format_explicit=true
-    shift 2
-    ;;
-  --portable)
-    format="tar"
-    format_explicit=true
-    shift
-    ;;
   --prefix)
     require_value "$@"
     prefix=$2
@@ -124,11 +111,6 @@ while [ "$#" -gt 0 ]; do
     ;;
   esac
 done
-
-case "$format" in
-auto | deb | rpm | tar | dmg) ;;
-*) fail "unsupported format: $format (expected auto, deb, rpm, tar, or dmg)" ;;
-esac
 
 if [ "$uninstall" = true ] && { [ -n "$version" ] || [ -n "$archive" ] || [ -n "$expected_sha256" ]; }; then
   fail "--uninstall cannot be combined with --version, --archive, or --sha256"
@@ -187,32 +169,6 @@ confirm_destructive() {
   y | Y | yes | YES | Yes) ;;
   *) fail "cancelled" ;;
   esac
-}
-
-detect_linux_format() {
-  if [ -f /var/lib/dpkg/status ] && command -v dpkg >/dev/null 2>&1; then
-    printf '%s\n' "deb"
-  elif { [ -d /var/lib/rpm ] || [ -d /usr/lib/sysimage/rpm ]; } && command -v rpm >/dev/null 2>&1; then
-    printf '%s\n' "rpm"
-  else
-    printf '%s\n' "tar"
-  fi
-}
-
-has_privilege_escalation() {
-  [ "$(id -u)" -eq 0 ] || command -v sudo >/dev/null 2>&1 || command -v doas >/dev/null 2>&1
-}
-
-run_privileged() {
-  if [ "$(id -u)" -eq 0 ]; then
-    "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo "$@"
-  elif command -v doas >/dev/null 2>&1; then
-    doas "$@"
-  else
-    fail "root privileges, sudo, or doas are required to run: $*"
-  fi
 }
 
 to_abs_path() {
@@ -328,25 +284,6 @@ verify_sha256() {
   log "Verified SHA-256 for $label"
 }
 
-if [ "$host_system" = "macos" ]; then
-  if [ "$format" = "auto" ]; then
-    format="dmg"
-  elif [ "$format" != "dmg" ]; then
-    fail "format '$format' is not supported on macOS"
-  fi
-else
-  if [ "$format" = "dmg" ]; then
-    fail "format 'dmg' is only supported on macOS"
-  fi
-  if [ "$format" = "auto" ]; then
-    format=$(detect_linux_format)
-    if [ "$uninstall" = false ] && { [ "$format" = "deb" ] || [ "$format" = "rpm" ]; } && ! has_privilege_escalation; then
-      log "No root privileges or sudo/doas available; falling back to portable .tar.gz install"
-      format="tar"
-    fi
-  fi
-fi
-
 if [ "$explicit_prefix" = false ]; then
   if [ "$host_system" = "macos" ]; then
     if [ -w /Applications ] || [ "$(id -u)" -eq 0 ]; then
@@ -360,33 +297,11 @@ if [ "$explicit_prefix" = false ]; then
 fi
 
 if [ "$uninstall" = true ]; then
-  case "$format" in
-  deb)
-    confirm_destructive "Uninstall Clash-Flux (.deb package); user configuration and subscriptions will be preserved."
-    if command -v apt-get >/dev/null 2>&1; then
-      run_privileged apt-get remove -y clash-flux
-    else
-      run_privileged dpkg -r clash-flux
-    fi
-    log "Clash-Flux .deb package removed"
-    ;;
-  rpm)
-    confirm_destructive "Uninstall Clash-Flux (.rpm package); user configuration and subscriptions will be preserved."
-    if command -v dnf >/dev/null 2>&1; then
-      run_privileged dnf remove -y clash-flux
-    elif command -v zypper >/dev/null 2>&1; then
-      run_privileged zypper --non-interactive remove clash-flux
-    elif command -v yum >/dev/null 2>&1; then
-      run_privileged yum remove -y clash-flux
-    else
-      run_privileged rpm -e clash-flux
-    fi
-    log "Clash-Flux .rpm package removed"
-    ;;
-  tar)
+  case "$host_system" in
+  linux)
     prefix=$(normalize_prefix "$prefix")
     is_portable_install "$prefix" || fail "refusing to uninstall: Clash-Flux not found at $prefix"
-    confirm_destructive "Uninstall portable Clash-Flux from $prefix; user configuration and subscriptions will be preserved."
+    confirm_destructive "Uninstall Clash-Flux from $prefix; user configuration and subscriptions will be preserved."
     mkdir "$prefix.clash-flux-lock" 2>/dev/null ||
       fail "another installer is modifying $prefix"
     lock_directory="$prefix.clash-flux-lock"
@@ -401,9 +316,9 @@ if [ "$uninstall" = true ]; then
     data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
     rm -f "$data_home/applications/clash-flux.desktop"
     rm -f "$data_home/icons/hicolor/256x256/apps/clash-flux.png"
-    log "Portable Clash-Flux removed from $prefix"
+    log "Clash-Flux removed from $prefix"
     ;;
-  dmg)
+  macos)
     prefix=$(normalize_prefix "$prefix")
     app_bundle="$prefix/Clash-Flux.app"
     [ -d "$app_bundle" ] || fail "Clash-Flux.app not found at $app_bundle"
@@ -434,29 +349,18 @@ if [ -z "$archive" ]; then
   case "$version" in
   "" | *[!0-9A-Za-z._-]*) fail "invalid version: $version" ;;
   esac
-  case "$format" in
-  deb) asset_name="clash-flux-$version-linux-$host_architecture.deb" ;;
-  rpm) asset_name="clash-flux-$version-linux-$host_architecture.rpm" ;;
-  tar) asset_name="clash-flux-$version-linux-$host_architecture.tar.gz" ;;
-  dmg) asset_name="clash-flux-$version-macos-$host_architecture.dmg" ;;
+  case "$host_system" in
+  linux) asset_name="clash-flux-$version-linux-$host_architecture.tar.gz" ;;
+  macos) asset_name="clash-flux-$version-macos-$host_architecture.dmg" ;;
   esac
   asset_url="$repository_url/releases/download/$release_tag/$asset_name"
 else
   archive=$(to_abs_path "$archive")
   [ -f "$archive" ] || fail "archive does not exist: $archive"
   asset_name=$(basename "$archive")
-  if [ "$format_explicit" = false ]; then
-    case "$asset_name" in
-    *.deb) format="deb" ;;
-    *.rpm) format="rpm" ;;
-    *.tar.gz | *.tgz) format="tar" ;;
-    *.dmg) format="dmg" ;;
-    *) fail "cannot infer package format from archive name: $asset_name" ;;
-    esac
-  fi
-  case "$format:$asset_name" in
-  deb:*.deb | rpm:*.rpm | tar:*.tar.gz | tar:*.tgz | dmg:*.dmg) ;;
-  *) fail "archive $asset_name does not match format $format" ;;
+  case "$host_system:$asset_name" in
+  linux:*.tar.gz | linux:*.tgz | macos:*.dmg) ;;
+  *) fail "archive $asset_name is not supported on $host_system" ;;
   esac
   asset_url="$archive"
 fi
@@ -497,35 +401,30 @@ fi
 [ -n "$expected_sha256" ] || fail "unable to resolve expected SHA-256 digest for $asset_name (provide --sha256 or SHA256SUMS.txt)"
 verify_sha256 "$package_file" "$expected_sha256" "$asset_name"
 
-case "$format" in
-deb)
-  has_privilege_escalation || fail "root privileges, sudo, or doas are required to install .deb packages"
-  log "Installing $asset_name via system package manager"
-  if command -v apt-get >/dev/null 2>&1; then
-    run_privileged apt-get install -y "$package_file"
-  else
-    run_privileged dpkg -i "$package_file"
+check_launcher_path() {
+  bin_dir=$1
+  expected_bin="$bin_dir/clash-flux"
+  bin_dir_real=$(cd "$bin_dir" && pwd -P)
+  expected_bin_real="$bin_dir_real/clash-flux"
+  resolved_bin=$(command -v clash-flux 2>/dev/null || true)
+  if [ -z "$resolved_bin" ]; then
+    log "Note: $bin_dir is not in your PATH; add it to run 'clash-flux' directly:"
+    log "  export PATH=\"$bin_dir:\$PATH\""
+    return
   fi
-  log "Clash-Flux installed successfully ($asset_name)"
-  ;;
-rpm)
-  has_privilege_escalation || fail "root privileges, sudo, or doas are required to install .rpm packages"
-  log "Installing $asset_name via system package manager"
-  if command -v dnf >/dev/null 2>&1; then
-    run_privileged dnf install -y "$package_file"
-  elif command -v zypper >/dev/null 2>&1; then
-    run_privileged zypper --non-interactive install --allow-unsigned-rpm "$package_file"
-  elif command -v yum >/dev/null 2>&1; then
-    run_privileged yum install -y "$package_file"
-  else
-    run_privileged rpm -Uvh "$package_file"
+  resolved_dir=$(cd "$(dirname "$resolved_bin")" 2>/dev/null && pwd -P || true)
+  resolved_bin_real="$resolved_dir/$(basename "$resolved_bin")"
+  if [ "$resolved_bin_real" != "$expected_bin_real" ]; then
+    log "Warning: 'clash-flux' in PATH currently resolves to $resolved_bin instead of $expected_bin (shadowed by another installation)."
+    log "Put $bin_dir earlier in PATH or remove the system package so the user install takes precedence."
   fi
-  log "Clash-Flux installed successfully ($asset_name)"
-  ;;
-tar)
+}
+
+case "$host_system" in
+linux)
   prefix=$(normalize_prefix "$prefix")
   if [ -e "$prefix" ] && ! is_portable_install "$prefix"; then
-    fail "installation prefix exists and is not a portable Clash-Flux directory: $prefix"
+    fail "installation prefix exists and is not a Clash-Flux directory: $prefix"
   fi
 
   tar_listing="$temporary_directory/tar.list"
@@ -616,10 +515,11 @@ MimeType=x-scheme-handler/clash;x-scheme-handler/sing-box;
 StartupWMClass=clash-flux
 EOF
 
-  log "Installed portable Clash-Flux to $prefix"
+  log "Installed Clash-Flux to $prefix"
   log "Launcher symlink: $bin_dir/clash-flux"
+  check_launcher_path "$bin_dir"
   ;;
-dmg)
+macos)
   prefix=$(normalize_prefix "$prefix")
   mkdir -p "$prefix"
   dmg_mount_point="$temporary_directory/mnt"
