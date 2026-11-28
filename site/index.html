@@ -5,42 +5,53 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Clash-Flux — 全平台 sing-box 代理客户端 &amp; Linux 签名软件源</title>
-  <meta name="description" content="Clash-Flux 是基于 C++23 与 HuxerUI 构建的跨平台 sing-box 代理客户端，支持 Clash YAML 与原生 JSON、桌面订阅编排、系统服务托管与签名 Linux 软件源。">
+  <meta name="description" content="Clash-Flux 是基于 C++23 与 HuxerUI 构建的跨平台 sing-box 代理客户端，支持 Clash YAML 编译与保真度账本、原生 JSON 直通、多订阅编排、独立特权服务与 GPG 签名 Linux 软件源。">
   <link rel="icon" type="image/png" href="logo.png">
   <style>
     :root {
       color-scheme: light dark;
-      --bg-light: #efedf0;
-      --bg-dark: #131315;
-      --surface-light: #fcf8f9;
-      --surface-dark: #252628;
-      --surface-alt-light: #f5f2f4;
-      --surface-alt-dark: #1c1c1f;
-      --text-light: #202126;
-      --text-dark: #eeeff3;
-      --muted-light: #5c606a;
-      --muted-dark: #babac6;
-      --border-light: #dcd7dd;
-      --border-dark: #37383b;
-      --accent-light: #1a66c9;
-      --accent-dark: #8ab6ff;
+      --bg-light: #f8fafc;
+      --bg-dark: #0d1117;
+      --surface-light: #ffffff;
+      --surface-dark: #161b22;
+      --surface-alt-light: #f1f5f9;
+      --surface-alt-dark: #1f2630;
+      --border-light: #e2e8f0;
+      --border-dark: #30363d;
+      --text-light: #0f172a;
+      --text-dark: #e6edf3;
+      --muted-light: #475569;
+      --muted-dark: #94a3b8;
+      --accent-light: #2563eb;
+      --accent-dark: #6aa6ff;
       --accent-text-light: #ffffff;
-      --accent-text-dark: #061427;
-      --code-bg-light: #e7e4e9;
-      --code-bg-dark: #1b1c1f;
+      --accent-text-dark: #081529;
+      --accent-soft-light: rgba(37, 99, 235, 0.1);
+      --accent-soft-dark: rgba(106, 166, 255, 0.14);
+      --inline-code-bg-light: #e2e8f0;
+      --inline-code-bg-dark: #1f2630;
+      --scrollbar-track-light: #e2e8f0;
+      --scrollbar-track-dark: #1f2630;
+      --scrollbar-thumb-light: #64748b;
+      --scrollbar-thumb-dark: #8b949e;
 
       --bg: var(--bg-light);
       --surface: var(--surface-light);
       --surface-alt: var(--surface-alt-light);
+      --border: var(--border-light);
       --text: var(--text-light);
       --muted: var(--muted-light);
-      --border: var(--border-light);
       --accent: var(--accent-light);
       --accent-text: var(--accent-text-light);
-      --code-bg: var(--code-bg-light);
-      --code-block-bg: #11161d;
-      --code-block-border: #2a3340;
-      --code-block-text: #e6edf3;
+      --accent-soft: var(--accent-soft-light);
+      --inline-code-bg: var(--inline-code-bg-light);
+      --scrollbar-track: var(--scrollbar-track-light);
+      --scrollbar-thumb: var(--scrollbar-thumb-light);
+
+      --code-bg: #11161d;
+      --code-border: #2a3340;
+      --code-text: #e6edf3;
+      --target-size: 24px;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -48,12 +59,15 @@
         --bg: var(--bg-dark);
         --surface: var(--surface-dark);
         --surface-alt: var(--surface-alt-dark);
+        --border: var(--border-dark);
         --text: var(--text-dark);
         --muted: var(--muted-dark);
-        --border: var(--border-dark);
         --accent: var(--accent-dark);
         --accent-text: var(--accent-text-dark);
-        --code-bg: var(--code-bg-dark);
+        --accent-soft: var(--accent-soft-dark);
+        --inline-code-bg: var(--inline-code-bg-dark);
+        --scrollbar-track: var(--scrollbar-track-dark);
+        --scrollbar-thumb: var(--scrollbar-thumb-dark);
       }
     }
 
@@ -62,18 +76,16 @@
         --bg: light-dark(var(--bg-light), var(--bg-dark));
         --surface: light-dark(var(--surface-light), var(--surface-dark));
         --surface-alt: light-dark(var(--surface-alt-light), var(--surface-alt-dark));
+        --border: light-dark(var(--border-light), var(--border-dark));
         --text: light-dark(var(--text-light), var(--text-dark));
         --muted: light-dark(var(--muted-light), var(--muted-dark));
-        --border: light-dark(var(--border-light), var(--border-dark));
         --accent: light-dark(var(--accent-light), var(--accent-dark));
         --accent-text: light-dark(var(--accent-text-light), var(--accent-text-dark));
-        --code-bg: light-dark(var(--code-bg-light), var(--code-bg-dark));
+        --accent-soft: light-dark(var(--accent-soft-light), var(--accent-soft-dark));
+        --inline-code-bg: light-dark(var(--inline-code-bg-light), var(--inline-code-bg-dark));
+        --scrollbar-track: light-dark(var(--scrollbar-track-light), var(--scrollbar-track-dark));
+        --scrollbar-thumb: light-dark(var(--scrollbar-thumb-light), var(--scrollbar-thumb-dark));
       }
-    }
-
-    :root {
-      accent-color: var(--accent);
-      --target-size: 24px;
     }
 
     @media (pointer: coarse) {
@@ -82,15 +94,20 @@
       }
     }
 
+    :root {
+      accent-color: var(--accent);
+      scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    }
+
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
       min-block-size: 100dvh;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
       background: var(--bg);
       color: var(--text);
-      line-height: 1.65;
+      line-height: 1.6;
       overflow-wrap: break-word;
     }
 
@@ -116,156 +133,225 @@
       white-space: pre;
     }
 
-    .container {
-      max-width: 960px;
+    .spark-bar {
+      height: 4px;
+      background: linear-gradient(90deg, #4285F4 0%, #EA4335 34%, #FBBC05 67%, #34A853 100%);
+    }
+
+    .wrap {
+      max-width: 980px;
       margin: 0 auto;
       container: page / inline-size;
-      padding-top: max(clamp(20px, 4dvw, 40px), env(safe-area-inset-top, 0px));
-      padding-right: max(clamp(14px, 3dvw, 24px), env(safe-area-inset-right, 0px));
-      padding-bottom: max(clamp(36px, 6dvw, 64px), env(safe-area-inset-bottom, 0px));
-      padding-left: max(clamp(14px, 3dvw, 24px), env(safe-area-inset-left, 0px));
+      padding-top: max(clamp(16px, 3dvw, 24px), env(safe-area-inset-top, 0px));
+      padding-right: max(clamp(14px, 3dvw, 20px), env(safe-area-inset-right, 0px));
+      padding-bottom: max(clamp(40px, 6dvw, 56px), env(safe-area-inset-bottom, 0px));
+      padding-left: max(clamp(14px, 3dvw, 20px), env(safe-area-inset-left, 0px));
     }
 
-    .hero {
+    header.topbar {
       display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 16px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 20px;
-      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem 1rem;
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--border);
     }
 
-    .hero-logo {
-      width: 64px;
-      height: 64px;
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+      min-inline-size: 0;
+    }
+
+    .brand img {
+      width: 36px;
+      height: 36px;
       aspect-ratio: 1 / 1;
-      border-radius: 14px;
+      border-radius: 8px;
       object-fit: contain;
       background: #ffffff;
-      padding: 5px;
+      padding: 2px;
       flex-shrink: 0;
     }
 
-    .hero-body {
-      width: 100%;
-      min-inline-size: 0;
-    }
-
-    .badge-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      margin-bottom: 8px;
+    .brand-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
     }
 
     .badge {
-      display: inline-block;
-      padding: 2px 10px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0.15rem 0.55rem;
       border-radius: 999px;
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       font-weight: 600;
-      background: var(--accent);
-      color: var(--accent-text);
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid var(--border);
     }
 
-    .badge-subtle {
-      background: var(--code-bg);
-      color: var(--muted);
-    }
-
-    h1 {
-      margin: 0 0 6px;
-      font-size: clamp(1.5rem, 1.15rem + 2.2dvw, 2.2rem);
-      line-height: 1.25;
-    }
-
-    h2 {
-      margin: 0 0 12px;
-      font-size: clamp(1.1rem, 1rem + 0.6dvw, 1.3rem);
-      line-height: 1.3;
-    }
-
-    .lead {
-      margin: 0 0 16px;
-      color: var(--muted);
-      font-size: clamp(0.95rem, 0.9rem + 0.3dvw, 1.05rem);
-    }
-
-    .actions {
+    .top-actions {
       display: flex;
+      align-items: center;
+      gap: 0.65rem;
       flex-wrap: wrap;
-      gap: 10px;
-      width: 100%;
     }
 
-    .btn {
+    a { color: var(--accent); }
+
+    .btn-link, .lang-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      min-block-size: var(--target-size);
-      min-inline-size: var(--target-size);
-      padding: 8px 16px;
+      min-block-size: max(32px, var(--target-size));
+      min-inline-size: max(32px, var(--target-size));
+      padding: 0.35rem 0.85rem;
       border-radius: 8px;
       border: 1px solid var(--border);
-      background: var(--surface-alt);
+      background: var(--surface);
       color: var(--text);
+      font-size: 0.875rem;
+      font-weight: 500;
       text-decoration: none;
-      font-size: 0.92rem;
-      font-weight: 600;
       cursor: pointer;
     }
 
-    .btn-primary {
+    .btn-link.primary {
       background: var(--accent);
       color: var(--accent-text);
-      border-color: transparent;
+      border-color: var(--accent);
+      font-weight: 600;
     }
 
-    .card {
+    .hero {
+      padding: 2rem 0 1.5rem;
+    }
+
+    .hero h1 {
+      margin: 0 0 0.65rem;
+      font-size: clamp(1.65rem, 1.2rem + 2.2dvw, 2.3rem);
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+    }
+
+    @supports (font-size: 1cqi) {
+      .hero h1 {
+        font-size: clamp(1.65rem, 1.15rem + 2.8cqi, 2.3rem);
+      }
+    }
+
+    .hero p {
+      margin: 0 0 1.15rem;
+      max-width: 72ch;
+      color: var(--muted);
+      font-size: clamp(0.95rem, 0.9rem + 0.3dvw, 1.04rem);
+    }
+
+    .hero-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+    }
+
+    section {
+      margin-top: 2.25rem;
+      min-inline-size: 0;
+    }
+
+    section > h2 {
+      margin: 0 0 0.9rem;
+      font-size: clamp(1.12rem, 1rem + 0.6dvw, 1.28rem);
+      letter-spacing: -0.01em;
+    }
+
+    .tabs-shell {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 18px;
-      margin-bottom: 18px;
-      container: card / inline-size;
+      border-radius: 12px;
+      overflow: hidden;
       min-inline-size: 0;
     }
 
-    .grid {
+    .tablist {
+      display: flex;
+      overflow-x: auto;
+      gap: 0.25rem;
+      padding: 0 0.75rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-alt);
+      scroll-snap-type: inline proximity;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+    }
+
+    [role="tab"] {
+      position: relative;
+      flex: none;
+      scroll-snap-align: start;
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.92rem;
+      font-weight: 600;
+      min-block-size: max(36px, var(--target-size));
+      padding: 0.75rem 0.9rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    [role="tab"][aria-selected="true"] {
+      color: var(--accent);
+    }
+
+    [role="tab"][aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      border-block-end: 3px solid var(--accent);
+    }
+
+    .panels {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
-      gap: 12px;
     }
 
-    .feature {
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 15px;
+    [role="tabpanel"] {
+      grid-area: 1 / 1;
+      position: relative;
+      z-index: 1;
       min-inline-size: 0;
     }
 
-    .feature h3 {
-      margin: 0 0 6px;
-      font-size: 1rem;
+    [role="tabpanel"][hidden] {
+      z-index: 0;
+      pointer-events: none;
+      align-self: start;
+      max-block-size: 0;
+      overflow: hidden;
     }
 
-    .feature p {
-      margin: 0;
+    .panel-card {
+      padding: 1.15rem 1.25rem 1.25rem;
+      min-inline-size: 0;
+    }
+
+    .panel-desc {
+      margin: 0 0 0.85rem;
       color: var(--muted);
-      font-size: 0.92rem;
+      font-size: 0.94rem;
     }
 
     .copyable {
-      display: flex;
-      align-items: start;
-      gap: 0.5rem;
-      margin: 10px 0 16px;
+      position: relative;
+      display: block;
+      margin: 0.65rem 0;
       min-inline-size: 0;
       max-inline-size: 100%;
     }
@@ -273,21 +359,21 @@
     .copyable pre {
       color-scheme: dark;
       accent-color: var(--accent-dark);
-      background: var(--code-block-bg);
-      color: var(--code-block-text);
-      border: 1px solid var(--code-block-border);
-      border-radius: 10px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      border: 1px solid var(--code-border);
+      border-radius: 8px;
       margin: 0;
       padding: 0.85rem 1rem;
+      padding-inline-end: 3.25rem;
       max-inline-size: 100%;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
-      font-size: 0.85rem;
+      font-size: 0.86rem;
       line-height: 1.5;
       user-select: text;
       pointer-events: auto;
-      flex: 1 1 auto;
-      min-inline-size: 0;
+      scrollbar-color: var(--scrollbar-thumb-dark) var(--code-bg);
     }
 
     code {
@@ -295,28 +381,52 @@
       font-size: 0.9em;
     }
 
+    :not(pre) > code {
+      background: var(--inline-code-bg);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+    }
+
     .copy {
-      position: relative;
-      flex: none;
-      order: 1;
+      position: absolute;
+      inset-block-start: 0.45rem;
+      inset-inline-end: 0.45rem;
+      z-index: 2;
       display: inline-flex;
       align-items: center;
     }
 
     .copy-button {
+      position: relative;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-inline-size: max(32px, var(--target-size));
-      min-block-size: max(32px, var(--target-size));
-      padding: 6px;
+      min-inline-size: 30px;
+      min-block-size: 30px;
+      padding: 4px;
       border-radius: 6px;
-      border: 1px solid var(--code-block-border);
+      border: 1px solid var(--code-border);
       background: rgba(27, 34, 44, 0.94);
       color: #e6edf3;
       cursor: pointer;
-      opacity: 1;
+      opacity: 0.9;
       transition: opacity 0.15s ease, border-color 0.15s ease;
+    }
+
+    @media (pointer: coarse) {
+      .copy-button::after {
+        content: "";
+        position: absolute;
+        inset: -7px;
+      }
+    }
+
+    .copyable:hover .copy-button,
+    .copyable:focus-within .copy-button,
+    .copyable .copy-button:focus-visible,
+    .copyable .copy-button[data-copied],
+    .copyable .copy-button[data-failed] {
+      opacity: 1;
     }
 
     .copy-button .icon-check { display: none; }
@@ -329,11 +439,11 @@
       inset-inline-end: calc(100% + 0.45rem);
       inset-block-start: 50%;
       transform: translateY(-50%);
-      padding: 0.2rem 0.55rem;
+      padding: 0.18rem 0.5rem;
       border-radius: 6px;
       background: #0f172a;
       color: #ffffff;
-      border: 1px solid var(--code-block-border);
+      border: 1px solid var(--code-border);
       font-size: 0.76rem;
       white-space: nowrap;
       pointer-events: none;
@@ -347,10 +457,10 @@
     }
 
     details {
-      margin-top: 14px;
+      margin-top: 0.85rem;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 14px;
+      border-radius: 8px;
+      padding: 0.6rem 0.9rem;
       background: var(--surface-alt);
       min-inline-size: 0;
       max-inline-size: 100%;
@@ -365,270 +475,200 @@
       align-items: center;
     }
 
-    :where(a, .btn, .copy-button, summary, pre[tabindex="0"]):focus-visible {
+    #features {
+      container: features / inline-size;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.9rem;
+    }
+
+    @media (min-width: 580px) {
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (min-width: 860px) {
+      .grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @supports (container-type: inline-size) {
+      @media (min-width: 580px) {
+        .grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      @container page (inline-size < 420px) {
+        .hero-links .btn-link {
+          flex: 1 1 100%;
+        }
+
+        .hero {
+          padding: 1.35rem 0 1rem;
+        }
+
+        [role="tab"] {
+          padding: 0.7rem 0.75rem;
+          font-size: 0.86rem;
+        }
+
+        .panel-card {
+          padding: 0.9rem 0.95rem 1rem;
+        }
+
+        .copyable pre {
+          padding: 0.75rem 0.85rem;
+          padding-inline-end: 3rem;
+          font-size: 0.8rem;
+        }
+      }
+
+      @container features (inline-size >= 520px) {
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @container features (inline-size >= 820px) {
+        .grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      min-inline-size: 0;
+    }
+
+    .card h3 {
+      margin: 0 0 0.4rem;
+      font-size: 1rem;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .meta-row {
+      margin: 0.75rem 0 0;
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.86rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.25rem;
+      justify-content: space-between;
+    }
+
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem 1rem;
+    }
+
+    :where(a, .btn-link, .lang-btn, [role="tab"], .copy-button, summary, pre[tabindex="0"]):focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
 
     @media (hover: hover) {
-      .btn:hover {
-        border-color: var(--accent);
-      }
-
-      .btn-primary:hover {
-        filter: brightness(0.95);
-      }
-
-      .copyable {
-        display: block;
-        position: relative;
-      }
-
-      .copyable pre {
-        padding-inline-end: 3.25rem;
-      }
-
-      .copy {
-        position: absolute;
-        inset-block-start: 0.45rem;
-        inset-inline-end: 0.45rem;
-        z-index: 2;
-      }
-
-      .copy-button {
-        opacity: 0.88;
-      }
-
-      .copyable:hover .copy-button,
-      .copyable:focus-within .copy-button,
-      .copyable .copy-button:focus-visible,
-      .copyable .copy-button[data-copied],
-      .copyable .copy-button[data-failed] {
-        opacity: 1;
-      }
-
+      .btn-link:hover,
+      .lang-btn:hover,
       .copy-button:hover {
         border-color: var(--accent);
+      }
+
+      .btn-link.primary:hover {
+        filter: brightness(0.95);
       }
     }
 
     @media (prefers-reduced-motion: reduce) {
       .tip, .copy-button { transition: none; }
     }
-
-    ul.meta {
-      margin: 0;
-      padding-left: 20px;
-    }
-
-    ul.meta li + li {
-      margin-top: 8px;
-    }
-
-    a { color: var(--accent); }
-    .muted { color: var(--muted); font-size: 0.92rem; }
-    .meta-note { margin: 12px 0 0; }
-
-    @media (min-width: 640px) {
-      .hero {
-        flex-direction: row;
-        align-items: center;
-        gap: 24px;
-        padding: 28px;
-        border-radius: 16px;
-        margin-bottom: 24px;
-      }
-
-      .hero-logo {
-        width: 88px;
-        height: 88px;
-        border-radius: 18px;
-        padding: 6px;
-      }
-
-      .hero-body {
-        flex: 1 1 0%;
-        width: auto;
-      }
-
-      .card {
-        padding: 24px;
-        border-radius: 16px;
-        margin-bottom: 20px;
-      }
-
-      .grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
-      }
-    }
-
-    @supports (container-type: inline-size) {
-      @media (min-width: 640px) {
-        .hero {
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 16px;
-          padding: 20px;
-          border-radius: 14px;
-          margin-bottom: 20px;
-        }
-
-        .hero-logo {
-          width: 64px;
-          height: 64px;
-          border-radius: 14px;
-          padding: 5px;
-        }
-
-        .hero-body {
-          flex: initial;
-          width: 100%;
-        }
-
-        .card {
-          padding: 18px;
-          border-radius: 14px;
-          margin-bottom: 18px;
-        }
-
-        .grid {
-          grid-template-columns: minmax(0, 1fr);
-          gap: 12px;
-        }
-      }
-
-      @container page (inline-size < 420px) {
-        .actions .btn {
-          flex: 1 1 100%;
-        }
-      }
-
-      @container page (inline-size >= 560px) {
-        .hero {
-          flex-direction: row;
-          align-items: center;
-          gap: 24px;
-          padding: 28px;
-          border-radius: 16px;
-          margin-bottom: 24px;
-        }
-
-        .hero-logo {
-          width: 88px;
-          height: 88px;
-          border-radius: 18px;
-          padding: 6px;
-        }
-
-        .hero-body {
-          flex: 1 1 0%;
-          width: auto;
-        }
-
-        .card {
-          padding: 24px;
-          border-radius: 16px;
-          margin-bottom: 20px;
-        }
-      }
-
-      @container card (inline-size >= 520px) {
-        .grid {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
-        }
-      }
-    }
-
-    @supports (font-size: 1cqi) {
-      .hero-body h1 {
-        font-size: clamp(1.5rem, 1.1rem + 3cqi, 2.2rem);
-      }
-    }
   </style>
 </head>
 <body>
-  <main class="container">
-    <section class="hero">
-      <img class="hero-logo" src="logo.png" alt="Clash-Flux Logo" width="88" height="88" fetchpriority="high">
-      <div class="hero-body">
-        <div class="badge-row">
-          <span class="badge">v{{VERSION}}</span>
-          <span class="badge badge-subtle">C++23 · HuxerUI · sing-box</span>
-          <span class="badge badge-subtle">Linux / Windows / macOS / Android</span>
-        </div>
-        <h1>Clash-Flux</h1>
-        <p class="lead">使用 C++23 与 HuxerUI 构建的全平台 <code>sing-box</code> 代理客户端，兼具 Clash 订阅兼容、原生 JSON 直通、桌面多订阅规则编排与轻量低占用体验。</p>
-        <div class="actions">
-          <a class="btn btn-primary" href="https://github.com/FarnaHerry/Clash-Flux/releases/tag/v{{VERSION}}">下载 v{{VERSION}}</a>
-          <a class="btn" href="https://github.com/FarnaHerry/Clash-Flux">GitHub 仓库</a>
-          <a class="btn" href="https://github.com/FarnaHerry/Clash-Flux/blob/main/README.md">中文文档</a>
-        </div>
+  <div class="spark-bar"></div>
+  <div class="wrap">
+    <header class="topbar">
+      <a class="brand" href="https://github.com/FarnaHerry/Clash-Flux">
+        <img src="logo.png" alt="Clash-Flux logo" width="36" height="36" fetchpriority="high">
+        <span class="brand-title">Clash-Flux</span>
+        <span class="badge">v{{VERSION}}</span>
+      </a>
+      <div class="top-actions">
+        <a class="btn-link" href="https://github.com/FarnaHerry/Clash-Flux" target="_blank" rel="noopener">GitHub</a>
+        <a class="btn-link" href="https://github.com/FarnaHerry/Clash-Flux/releases/tag/v{{VERSION}}" target="_blank" rel="noopener" data-i18n="releasesBtn">发行版下载</a>
+        <button type="button" class="lang-btn" id="lang-toggle" aria-label="Switch language">EN</button>
       </div>
-    </section>
+    </header>
 
-    <section class="card">
-      <h2>核心特性</h2>
-      <div class="grid">
-        <div class="feature">
-          <h3>Clash YAML 编译 &amp; 原生直通</h3>
-          <p>支持 Clash 订阅（YAML/节点链接）、sing-box 原生 JSON 与 OpenVPN，自带完整转换器与保真度账本，显式记账不静默丢规则。</p>
+    <main>
+      <section class="hero">
+        <h1 data-i18n="heroTitle">全平台轻量级 sing-box 代理客户端 &amp; 签名软件源</h1>
+        <p data-i18n="heroDesc">使用 C++23 与 HuxerUI 构建的原生跨平台代理客户端。支持 Clash YAML 订阅编译与保真度账本、sing-box 原生 JSON 直通、多订阅规则编排、系统特权服务托管，并提供官方 GPG 签名 Linux APT / RPM 软件源。</p>
+        <div class="hero-links">
+          <a class="btn-link primary" href="#install" data-i18n="ctaInstall">安装与软件源</a>
+          <a class="btn-link" href="https://github.com/FarnaHerry/Clash-Flux/blob/main/README.md" target="_blank" rel="noopener" data-i18n="ctaDocs">中文文档</a>
+          <a class="btn-link" href="gpg.key" data-i18n="ctaGpg">GPG 公钥</a>
         </div>
-        <div class="feature">
-          <h3>独立特权网络服务</h3>
-          <p>Linux systemd / Windows SCM 托管 sing-box、TUN 与系统 PPTP，系统目录安装后随软件更新自动静默自升级服务，无需反复弹窗。</p>
-        </div>
-        <div class="feature">
-          <h3>多订阅编排与规则追溯</h3>
-          <p>支持桌面跨订阅选择策略目标、全局与个人规则覆写、连接规则追溯，以及网站出口测试与 QiFi/QRS 多帧二维码分享。</p>
-        </div>
-        <div class="feature">
-          <h3>现代原生界面与主题</h3>
-          <p>HuxerUI 原生渲染，支持深浅模式、Gemini 多色渐变、OKLCH 自适应自定义配色，以及应用内版本检查与完整性校验。</p>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="card">
-      <h2>一键安装</h2>
-      <p class="muted"><strong>Linux / macOS</strong>（Linux 自动校验公钥指纹、配置本签名 APT/RPM 软件源并装入 <code>/opt/clash-flux</code>；macOS 自动安装 <code>.dmg</code> 至 <code>/Applications</code>）：</p>
-      <div class="copyable">
-        <pre tabindex="0" role="region" aria-label="Linux / macOS 一键安装命令"><code id="cmd-unix">curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh</code></pre>
-        <span class="copy">
-          <button type="button" class="copy-button" command="--copy" commandfor="cmd-unix" aria-label="复制 Linux / macOS 安装命令">
-            <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
-            <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
-          </button>
-          <span class="tip" role="status"></span>
-        </span>
-      </div>
-      <p class="muted"><strong>Windows PowerShell</strong>（校验 <code>SHA-256</code> 后默认运行官方 <code>.exe</code> 安装包）：</p>
-      <div class="copyable">
-        <pre tabindex="0" role="region" aria-label="Windows PowerShell 一键安装命令"><code id="cmd-win">irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1 | iex</code></pre>
-        <span class="copy">
-          <button type="button" class="copy-button" command="--copy" commandfor="cmd-win" aria-label="复制 Windows PowerShell 安装命令">
-            <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
-            <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
-          </button>
-          <span class="tip" role="status"></span>
-        </span>
-      </div>
-      <p class="muted meta-note">卸载命令（默认保留本地配置与订阅）：Linux / macOS 执行 <code>install.sh --uninstall</code>，Windows 执行 <code>install.ps1 -Uninstall</code>。</p>
-    </section>
+      <section id="install">
+        <h2 data-i18n="installHeading">安装与软件源</h2>
+        <div class="tabs-shell">
+          <div class="tablist" role="tablist" aria-label="Installation options">
+            <button type="button" role="tab" id="tab-unix" aria-selected="true" tabindex="0" data-i18n="tabUnix">Linux / macOS</button>
+            <button type="button" role="tab" id="tab-repo" aria-selected="false" tabindex="-1" data-i18n="tabRepo">Linux APT / RPM 源</button>
+            <button type="button" role="tab" id="tab-win" aria-selected="false" tabindex="-1" data-i18n="tabWin">Windows</button>
+            <button type="button" role="tab" id="tab-other" aria-selected="false" tabindex="-1" data-i18n="tabOther">升级与其他发行版</button>
+          </div>
+          <div class="panels">
+            <div role="tabpanel" id="panel-unix" aria-labelledby="tab-unix" tabindex="0">
+              <div class="panel-card">
+                <p class="panel-desc" data-i18n="descUnix">Linux 自动校验公钥指纹、配置本签名 APT/RPM 软件源并装入 <code>/opt/clash-flux</code>；macOS 自动安装 <code>.dmg</code> 至 <code>/Applications</code>：</p>
+                <div class="copyable">
+                  <pre tabindex="0" role="region" aria-label="Linux / macOS 一键安装命令"><code id="cmd-unix">curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh</code></pre>
+                  <span class="copy">
+                    <button type="button" class="copy-button" command="--copy" commandfor="cmd-unix" aria-label="复制 Linux / macOS 安装命令">
+                      <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+                      <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+                    </button>
+                    <span class="tip" role="status"></span>
+                  </span>
+                </div>
+                <p class="meta-row" data-i18n="uninstallUnix">卸载（默认保留本地配置与订阅）：<code>curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh -s -- --uninstall</code></p>
+              </div>
+            </div>
 
-    <section class="card">
-      <h2>Linux 签名软件源信息</h2>
-      <ul class="meta">
-        <li>APT 仓库：<code>https://farnaherry.github.io/Clash-Flux/apt</code>（suite: <code>stable</code>，component: <code>main</code>，支持 <code>amd64</code> / <code>arm64</code>）</li>
-        <li>RPM 仓库：<code>https://farnaherry.github.io/Clash-Flux/rpm/$basearch</code>（支持 <code>x86_64</code> / <code>aarch64</code>）</li>
-        <li>GPG 公钥（ASCII / RPM）：<a href="gpg.key">gpg.key</a> · <a href="clash-flux.gpg">clash-flux.gpg</a>（APT keyring）</li>
-        <li>公钥指纹：<code>{{GPG_FINGERPRINT}}</code></li>
-      </ul>
-      <details>
-        <summary>查看手动配置 Debian / Ubuntu (APT) 与 Fedora / RHEL (RPM) 命令</summary>
-        <div class="copyable">
-          <pre tabindex="0" role="region" aria-label="Debian / Ubuntu 手动配置 APT 软件源命令"><code id="cmd-apt"># Debian / Ubuntu (amd64 &amp; arm64)
+            <div role="tabpanel" id="panel-repo" aria-labelledby="tab-repo" hidden="until-found">
+              <div class="panel-card">
+                <p class="panel-desc" data-i18n="descRepo">APT（<code>amd64</code> / <code>arm64</code>，suite: <code>stable</code>）：<code>https://farnaherry.github.io/Clash-Flux/apt</code> · RPM（<code>x86_64</code> / <code>aarch64</code>）：<code>https://farnaherry.github.io/Clash-Flux/rpm/$basearch</code></p>
+                <p class="meta-row"><span data-i18n="gpgLabel">GPG 公钥指纹：</span><code>{{GPG_FINGERPRINT}}</code> &middot; <a href="gpg.key">gpg.key</a> &middot; <a href="clash-flux.gpg">clash-flux.gpg</a></p>
+                <details>
+                  <summary data-i18n="manualRepoSummary">查看手动配置 Debian / Ubuntu (APT) 与 Fedora / RHEL (RPM) 命令</summary>
+                  <div class="copyable">
+                    <pre tabindex="0" role="region" aria-label="Debian / Ubuntu 手动配置 APT 软件源命令"><code id="cmd-apt"># Debian / Ubuntu (amd64 &amp; arm64)
 sudo mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
 curl -fsSL https://farnaherry.github.io/Clash-Flux/clash-flux.gpg | sudo tee /usr/share/keyrings/clash-flux.gpg &gt;/dev/null
 sudo tee /etc/apt/sources.list.d/clash-flux.sources &lt;&lt;EOF
@@ -640,16 +680,16 @@ Architectures: $(dpkg --print-architecture)
 Signed-By: /usr/share/keyrings/clash-flux.gpg
 EOF
 sudo apt update &amp;&amp; sudo apt install -y clash-flux</code></pre>
-          <span class="copy">
-            <button type="button" class="copy-button" command="--copy" commandfor="cmd-apt" aria-label="复制 APT 手动配置命令">
-              <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
-              <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
-            </button>
-            <span class="tip" role="status"></span>
-          </span>
-        </div>
-        <div class="copyable">
-          <pre tabindex="0" role="region" aria-label="Fedora / RHEL 手动配置 RPM 软件源命令"><code id="cmd-dnf"># Fedora / RHEL (x86_64 &amp; aarch64)
+                    <span class="copy">
+                      <button type="button" class="copy-button" command="--copy" commandfor="cmd-apt" aria-label="复制 APT 手动配置命令">
+                        <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+                        <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+                      </button>
+                      <span class="tip" role="status"></span>
+                    </span>
+                  </div>
+                  <div class="copyable">
+                    <pre tabindex="0" role="region" aria-label="Fedora / RHEL 手动配置 RPM 软件源命令"><code id="cmd-dnf"># Fedora / RHEL (x86_64 &amp; aarch64)
 sudo rpm --import https://farnaherry.github.io/Clash-Flux/gpg.key
 sudo tee /etc/yum.repos.d/clash-flux.repo &lt;&lt;'REPO'
 [clash-flux]
@@ -661,29 +701,265 @@ repo_gpgcheck=0
 gpgkey=https://farnaherry.github.io/Clash-Flux/gpg.key
 REPO
 sudo dnf install -y clash-flux</code></pre>
-          <span class="copy">
-            <button type="button" class="copy-button" command="--copy" commandfor="cmd-dnf" aria-label="复制 RPM 手动配置命令">
-              <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
-              <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
-            </button>
-            <span class="tip" role="status"></span>
-          </span>
+                    <span class="copy">
+                      <button type="button" class="copy-button" command="--copy" commandfor="cmd-dnf" aria-label="复制 RPM 手动配置命令">
+                        <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+                        <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+                      </button>
+                      <span class="tip" role="status"></span>
+                    </span>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <div role="tabpanel" id="panel-win" aria-labelledby="tab-win" hidden="until-found">
+              <div class="panel-card">
+                <p class="panel-desc" data-i18n="descWin">在 PowerShell 中自动校验 <code>SHA-256</code> 并安装官方安装包（默认运行 WiX 安装包以支持 Windows SCM 系统服务托管）：</p>
+                <div class="copyable">
+                  <pre tabindex="0" role="region" aria-label="Windows PowerShell 一键安装命令"><code id="cmd-win">irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1 | iex</code></pre>
+                  <span class="copy">
+                    <button type="button" class="copy-button" command="--copy" commandfor="cmd-win" aria-label="复制 Windows PowerShell 安装命令">
+                      <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+                      <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+                    </button>
+                    <span class="tip" role="status"></span>
+                  </span>
+                </div>
+                <p class="meta-row" data-i18n="winExtras">支持参数：<code>-Passive</code>（静默进度）、<code>-Portable</code>（免安装便携版）、<code>-Uninstall</code>（卸载）。</p>
+              </div>
+            </div>
+
+            <div role="tabpanel" id="panel-other" aria-labelledby="tab-other" hidden="until-found">
+              <div class="panel-card">
+                <p class="panel-desc" data-i18n="descOther">配置软件源后即可随系统更新自动升级 Clash-Flux；Arch 等其他发行版可从 <a href="https://github.com/FarnaHerry/Clash-Flux/releases">Releases</a> 下载 <code>.tar.gz</code> 并解压至 <code>/opt/clash-flux</code>：</p>
+                <div class="copyable">
+                  <pre tabindex="0" role="region" aria-label="Linux 软件包升级命令"><code id="cmd-upgrade"># Debian / Ubuntu
+sudo apt update &amp;&amp; sudo apt upgrade
+
+# Fedora / RHEL
+sudo dnf upgrade --refresh
+
+# openSUSE
+sudo zypper refresh &amp;&amp; sudo zypper up</code></pre>
+                  <span class="copy">
+                    <button type="button" class="copy-button" command="--copy" commandfor="cmd-upgrade" aria-label="复制系统升级命令">
+                      <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+                      <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+                    </button>
+                    <span class="tip" role="status"></span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      </details>
-      <p class="muted meta-note">Debian / Ubuntu 后续可直接通过 <code>sudo apt update &amp;&amp; sudo apt upgrade</code> 升级；Fedora / RHEL / openSUSE 可直接通过 <code>sudo dnf upgrade</code> 或 <code>sudo zypper up</code> 升级。Arch 等其他发行版可在 <a href="https://github.com/FarnaHerry/Clash-Flux/releases">Releases</a> 下载 <code>.tar.gz</code> 并解压至 <code>/opt/clash-flux</code>。</p>
-    </section>
-  </main>
+      </section>
+
+      <section id="features">
+        <h2 data-i18n="featHeading">核心特性</h2>
+        <div class="grid">
+          <article class="card">
+            <h3 data-i18n="f1Title">Clash YAML 编译 &amp; 保真度账本</h3>
+            <p data-i18n="f1Body">支持 Clash YAML 订阅、节点链接、sing-box 原生 JSON 与 OpenVPN，内置完整转换器按 exact / approx / unsupported 显式记账。</p>
+          </article>
+          <article class="card">
+            <h3 data-i18n="f2Title">独立特权网络服务</h3>
+            <p data-i18n="f2Body">Linux systemd / Windows SCM 托管 sing-box、TUN 与系统 PPTP，装入系统目录后随软件更新静默自升级服务。</p>
+          </article>
+          <article class="card">
+            <h3 data-i18n="f3Title">多订阅编排与规则追溯</h3>
+            <p data-i18n="f3Body">支持桌面跨订阅选择策略目标、全局与个人规则覆写、连接规则追溯、网站出口测试与 QiFi/QRS 多帧二维码分享。</p>
+          </article>
+          <article class="card">
+            <h3 data-i18n="f4Title">现代原生界面与主题</h3>
+            <p data-i18n="f4Body">HuxerUI 原生渲染，支持深浅模式随系统同步、Gemini 多色渐变、OKLCH 自适应自定义配色与低内存托盘模式。</p>
+          </article>
+          <article class="card">
+            <h3 data-i18n="f5Title">全平台覆盖 &amp; 单实例架构</h3>
+            <p data-i18n="f5Body">覆盖 Linux、Windows、macOS 与 Android，GUI/CLI 共用单实例运行时与数据库路径，兼顾桌面响应速度与移动后台托管。</p>
+          </article>
+          <article class="card">
+            <h3 data-i18n="f6Title">签名软件源 &amp; 完整性校验</h3>
+            <p data-i18n="f6Body">内置应用内版本检查与哈希校验，官方 APT / RPM 仓库使用独立 RSA-4096 公钥签名元数据与安装包，安装升级全程可验证。</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>Clash-Flux &middot; v{{VERSION}}</span>
+      <div class="footer-links">
+        <a href="https://github.com/FarnaHerry/Clash-Flux">Source</a>
+        <a href="https://github.com/FarnaHerry/Clash-Flux/releases">Releases</a>
+        <a href="https://github.com/FarnaHerry/Clash-Flux/blob/main/README.md">README</a>
+        <a href="gpg.key">gpg.key</a>
+        <a href="clash-flux.gpg">clash-flux.gpg</a>
+        <a href="rpm/x86_64/repodata/repomd.xml">RPM (x86_64)</a>
+        <a href="rpm/aarch64/repodata/repomd.xml">RPM (aarch64)</a>
+        <a href="apt/dists/stable/InRelease">APT (InRelease)</a>
+      </div>
+    </footer>
+  </div>
+
   <script>
     (() => {
+      const i18n = {
+        zh: {
+          releasesBtn: '发行版下载',
+          heroTitle: '全平台轻量级 sing-box 代理客户端 & 签名软件源',
+          heroDesc: '使用 C++23 与 HuxerUI 构建的原生跨平台代理客户端。支持 Clash YAML 订阅编译与保真度账本、sing-box 原生 JSON 直通、多订阅规则编排、系统特权服务托管，并提供官方 GPG 签名 Linux APT / RPM 软件源。',
+          ctaInstall: '安装与软件源',
+          ctaDocs: '中文文档',
+          ctaGpg: 'GPG 公钥',
+          installHeading: '安装与软件源',
+          tabUnix: 'Linux / macOS',
+          tabRepo: 'Linux APT / RPM 源',
+          tabWin: 'Windows',
+          tabOther: '升级与其他发行版',
+          descUnix: 'Linux 自动校验公钥指纹、配置本签名 APT/RPM 软件源并装入 <code>/opt/clash-flux</code>；macOS 自动安装 <code>.dmg</code> 至 <code>/Applications</code>：',
+          uninstallUnix: '卸载（默认保留本地配置与订阅）：<code>curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh -s -- --uninstall</code>',
+          descRepo: 'APT（<code>amd64</code> / <code>arm64</code>，suite: <code>stable</code>）：<code>https://farnaherry.github.io/Clash-Flux/apt</code> · RPM（<code>x86_64</code> / <code>aarch64</code>）：<code>https://farnaherry.github.io/Clash-Flux/rpm/$basearch</code>',
+          gpgLabel: 'GPG 公钥指纹：',
+          manualRepoSummary: '查看手动配置 Debian / Ubuntu (APT) 与 Fedora / RHEL (RPM) 命令',
+          descWin: '在 PowerShell 中自动校验 <code>SHA-256</code> 并安装官方安装包（默认运行 WiX 安装包以支持 Windows SCM 系统服务托管）：',
+          winExtras: '支持参数：<code>-Passive</code>（静默进度）、<code>-Portable</code>（免安装便携版）、<code>-Uninstall</code>（卸载）。',
+          descOther: '配置软件源后即可随系统更新自动升级 Clash-Flux；Arch 等其他发行版可从 <a href="https://github.com/FarnaHerry/Clash-Flux/releases">Releases</a> 下载 <code>.tar.gz</code> 并解压至 <code>/opt/clash-flux</code>：',
+          featHeading: '核心特性',
+          f1Title: 'Clash YAML 编译 & 保真度账本',
+          f1Body: '支持 Clash YAML 订阅、节点链接、sing-box 原生 JSON 与 OpenVPN，内置完整转换器按 exact / approx / unsupported 显式记账。',
+          f2Title: '独立特权网络服务',
+          f2Body: 'Linux systemd / Windows SCM 托管 sing-box、TUN 与系统 PPTP，装入系统目录后随软件更新静默自升级服务。',
+          f3Title: '多订阅编排与规则追溯',
+          f3Body: '支持桌面跨订阅选择策略目标、全局与个人规则覆写、连接规则追溯、网站出口测试与 QiFi/QRS 多帧二维码分享。',
+          f4Title: '现代原生界面与主题',
+          f4Body: 'HuxerUI 原生渲染，支持深浅模式随系统同步、Gemini 多色渐变、OKLCH 自适应自定义配色与低内存托盘模式。',
+          f5Title: '全平台覆盖 & 单实例架构',
+          f5Body: '覆盖 Linux、Windows、macOS 与 Android，GUI/CLI 共用单实例运行时与数据库路径，兼顾桌面响应速度与移动后台托管。',
+          f6Title: '签名软件源 & 完整性校验',
+          f6Body: '内置应用内版本检查与哈希校验，官方 APT / RPM 仓库使用独立 RSA-4096 公钥签名元数据与安装包，安装升级全程可验证。',
+          copied: '已复制',
+          copyFailed: '复制失败',
+          langBtn: 'EN'
+        },
+        en: {
+          releasesBtn: 'Releases',
+          heroTitle: 'Cross-Platform Lightweight sing-box Client & Signed Linux Repository',
+          heroDesc: 'Built with C++23 and native HuxerUI. Features Clash YAML compilation with fidelity accounting, native sing-box JSON passthrough, multi-subscription rule orchestration, privileged system service hosting, and a GPG-signed Linux APT/RPM repository.',
+          ctaInstall: 'Install & Packages',
+          ctaDocs: 'Documentation',
+          ctaGpg: 'GPG Key',
+          installHeading: 'Install & Linux Packages',
+          tabUnix: 'Linux / macOS',
+          tabRepo: 'Linux APT / RPM Repo',
+          tabWin: 'Windows',
+          tabOther: 'Upgrade & Other Distros',
+          descUnix: 'On Linux, verifies the pinned GPG fingerprint, configures the signed APT/RPM repo, and installs into <code>/opt/clash-flux</code>; on macOS, installs the <code>.dmg</code> app into <code>/Applications</code>:',
+          uninstallUnix: 'Uninstall (preserves user config and subscriptions): <code>curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh -s -- --uninstall</code>',
+          descRepo: 'APT (<code>amd64</code> / <code>arm64</code>, suite: <code>stable</code>): <code>https://farnaherry.github.io/Clash-Flux/apt</code> · RPM (<code>x86_64</code> / <code>aarch64</code>): <code>https://farnaherry.github.io/Clash-Flux/rpm/$basearch</code>',
+          gpgLabel: 'GPG key fingerprint: ',
+          manualRepoSummary: 'Show manual Debian / Ubuntu (APT) and Fedora / RHEL (RPM) repository commands',
+          descWin: 'Verifies <code>SHA-256</code> and runs the official WiX installer on PowerShell by default (supports Windows SCM service hosting):',
+          winExtras: 'Options: <code>-Passive</code> (passive progress), <code>-Portable</code> (portable zip), <code>-Uninstall</code> (uninstall).',
+          descOther: 'Receive updates via your system package manager once configured; on Arch or other distros, download the <code>.tar.gz</code> archive from <a href="https://github.com/FarnaHerry/Clash-Flux/releases">Releases</a> and extract to <code>/opt/clash-flux</code>:',
+          featHeading: 'Key Features',
+          f1Title: 'Clash YAML Compiler & Fidelity Ledger',
+          f1Body: 'Supports Clash YAML subscriptions, share URIs, native sing-box JSON, and OpenVPN with explicit exact / approx / unsupported conversion accounting.',
+          f2Title: 'Privileged System Network Service',
+          f2Body: 'Linux systemd and Windows SCM host sing-box, TUN, and system PPTP, upgrading seamlessly in place alongside application updates.',
+          f3Title: 'Multi-Sub Orchestration & Rule Tracing',
+          f3Body: 'Route across multiple desktop subscriptions, customize global and per-profile overrides, inspect matched rules, and share nodes via QiFi/QRS QR streams.',
+          f4Title: 'Native HuxerUI & Dynamic Themes',
+          f4Body: 'Hardware-accelerated native UI with system light/dark sync, Gemini multi-stop gradients, OKLCH custom palettes, and low-memory tray mode.',
+          f5Title: 'Cross-Platform & Single-Instance Core',
+          f5Body: 'Unified single-instance GUI/CLI architecture across Linux, Windows, macOS, and Android with shared profile safety and background service isolation.',
+          f6Title: 'Signed Linux Repo & Integrity Checks',
+          f6Body: 'In-app update digest checks plus dedicated RSA-4096 signed APT and RPM repositories for end-to-end package verification.',
+          copied: 'Copied',
+          copyFailed: 'Copy failed',
+          langBtn: '中文'
+        }
+      };
+
+      const htmlKeys = new Set(['descUnix', 'uninstallUnix', 'descRepo', 'descWin', 'winExtras', 'descOther']);
+      let lang = new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'zh';
+      const langBtn = document.getElementById('lang-toggle');
+
+      const applyLang = (next) => {
+        lang = next;
+        document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
+        const dict = i18n[lang];
+        for (const el of document.querySelectorAll('[data-i18n]')) {
+          const key = el.getAttribute('data-i18n');
+          if (!(key in dict)) continue;
+          if (htmlKeys.has(key)) {
+            el.innerHTML = dict[key];
+          } else {
+            el.textContent = dict[key];
+          }
+        }
+        langBtn.textContent = dict.langBtn;
+      };
+      langBtn.addEventListener('click', () => applyLang(lang === 'zh' ? 'en' : 'zh'));
+      applyLang(lang);
+
+      // Accessible tablist (selection follows focus, arrow keys, hidden=until-found sync)
+      const tablist = document.querySelector('[role="tablist"]');
+      const tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+      const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+
+      const selectTab = (targetTab, moveFocus = false) => {
+        for (const tab of tabs) {
+          const active = tab === targetTab;
+          tab.setAttribute('aria-selected', String(active));
+          tab.tabIndex = active ? 0 : -1;
+        }
+        for (const panel of panels) {
+          const active = panel.getAttribute('aria-labelledby') === targetTab.id;
+          if (active) {
+            panel.removeAttribute('hidden');
+            panel.tabIndex = 0;
+          } else {
+            panel.setAttribute('hidden', 'until-found');
+            panel.removeAttribute('tabindex');
+          }
+        }
+        targetTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        if (moveFocus) targetTab.focus();
+      };
+
+      for (const tab of tabs) {
+        tab.addEventListener('click', () => selectTab(tab));
+      }
+      tablist.addEventListener('keydown', (e) => {
+        const idx = tabs.indexOf(document.activeElement);
+        if (idx === -1) return;
+        let next = -1;
+        if (e.key === 'ArrowRight') next = (idx + 1) % tabs.length;
+        else if (e.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = tabs.length - 1;
+        if (next !== -1) {
+          e.preventDefault();
+          selectTab(tabs[next], true);
+        }
+      });
+      for (const panel of panels) {
+        panel.addEventListener('beforematch', () => {
+          const tab = document.getElementById(panel.getAttribute('aria-labelledby'));
+          if (tab) selectTab(tab);
+        });
+      }
+
+      // Copy button using Invoker Commands + progressive click fallback
       const timers = new WeakMap();
       let lastMessage = '';
-
       const report = (button, ok) => {
         const tip = button.nextElementSibling;
         clearTimeout(timers.get(button));
         button.removeAttribute('data-copied');
         button.removeAttribute('data-failed');
-        let message = ok ? '已复制' : '复制失败';
+        let message = ok ? i18n[lang].copied : i18n[lang].copyFailed;
         if (message === lastMessage) message += '\u00A0';
         lastMessage = message;
         tip.textContent = '';

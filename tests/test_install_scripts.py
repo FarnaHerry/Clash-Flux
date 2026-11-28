@@ -99,6 +99,11 @@ def verify_static_contracts(root: pathlib.Path) -> None:
         "prefers-reduced-motion",
         "Signed-By: /usr/share/keyrings/clash-flux.gpg",
         "repo_gpgcheck=0",
+        "spark-bar",
+        'role="tablist"',
+        'hidden="until-found"',
+        "beforematch",
+        "scrollbar-color",
         'fetchpriority="high"',
         "/rpm/$basearch",
     ):
