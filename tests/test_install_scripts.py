@@ -25,16 +25,19 @@ def verify_static_contracts(root: pathlib.Path) -> None:
     ps_script = root / "install.ps1"
     repo_script = root / "scripts/build-linux-repo.sh"
     pub_key = root / "platform/linux/clash-flux-repo.asc"
+    site_index = root / "site/index.html"
     workflow = (root / ".github/workflows/build.yml").read_text(encoding="utf-8")
 
     assert sh_script.is_file(), "install.sh must exist at repository root"
     assert ps_script.is_file(), "install.ps1 must exist at repository root"
     assert repo_script.is_file(), "scripts/build-linux-repo.sh must exist"
     assert pub_key.is_file(), "platform/linux/clash-flux-repo.asc must exist"
+    assert site_index.is_file(), "site/index.html must exist"
 
     sh_text = sh_script.read_text(encoding="utf-8")
     ps_text = ps_script.read_text(encoding="utf-8")
     repo_text = repo_script.read_text(encoding="utf-8")
+    site_text = site_index.read_text(encoding="utf-8")
 
     # Never disable TLS or package signature verification.
     assert "--insecure" not in sh_text and " -k " not in sh_text
@@ -73,10 +76,34 @@ def verify_static_contracts(root: pathlib.Path) -> None:
         "--clearsign",
         "clash-flux_${version}_${deb_arch}.deb",
         "^Package: clash-flux$",
-        '<meta name="color-scheme" content="light dark">',
-        'fetchpriority="high"',
+        "site/index.html",
+        r"\{\{VERSION\}\}",
+        r"\{\{GPG_FINGERPRINT\}\}",
     ):
         assert token in repo_text, f"scripts/build-linux-repo.sh missing expected step: {token}"
+
+    for token in (
+        "{{VERSION}}",
+        "{{GPG_FINGERPRINT}}",
+        '<meta name="color-scheme" content="light dark">',
+        "viewport-fit=cover",
+        "container: page / inline-size",
+        "@container",
+        "pointer: coarse",
+        "overflow-wrap: anywhere",
+        "aspect-ratio: 1 / 1",
+        'command="--copy"',
+        "commandfor=",
+        'role="status"',
+        "CommandEvent",
+        "prefers-reduced-motion",
+        "Signed-By: /usr/share/keyrings/clash-flux.gpg",
+        "repo_gpgcheck=0",
+        'fetchpriority="high"',
+        "/rpm/$basearch",
+    ):
+        assert token in site_text, f"site/index.html missing expected directive/placeholder: {token}"
+    assert r"\$basearch" not in site_text, "site/index.html must not contain escaped \\$basearch"
 
     # Verify PowerShell installer enforces SHA-256, Zip Slip protection, and Burn flags.
     for token in (

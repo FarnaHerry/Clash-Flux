@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Clash-Flux — 全平台 sing-box 代理客户端 &amp; Linux 签名软件源</title>
+  <meta name="description" content="Clash-Flux 是基于 C++23 与 HuxerUI 构建的跨平台 sing-box 代理客户端，支持 Clash YAML 与原生 JSON、桌面订阅编排、系统服务托管与签名 Linux 软件源。">
+  <link rel="icon" type="image/png" href="logo.png">
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg-light: #efedf0;
+      --bg-dark: #131315;
+      --surface-light: #fcf8f9;
+      --surface-dark: #252628;
+      --surface-alt-light: #f5f2f4;
+      --surface-alt-dark: #1c1c1f;
+      --text-light: #202126;
+      --text-dark: #eeeff3;
+      --muted-light: #5c606a;
+      --muted-dark: #babac6;
+      --border-light: #dcd7dd;
+      --border-dark: #37383b;
+      --accent-light: #1a66c9;
+      --accent-dark: #8ab6ff;
+      --accent-text-light: #ffffff;
+      --accent-text-dark: #061427;
+      --code-bg-light: #e7e4e9;
+      --code-bg-dark: #1b1c1f;
+
+      --bg: var(--bg-light);
+      --surface: var(--surface-light);
+      --surface-alt: var(--surface-alt-light);
+      --text: var(--text-light);
+      --muted: var(--muted-light);
+      --border: var(--border-light);
+      --accent: var(--accent-light);
+      --accent-text: var(--accent-text-light);
+      --code-bg: var(--code-bg-light);
+      --code-block-bg: #11161d;
+      --code-block-border: #2a3340;
+      --code-block-text: #e6edf3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: var(--bg-dark);
+        --surface: var(--surface-dark);
+        --surface-alt: var(--surface-alt-dark);
+        --text: var(--text-dark);
+        --muted: var(--muted-dark);
+        --border: var(--border-dark);
+        --accent: var(--accent-dark);
+        --accent-text: var(--accent-text-dark);
+        --code-bg: var(--code-bg-dark);
+      }
+    }
+
+    @supports (color: light-dark(white, black)) {
+      :root {
+        --bg: light-dark(var(--bg-light), var(--bg-dark));
+        --surface: light-dark(var(--surface-light), var(--surface-dark));
+        --surface-alt: light-dark(var(--surface-alt-light), var(--surface-alt-dark));
+        --text: light-dark(var(--text-light), var(--text-dark));
+        --muted: light-dark(var(--muted-light), var(--muted-dark));
+        --border: light-dark(var(--border-light), var(--border-dark));
+        --accent: light-dark(var(--accent-light), var(--accent-dark));
+        --accent-text: light-dark(var(--accent-text-light), var(--accent-text-dark));
+        --code-bg: light-dark(var(--code-bg-light), var(--code-bg-dark));
+      }
+    }
+
+    :root {
+      accent-color: var(--accent);
+      --target-size: 24px;
+    }
+
+    @media (pointer: coarse) {
+      :root {
+        --target-size: 44px;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-block-size: 100dvh;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      overflow-wrap: break-word;
+    }
+
+    img, video {
+      max-inline-size: 100%;
+      block-size: auto;
+    }
+
+    h1, h2, h3 {
+      text-wrap: balance;
+    }
+
+    p, li {
+      text-wrap: pretty;
+    }
+
+    :where(a, code) {
+      overflow-wrap: anywhere;
+    }
+
+    pre code {
+      overflow-wrap: normal;
+      white-space: pre;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      container: page / inline-size;
+      padding-top: max(clamp(20px, 4dvw, 40px), env(safe-area-inset-top, 0px));
+      padding-right: max(clamp(14px, 3dvw, 24px), env(safe-area-inset-right, 0px));
+      padding-bottom: max(clamp(36px, 6dvw, 64px), env(safe-area-inset-bottom, 0px));
+      padding-left: max(clamp(14px, 3dvw, 24px), env(safe-area-inset-left, 0px));
+    }
+
+    .hero {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .hero-logo {
+      width: 64px;
+      height: 64px;
+      aspect-ratio: 1 / 1;
+      border-radius: 14px;
+      object-fit: contain;
+      background: #ffffff;
+      padding: 5px;
+      flex-shrink: 0;
+    }
+
+    .hero-body {
+      width: 100%;
+      min-inline-size: 0;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      background: var(--accent);
+      color: var(--accent-text);
+    }
+
+    .badge-subtle {
+      background: var(--code-bg);
+      color: var(--muted);
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: clamp(1.5rem, 1.15rem + 2.2dvw, 2.2rem);
+      line-height: 1.25;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: clamp(1.1rem, 1rem + 0.6dvw, 1.3rem);
+      line-height: 1.3;
+    }
+
+    .lead {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: clamp(0.95rem, 0.9rem + 0.3dvw, 1.05rem);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-block-size: var(--target-size);
+      min-inline-size: var(--target-size);
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface-alt);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: var(--accent-text);
+      border-color: transparent;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 18px;
+      container: card / inline-size;
+      min-inline-size: 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 12px;
+    }
+
+    .feature {
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 15px;
+      min-inline-size: 0;
+    }
+
+    .feature h3 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+    }
+
+    .feature p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .copyable {
+      display: flex;
+      align-items: start;
+      gap: 0.5rem;
+      margin: 10px 0 16px;
+      min-inline-size: 0;
+      max-inline-size: 100%;
+    }
+
+    .copyable pre {
+      color-scheme: dark;
+      accent-color: var(--accent-dark);
+      background: var(--code-block-bg);
+      color: var(--code-block-text);
+      border: 1px solid var(--code-block-border);
+      border-radius: 10px;
+      margin: 0;
+      padding: 0.85rem 1rem;
+      max-inline-size: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      user-select: text;
+      pointer-events: auto;
+      flex: 1 1 auto;
+      min-inline-size: 0;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+
+    .copy {
+      position: relative;
+      flex: none;
+      order: 1;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .copy-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-inline-size: max(32px, var(--target-size));
+      min-block-size: max(32px, var(--target-size));
+      padding: 6px;
+      border-radius: 6px;
+      border: 1px solid var(--code-block-border);
+      background: rgba(27, 34, 44, 0.94);
+      color: #e6edf3;
+      cursor: pointer;
+      opacity: 1;
+      transition: opacity 0.15s ease, border-color 0.15s ease;
+    }
+
+    .copy-button .icon-check { display: none; }
+    .copy-button[data-copied] .icon-copy { display: none; }
+    .copy-button[data-copied] .icon-check { display: block; color: #34a853; }
+    .copy-button[data-failed] { border-color: #ea4335; color: #f26c60; }
+
+    .tip {
+      position: absolute;
+      inset-inline-end: calc(100% + 0.45rem);
+      inset-block-start: 50%;
+      transform: translateY(-50%);
+      padding: 0.2rem 0.55rem;
+      border-radius: 6px;
+      background: #0f172a;
+      color: #ffffff;
+      border: 1px solid var(--code-block-border);
+      font-size: 0.76rem;
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+
+    .copy-button[data-copied] + .tip,
+    .copy-button[data-failed] + .tip {
+      opacity: 1;
+    }
+
+    details {
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: var(--surface-alt);
+      min-inline-size: 0;
+      max-inline-size: 100%;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.92rem;
+      min-block-size: var(--target-size);
+      display: flex;
+      align-items: center;
+    }
+
+    :where(a, .btn, .copy-button, summary, pre[tabindex="0"]):focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    @media (hover: hover) {
+      .btn:hover {
+        border-color: var(--accent);
+      }
+
+      .btn-primary:hover {
+        filter: brightness(0.95);
+      }
+
+      .copyable {
+        display: block;
+        position: relative;
+      }
+
+      .copyable pre {
+        padding-inline-end: 3.25rem;
+      }
+
+      .copy {
+        position: absolute;
+        inset-block-start: 0.45rem;
+        inset-inline-end: 0.45rem;
+        z-index: 2;
+      }
+
+      .copy-button {
+        opacity: 0.88;
+      }
+
+      .copyable:hover .copy-button,
+      .copyable:focus-within .copy-button,
+      .copyable .copy-button:focus-visible,
+      .copyable .copy-button[data-copied],
+      .copyable .copy-button[data-failed] {
+        opacity: 1;
+      }
+
+      .copy-button:hover {
+        border-color: var(--accent);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .tip, .copy-button { transition: none; }
+    }
+
+    ul.meta {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    ul.meta li + li {
+      margin-top: 8px;
+    }
+
+    a { color: var(--accent); }
+    .muted { color: var(--muted); font-size: 0.92rem; }
+    .meta-note { margin: 12px 0 0; }
+
+    @media (min-width: 640px) {
+      .hero {
+        flex-direction: row;
+        align-items: center;
+        gap: 24px;
+        padding: 28px;
+        border-radius: 16px;
+        margin-bottom: 24px;
+      }
+
+      .hero-logo {
+        width: 88px;
+        height: 88px;
+        border-radius: 18px;
+        padding: 6px;
+      }
+
+      .hero-body {
+        flex: 1 1 0%;
+        width: auto;
+      }
+
+      .card {
+        padding: 24px;
+        border-radius: 16px;
+        margin-bottom: 20px;
+      }
+
+      .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+    }
+
+    @supports (container-type: inline-size) {
+      @media (min-width: 640px) {
+        .hero {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 16px;
+          padding: 20px;
+          border-radius: 14px;
+          margin-bottom: 20px;
+        }
+
+        .hero-logo {
+          width: 64px;
+          height: 64px;
+          border-radius: 14px;
+          padding: 5px;
+        }
+
+        .hero-body {
+          flex: initial;
+          width: 100%;
+        }
+
+        .card {
+          padding: 18px;
+          border-radius: 14px;
+          margin-bottom: 18px;
+        }
+
+        .grid {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 12px;
+        }
+      }
+
+      @container page (inline-size < 420px) {
+        .actions .btn {
+          flex: 1 1 100%;
+        }
+      }
+
+      @container page (inline-size >= 560px) {
+        .hero {
+          flex-direction: row;
+          align-items: center;
+          gap: 24px;
+          padding: 28px;
+          border-radius: 16px;
+          margin-bottom: 24px;
+        }
+
+        .hero-logo {
+          width: 88px;
+          height: 88px;
+          border-radius: 18px;
+          padding: 6px;
+        }
+
+        .hero-body {
+          flex: 1 1 0%;
+          width: auto;
+        }
+
+        .card {
+          padding: 24px;
+          border-radius: 16px;
+          margin-bottom: 20px;
+        }
+      }
+
+      @container card (inline-size >= 520px) {
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+        }
+      }
+    }
+
+    @supports (font-size: 1cqi) {
+      .hero-body h1 {
+        font-size: clamp(1.5rem, 1.1rem + 3cqi, 2.2rem);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <section class="hero">
+      <img class="hero-logo" src="logo.png" alt="Clash-Flux Logo" width="88" height="88" fetchpriority="high">
+      <div class="hero-body">
+        <div class="badge-row">
+          <span class="badge">v{{VERSION}}</span>
+          <span class="badge badge-subtle">C++23 · HuxerUI · sing-box</span>
+          <span class="badge badge-subtle">Linux / Windows / macOS / Android</span>
+        </div>
+        <h1>Clash-Flux</h1>
+        <p class="lead">使用 C++23 与 HuxerUI 构建的全平台 <code>sing-box</code> 代理客户端，兼具 Clash 订阅兼容、原生 JSON 直通、桌面多订阅规则编排与轻量低占用体验。</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="https://github.com/FarnaHerry/Clash-Flux/releases/tag/v{{VERSION}}">下载 v{{VERSION}}</a>
+          <a class="btn" href="https://github.com/FarnaHerry/Clash-Flux">GitHub 仓库</a>
+          <a class="btn" href="https://github.com/FarnaHerry/Clash-Flux/blob/main/README.md">中文文档</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>核心特性</h2>
+      <div class="grid">
+        <div class="feature">
+          <h3>Clash YAML 编译 &amp; 原生直通</h3>
+          <p>支持 Clash 订阅（YAML/节点链接）、sing-box 原生 JSON 与 OpenVPN，自带完整转换器与保真度账本，显式记账不静默丢规则。</p>
+        </div>
+        <div class="feature">
+          <h3>独立特权网络服务</h3>
+          <p>Linux systemd / Windows SCM 托管 sing-box、TUN 与系统 PPTP，系统目录安装后随软件更新自动静默自升级服务，无需反复弹窗。</p>
+        </div>
+        <div class="feature">
+          <h3>多订阅编排与规则追溯</h3>
+          <p>支持桌面跨订阅选择策略目标、全局与个人规则覆写、连接规则追溯，以及网站出口测试与 QiFi/QRS 多帧二维码分享。</p>
+        </div>
+        <div class="feature">
+          <h3>现代原生界面与主题</h3>
+          <p>HuxerUI 原生渲染，支持深浅模式、Gemini 多色渐变、OKLCH 自适应自定义配色，以及应用内版本检查与完整性校验。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>一键安装</h2>
+      <p class="muted"><strong>Linux / macOS</strong>（Linux 自动校验公钥指纹、配置本签名 APT/RPM 软件源并装入 <code>/opt/clash-flux</code>；macOS 自动安装 <code>.dmg</code> 至 <code>/Applications</code>）：</p>
+      <div class="copyable">
+        <pre tabindex="0" role="region" aria-label="Linux / macOS 一键安装命令"><code id="cmd-unix">curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh</code></pre>
+        <span class="copy">
+          <button type="button" class="copy-button" command="--copy" commandfor="cmd-unix" aria-label="复制 Linux / macOS 安装命令">
+            <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+            <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+          </button>
+          <span class="tip" role="status"></span>
+        </span>
+      </div>
+      <p class="muted"><strong>Windows PowerShell</strong>（校验 <code>SHA-256</code> 后默认运行官方 <code>.exe</code> 安装包）：</p>
+      <div class="copyable">
+        <pre tabindex="0" role="region" aria-label="Windows PowerShell 一键安装命令"><code id="cmd-win">irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1 | iex</code></pre>
+        <span class="copy">
+          <button type="button" class="copy-button" command="--copy" commandfor="cmd-win" aria-label="复制 Windows PowerShell 安装命令">
+            <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+            <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+          </button>
+          <span class="tip" role="status"></span>
+        </span>
+      </div>
+      <p class="muted meta-note">卸载命令（默认保留本地配置与订阅）：Linux / macOS 执行 <code>install.sh --uninstall</code>，Windows 执行 <code>install.ps1 -Uninstall</code>。</p>
+    </section>
+
+    <section class="card">
+      <h2>Linux 签名软件源信息</h2>
+      <ul class="meta">
+        <li>APT 仓库：<code>https://farnaherry.github.io/Clash-Flux/apt</code>（suite: <code>stable</code>，component: <code>main</code>，支持 <code>amd64</code> / <code>arm64</code>）</li>
+        <li>RPM 仓库：<code>https://farnaherry.github.io/Clash-Flux/rpm/$basearch</code>（支持 <code>x86_64</code> / <code>aarch64</code>）</li>
+        <li>GPG 公钥（ASCII / RPM）：<a href="gpg.key">gpg.key</a> · <a href="clash-flux.gpg">clash-flux.gpg</a>（APT keyring）</li>
+        <li>公钥指纹：<code>{{GPG_FINGERPRINT}}</code></li>
+      </ul>
+      <details>
+        <summary>查看手动配置 Debian / Ubuntu (APT) 与 Fedora / RHEL (RPM) 命令</summary>
+        <div class="copyable">
+          <pre tabindex="0" role="region" aria-label="Debian / Ubuntu 手动配置 APT 软件源命令"><code id="cmd-apt"># Debian / Ubuntu (amd64 &amp; arm64)
+sudo mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
+curl -fsSL https://farnaherry.github.io/Clash-Flux/clash-flux.gpg | sudo tee /usr/share/keyrings/clash-flux.gpg &gt;/dev/null
+sudo tee /etc/apt/sources.list.d/clash-flux.sources &lt;&lt;EOF
+Types: deb
+URIs: https://farnaherry.github.io/Clash-Flux/apt
+Suites: stable
+Components: main
+Architectures: $(dpkg --print-architecture)
+Signed-By: /usr/share/keyrings/clash-flux.gpg
+EOF
+sudo apt update &amp;&amp; sudo apt install -y clash-flux</code></pre>
+          <span class="copy">
+            <button type="button" class="copy-button" command="--copy" commandfor="cmd-apt" aria-label="复制 APT 手动配置命令">
+              <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+              <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+            </button>
+            <span class="tip" role="status"></span>
+          </span>
+        </div>
+        <div class="copyable">
+          <pre tabindex="0" role="region" aria-label="Fedora / RHEL 手动配置 RPM 软件源命令"><code id="cmd-dnf"># Fedora / RHEL (x86_64 &amp; aarch64)
+sudo rpm --import https://farnaherry.github.io/Clash-Flux/gpg.key
+sudo tee /etc/yum.repos.d/clash-flux.repo &lt;&lt;'REPO'
+[clash-flux]
+name=Clash-Flux
+baseurl=https://farnaherry.github.io/Clash-Flux/rpm/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=https://farnaherry.github.io/Clash-Flux/gpg.key
+REPO
+sudo dnf install -y clash-flux</code></pre>
+          <span class="copy">
+            <button type="button" class="copy-button" command="--copy" commandfor="cmd-dnf" aria-label="复制 RPM 手动配置命令">
+              <svg class="icon-copy" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V6h1V5H2z"/></svg>
+              <svg class="icon-check" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>
+            </button>
+            <span class="tip" role="status"></span>
+          </span>
+        </div>
+      </details>
+      <p class="muted meta-note">Debian / Ubuntu 后续可直接通过 <code>sudo apt update &amp;&amp; sudo apt upgrade</code> 升级；Fedora / RHEL / openSUSE 可直接通过 <code>sudo dnf upgrade</code> 或 <code>sudo zypper up</code> 升级。Arch 等其他发行版可在 <a href="https://github.com/FarnaHerry/Clash-Flux/releases">Releases</a> 下载 <code>.tar.gz</code> 并解压至 <code>/opt/clash-flux</code>。</p>
+    </section>
+  </main>
+  <script>
+    (() => {
+      const timers = new WeakMap();
+      let lastMessage = '';
+
+      const report = (button, ok) => {
+        const tip = button.nextElementSibling;
+        clearTimeout(timers.get(button));
+        button.removeAttribute('data-copied');
+        button.removeAttribute('data-failed');
+        let message = ok ? '已复制' : '复制失败';
+        if (message === lastMessage) message += '\u00A0';
+        lastMessage = message;
+        tip.textContent = '';
+        void button.offsetWidth;
+        button.setAttribute(ok ? 'data-copied' : 'data-failed', '');
+        requestAnimationFrame(() => { tip.textContent = message; });
+        timers.set(button, setTimeout(() => {
+          button.removeAttribute('data-copied');
+          button.removeAttribute('data-failed');
+          tip.textContent = '';
+        }, 2000));
+      };
+
+      const legacyCopy = (text) => {
+        const previousFocus = document.activeElement;
+        const field = Object.assign(document.createElement('textarea'), { value: text });
+        field.setAttribute('readonly', '');
+        field.style.cssText = 'position:fixed;inset-block-start:0;opacity:0';
+        document.body.append(field);
+        field.select();
+        try {
+          return document.execCommand('copy');
+        } finally {
+          field.remove();
+          previousFocus?.focus({ preventScroll: true });
+        }
+      };
+
+      const copy = async (button, target) => {
+        const text = target.innerText.trim();
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          report(button, true);
+        } catch {
+          report(button, legacyCopy(text));
+        }
+      };
+
+      document.addEventListener('command', (event) => {
+        if (event.command === '--copy' && event.source && event.target) {
+          copy(event.source, event.target);
+        }
+      }, true);
+
+      if (!('CommandEvent' in window)) {
+        document.addEventListener('click', (event) => {
+          if (event.defaultPrevented) return;
+          const button = event.target.closest('button[command="--copy"]');
+          if (!button) return;
+          const target = document.getElementById(button.getAttribute('commandfor'));
+          if (target) copy(button, target);
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
