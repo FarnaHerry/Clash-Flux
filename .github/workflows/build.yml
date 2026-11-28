@@ -938,11 +938,35 @@ jobs:
           done
           cp install.sh install.ps1 release/
           chmod +x release/install.sh
-          (cd release && sha256sum clash-flux-* > SHA256SUMS.txt)
-          test -s release/SHA256SUMS.txt
           test -s release/install.sh
           test -s release/install.ps1
+
+      - name: Install Linux repository signing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnupg rpm createrepo-c dpkg-dev apt-utils
+
+      - name: Build and sign Linux package repositories
+        env:
+          CLASHFLUX_LINUX_GPG_PRIVATE_KEY: ${{ secrets.CLASHFLUX_LINUX_GPG_PRIVATE_KEY }}
+          CLASHFLUX_LINUX_GPG_PASSPHRASE: ${{ secrets.CLASHFLUX_LINUX_GPG_PASSPHRASE }}
+          LINUX_GPG_FINGERPRINT: '5D58F92EC9A683FE42638DBF89A86E971F6EFD47'
+        run: |
+          set -euo pipefail
+          release_version="${GITHUB_REF_NAME#v}"
+          bash scripts/build-linux-repo.sh \
+            --version "$release_version" \
+            --release-dir release \
+            --pages-dir pages \
+            --expected-fingerprint "$LINUX_GPG_FINGERPRINT"
+          (cd release && sha256sum clash-flux-* > SHA256SUMS.txt)
+          test -s release/SHA256SUMS.txt
           ls -lh release
+
+      - name: Upload GitHub Pages repository artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
 
       - name: Publish GitHub Release
         env:
@@ -966,6 +990,22 @@ jobs:
               "${note_args[@]}" \
               release/*
           fi
+
+  deploy-linux-repo:
+    name: deploy-linux-repo
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [publish-release]
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Linux package repository to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   # WiX only consumes the already-staged Windows payload; it never recompiles
   # the application. It starts as soon as build-windows finishes and runs in

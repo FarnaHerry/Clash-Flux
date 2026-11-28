@@ -3,7 +3,12 @@
 set -eu
 
 repository_url="https://github.com/FarnaHerry/Clash-Flux"
-api_url="https://api.github.com/repos/FarnaHerry/Clash-Flux"
+repo_url=${CLASHFLUX_REPO_URL:-"https://farnaherry.github.io/Clash-Flux"}
+system_root=${CLASHFLUX_SYSTEM_ROOT:-""}
+
+expected_gpg_fingerprint="5D58F92EC9A683FE42638DBF89A86E971F6EFD47"
+expected_gpg_ascii_sha256="ac5622d1116c33db608a2ab3d8a00bbbdd6ed9fc82fc04563479ec9d449fe06b"
+expected_gpg_bin_sha256="06643b297a55915352e1ca7cdae5f6e9b8d29ec2a084c8d6e223ce1073444ae6"
 
 version=""
 prefix=""
@@ -16,7 +21,6 @@ uninstall=false
 temporary_directory=""
 staging_directory=""
 backup_directory=""
-lock_directory=""
 dmg_mount_point=""
 
 usage() {
@@ -27,7 +31,7 @@ Usage:
 
 Examples:
   curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh
-  curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh -s -- --prefix "$HOME/.local/share/Clash-Flux"
+  curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh -s -- --uninstall
 EOF
 }
 
@@ -55,9 +59,6 @@ cleanup() {
     else
       rm -rf "$backup_directory"
     fi
-  fi
-  if [ -n "$lock_directory" ]; then
-    rmdir "$lock_directory" 2>/dev/null || true
   fi
   if [ -n "$temporary_directory" ] && [ -d "$temporary_directory" ]; then
     rm -rf "$temporary_directory"
@@ -138,6 +139,7 @@ case "$(uname -m)" in
 x86_64 | amd64)
   [ "$host_system" != "macos" ] || fail "macOS releases currently support Apple Silicon (arm64) only"
   host_architecture="x86_64"
+  dpkg_architecture="amd64"
   ;;
 arm64 | aarch64)
   if [ "$host_system" = "macos" ]; then
@@ -145,6 +147,7 @@ arm64 | aarch64)
   else
     host_architecture="aarch64"
   fi
+  dpkg_architecture="arm64"
   ;;
 *)
   fail "unsupported architecture: $(uname -m)"
@@ -169,6 +172,28 @@ confirm_destructive() {
   y | Y | yes | YES | Yes) ;;
   *) fail "cancelled" ;;
   esac
+}
+
+run_privileged() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    if sudo -n true >/dev/null 2>&1; then
+      sudo "$@"
+    elif [ -r /dev/tty ]; then
+      sudo "$@" </dev/tty
+    else
+      fail "root privileges or an interactive terminal for sudo are required to run: $*"
+    fi
+  elif command -v doas >/dev/null 2>&1; then
+    if [ -r /dev/tty ]; then
+      doas "$@" </dev/tty
+    else
+      fail "root privileges or an interactive terminal for doas are required to run: $*"
+    fi
+  else
+    fail "root privileges, sudo, or doas are required to install system packages"
+  fi
 }
 
 to_abs_path() {
@@ -199,10 +224,6 @@ normalize_prefix() {
   candidate="$prefix_parent/$prefix_name"
   validate_safe_prefix "$candidate"
   printf '%s\n' "$candidate"
-}
-
-is_portable_install() {
-  [ -d "$1" ] && [ -x "$1/clash-flux" ]
 }
 
 normalize_sha256() {
@@ -284,54 +305,216 @@ verify_sha256() {
   log "Verified SHA-256 for $label"
 }
 
-if [ "$explicit_prefix" = false ]; then
-  if [ "$host_system" = "macos" ]; then
-    if [ -w /Applications ] || [ "$(id -u)" -eq 0 ]; then
-      prefix="/Applications"
-    else
-      prefix="$HOME/Applications"
-    fi
+verify_repo_gpg_key() {
+  key_file=$1
+  expected_sha=$2
+  label=$3
+  verify_sha256 "$key_file" "$expected_sha" "$label"
+  if command -v gpg >/dev/null 2>&1; then
+    actual_fpr=$(gpg --batch --show-keys --with-colons "$key_file" 2>/dev/null |
+      awk -F: '$1=="fpr"{print toupper($10); exit}' || true)
+    [ "$actual_fpr" = "$expected_gpg_fingerprint" ] ||
+      fail "GPG key fingerprint mismatch for $label (expected $expected_gpg_fingerprint, got ${actual_fpr:-none})"
+    log "Verified GPG fingerprint ($expected_gpg_fingerprint) for $label"
+  fi
+}
+
+detect_linux_pkg_manager() {
+  if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
+    printf '%s\n' "apt"
+  elif command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+    printf '%s\n' "dnf"
+  elif command -v zypper >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+    printf '%s\n' "zypper"
+  elif command -v yum >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+    printf '%s\n' "yum"
   else
-    prefix="$HOME/.local/share/Clash-Flux"
+    printf '%s\n' "unsupported"
+  fi
+}
+
+check_linux_launcher_path() {
+  expected_bin="$system_root/usr/bin/clash-flux"
+  resolved_bin=$(command -v clash-flux 2>/dev/null || true)
+  if [ -z "$resolved_bin" ]; then
+    log "Note: /usr/bin is not in PATH; run Clash-Flux via /usr/bin/clash-flux"
+    return
+  fi
+  if [ -d "$(dirname "$expected_bin")" ]; then
+    expected_dir=$(cd "$(dirname "$expected_bin")" && pwd -P)
+    expected_bin_real="$expected_dir/clash-flux"
+  else
+    expected_bin_real="$expected_bin"
+  fi
+  resolved_dir=$(cd "$(dirname "$resolved_bin")" 2>/dev/null && pwd -P || true)
+  resolved_bin_real="$resolved_dir/$(basename "$resolved_bin")"
+  if [ "$resolved_bin_real" != "$expected_bin_real" ]; then
+    log "Warning: 'clash-flux' in PATH currently resolves to $resolved_bin instead of $expected_bin (shadowed by another installation)."
+    log "If you have a leftover user-local binary (e.g. ~/.local/bin/clash-flux), remove it so the system package takes precedence."
+  fi
+}
+
+if [ "$host_system" = "linux" ]; then
+  [ -z "$archive" ] && [ -z "$expected_sha256" ] ||
+    fail "--archive and --sha256 are only used for macOS .dmg installation"
+  [ "$explicit_prefix" = false ] ||
+    fail "--prefix is not supported on Linux (system packages install to /opt/clash-flux)"
+
+  pkg_manager=$(detect_linux_pkg_manager)
+  if [ "$pkg_manager" = "unsupported" ]; then
+    fail "no supported Linux package manager found (expected apt, dnf, zypper, or yum). For Arch/other distros, download clash-flux-<version>-linux-$host_architecture.tar.gz from $repository_url/releases and extract to /opt/clash-flux so the systemd service can verify root ownership."
+  fi
+
+  apt_keyring="$system_root/usr/share/keyrings/clash-flux.gpg"
+  apt_sources="$system_root/etc/apt/sources.list.d/clash-flux.sources"
+  yum_repo="$system_root/etc/yum.repos.d/clash-flux.repo"
+  zypp_repo="$system_root/etc/zypp/repos.d/clash-flux.repo"
+
+  if [ "$uninstall" = true ]; then
+    if [ "$pkg_manager" = "apt" ]; then
+      confirm_destructive "Uninstall Clash-Flux and remove its APT repository configuration; user configuration and subscriptions will be preserved."
+      run_privileged apt-get remove -y clash-flux
+      run_privileged rm -f "$apt_sources" "$apt_keyring"
+    else
+      confirm_destructive "Uninstall Clash-Flux and remove its RPM repository configuration; user configuration and subscriptions will be preserved."
+      case "$pkg_manager" in
+      dnf) run_privileged dnf remove -y clash-flux ;;
+      zypper) run_privileged zypper --non-interactive remove clash-flux ;;
+      yum) run_privileged yum remove -y clash-flux ;;
+      esac
+      run_privileged rm -f "$yum_repo" "$zypp_repo"
+    fi
+    log "Clash-Flux removed cleanly (user data preserved)"
+    exit 0
+  fi
+
+  command -v curl >/dev/null 2>&1 || fail "curl is required"
+
+  if [ -n "$version" ]; then
+    version=${version#v}
+    case "$version" in
+    "" | *[!0-9A-Za-z._-]*) fail "invalid version: $version" ;;
+    esac
+  fi
+
+  temporary_directory=$(mktemp -d "${TMPDIR:-/tmp}/clash-flux-install.XXXXXX")
+
+  if [ "$pkg_manager" = "apt" ]; then
+    tmp_keyring="$temporary_directory/clash-flux.gpg"
+    tmp_sources="$temporary_directory/clash-flux.sources"
+    log "Configuring signed APT repository ($repo_url/apt)"
+    curl -fsSL "$repo_url/clash-flux.gpg" -o "$tmp_keyring" ||
+      fail "failed to download APT GPG keyring from $repo_url/clash-flux.gpg"
+    verify_repo_gpg_key "$tmp_keyring" "$expected_gpg_bin_sha256" "clash-flux.gpg"
+
+    cat >"$tmp_sources" <<EOF
+Types: deb
+URIs: $repo_url/apt
+Suites: stable
+Components: main
+Architectures: $dpkg_architecture
+Signed-By: /usr/share/keyrings/clash-flux.gpg
+EOF
+
+    run_privileged mkdir -p "$(dirname "$apt_keyring")" "$(dirname "$apt_sources")"
+    run_privileged cp "$tmp_keyring" "$apt_keyring"
+    run_privileged chmod 0644 "$apt_keyring"
+    run_privileged cp "$tmp_sources" "$apt_sources"
+    run_privileged chmod 0644 "$apt_sources"
+
+    run_privileged apt-get update
+    if [ -n "$version" ]; then
+      run_privileged apt-get install -y "clash-flux=$version"
+    else
+      run_privileged apt-get install -y clash-flux
+    fi
+    log "Clash-Flux installed via APT (/opt/clash-flux); future updates arrive automatically via 'sudo apt upgrade'."
+  else
+    tmp_key="$temporary_directory/gpg.key"
+    tmp_repo="$temporary_directory/clash-flux.repo"
+    log "Configuring signed RPM repository ($repo_url/rpm/\$basearch)"
+    curl -fsSL "$repo_url/gpg.key" -o "$tmp_key" ||
+      fail "failed to download RPM GPG key from $repo_url/gpg.key"
+    verify_repo_gpg_key "$tmp_key" "$expected_gpg_ascii_sha256" "gpg.key"
+
+    run_privileged rpm --import "$tmp_key"
+
+    if [ "$pkg_manager" = "zypper" ]; then
+      target_repo="$zypp_repo"
+      cat >"$tmp_repo" <<EOF
+[clash-flux]
+name=Clash-Flux
+baseurl=$repo_url/rpm/\$basearch
+enabled=1
+autorefresh=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=$repo_url/gpg.key
+EOF
+    else
+      target_repo="$yum_repo"
+      cat >"$tmp_repo" <<EOF
+[clash-flux]
+name=Clash-Flux
+baseurl=$repo_url/rpm/\$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=$repo_url/gpg.key
+EOF
+    fi
+
+    run_privileged mkdir -p "$(dirname "$target_repo")"
+    run_privileged cp "$tmp_repo" "$target_repo"
+    run_privileged chmod 0644 "$target_repo"
+
+    pkg_spec="clash-flux"
+    if [ -n "$version" ]; then
+      pkg_spec="clash-flux-$version"
+    fi
+    case "$pkg_manager" in
+    dnf)
+      run_privileged dnf -y --refresh install "$pkg_spec"
+      ;;
+    zypper)
+      run_privileged zypper --non-interactive --gpg-auto-import-keys refresh clash-flux
+      run_privileged zypper --non-interactive install "$pkg_spec"
+      ;;
+    yum)
+      run_privileged yum makecache -y
+      run_privileged yum install -y "$pkg_spec"
+      ;;
+    esac
+    log "Clash-Flux installed via $pkg_manager (/opt/clash-flux); future updates arrive automatically via system upgrades."
+  fi
+
+  check_linux_launcher_path
+  log "To enable TUN/PPTP mode, install the systemd service from Settings or run: pkexec /opt/clash-flux/clash-flux service install"
+  exit 0
+fi
+
+# ---- macOS (.dmg) ------------------------------------------------------------
+if [ "$explicit_prefix" = false ]; then
+  if [ -w /Applications ] || [ "$(id -u)" -eq 0 ]; then
+    prefix="/Applications"
+  else
+    prefix="$HOME/Applications"
   fi
 fi
 
 if [ "$uninstall" = true ]; then
-  case "$host_system" in
-  linux)
-    prefix=$(normalize_prefix "$prefix")
-    is_portable_install "$prefix" || fail "refusing to uninstall: Clash-Flux not found at $prefix"
-    confirm_destructive "Uninstall Clash-Flux from $prefix; user configuration and subscriptions will be preserved."
-    mkdir "$prefix.clash-flux-lock" 2>/dev/null ||
-      fail "another installer is modifying $prefix"
-    lock_directory="$prefix.clash-flux-lock"
-    rm -rf "$prefix"
-    bin_link="$HOME/.local/bin/clash-flux"
-    if [ -L "$bin_link" ]; then
-      link_target=$(readlink "$bin_link" 2>/dev/null || true)
-      if [ "$link_target" = "$prefix/clash-flux" ]; then
-        rm -f "$bin_link"
-      fi
-    fi
-    data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
-    rm -f "$data_home/applications/clash-flux.desktop"
-    rm -f "$data_home/icons/hicolor/256x256/apps/clash-flux.png"
-    log "Clash-Flux removed from $prefix"
-    ;;
-  macos)
-    prefix=$(normalize_prefix "$prefix")
-    app_bundle="$prefix/Clash-Flux.app"
-    [ -d "$app_bundle" ] || fail "Clash-Flux.app not found at $app_bundle"
-    confirm_destructive "Uninstall $app_bundle; user data will be preserved."
-    rm -rf "$app_bundle"
-    log "Removed $app_bundle"
-    ;;
-  esac
+  prefix=$(normalize_prefix "$prefix")
+  app_bundle="$prefix/Clash-Flux.app"
+  [ -d "$app_bundle" ] || fail "Clash-Flux.app not found at $app_bundle"
+  confirm_destructive "Uninstall $app_bundle; user data will be preserved."
+  rm -rf "$app_bundle"
+  log "Removed $app_bundle"
   exit 0
 fi
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
+api_url="https://api.github.com/repos/FarnaHerry/Clash-Flux"
 release_tag=""
 if [ -z "$archive" ]; then
   if [ -z "$version" ]; then
@@ -349,18 +532,15 @@ if [ -z "$archive" ]; then
   case "$version" in
   "" | *[!0-9A-Za-z._-]*) fail "invalid version: $version" ;;
   esac
-  case "$host_system" in
-  linux) asset_name="clash-flux-$version-linux-$host_architecture.tar.gz" ;;
-  macos) asset_name="clash-flux-$version-macos-$host_architecture.dmg" ;;
-  esac
+  asset_name="clash-flux-$version-macos-$host_architecture.dmg"
   asset_url="$repository_url/releases/download/$release_tag/$asset_name"
 else
   archive=$(to_abs_path "$archive")
   [ -f "$archive" ] || fail "archive does not exist: $archive"
   asset_name=$(basename "$archive")
-  case "$host_system:$asset_name" in
-  linux:*.tar.gz | linux:*.tgz | macos:*.dmg) ;;
-  *) fail "archive $asset_name is not supported on $host_system" ;;
+  case "$asset_name" in
+  *.dmg) ;;
+  *) fail "archive $asset_name is not a macOS .dmg installer" ;;
   esac
   asset_url="$archive"
 fi
@@ -401,173 +581,52 @@ fi
 [ -n "$expected_sha256" ] || fail "unable to resolve expected SHA-256 digest for $asset_name (provide --sha256 or SHA256SUMS.txt)"
 verify_sha256 "$package_file" "$expected_sha256" "$asset_name"
 
-check_launcher_path() {
-  bin_dir=$1
-  expected_bin="$bin_dir/clash-flux"
-  bin_dir_real=$(cd "$bin_dir" && pwd -P)
-  expected_bin_real="$bin_dir_real/clash-flux"
-  resolved_bin=$(command -v clash-flux 2>/dev/null || true)
-  if [ -z "$resolved_bin" ]; then
-    log "Note: $bin_dir is not in your PATH; add it to run 'clash-flux' directly:"
-    log "  export PATH=\"$bin_dir:\$PATH\""
-    return
-  fi
-  resolved_dir=$(cd "$(dirname "$resolved_bin")" 2>/dev/null && pwd -P || true)
-  resolved_bin_real="$resolved_dir/$(basename "$resolved_bin")"
-  if [ "$resolved_bin_real" != "$expected_bin_real" ]; then
-    log "Warning: 'clash-flux' in PATH currently resolves to $resolved_bin instead of $expected_bin (shadowed by another installation)."
-    log "Put $bin_dir earlier in PATH or remove the system package so the user install takes precedence."
-  fi
-}
+prefix=$(normalize_prefix "$prefix")
+mkdir -p "$prefix"
+dmg_mount_point="$temporary_directory/mnt"
+mkdir -p "$dmg_mount_point"
+hdiutil attach -nobrowse -readonly -mountpoint "$dmg_mount_point" "$package_file" >/dev/null ||
+  fail "failed to mount $asset_name"
 
-case "$host_system" in
-linux)
-  prefix=$(normalize_prefix "$prefix")
-  if [ -e "$prefix" ] && ! is_portable_install "$prefix"; then
-    fail "installation prefix exists and is not a Clash-Flux directory: $prefix"
-  fi
+source_app=""
+if [ -d "$dmg_mount_point/Clash-Flux.app" ]; then
+  source_app="$dmg_mount_point/Clash-Flux.app"
+else
+  for candidate in "$dmg_mount_point"/*.app; do
+    if [ -d "$candidate" ]; then
+      source_app=$candidate
+      break
+    fi
+  done
+fi
+[ -n "$source_app" ] || fail "no .app bundle found in $asset_name"
 
-  tar_listing="$temporary_directory/tar.list"
-  tar -tzf "$package_file" >"$tar_listing" || fail "unable to read archive: $asset_name"
-  if awk '
-    $0 ~ /^\// || $0 ~ /(^|\/)\.\.(\/|$)/ { bad = 1 }
-    END { exit bad ? 0 : 1 }
-  ' "$tar_listing"; then
-    fail "archive contains an unsafe absolute or traversal path"
-  fi
+app_name=$(basename "$source_app")
+target_app="$prefix/$app_name"
+staging_directory="$prefix/.Clash-Flux.staging.$$"
+rm -rf "$staging_directory"
+if command -v ditto >/dev/null 2>&1; then
+  ditto "$source_app" "$staging_directory"
+else
+  cp -R "$source_app" "$staging_directory"
+fi
 
-  extract_dir="$temporary_directory/extract"
-  mkdir -p "$extract_dir"
-  tar -xzf "$package_file" -C "$extract_dir" || fail "failed to extract $asset_name"
+hdiutil detach "$dmg_mount_point" -quiet >/dev/null 2>&1 || true
+dmg_mount_point=""
 
-  payload_dir=""
-  if [ -f "$extract_dir/clash-flux" ]; then
-    payload_dir="$extract_dir"
-  else
-    for candidate in "$extract_dir"/*; do
-      if [ -d "$candidate" ] && [ -f "$candidate/clash-flux" ]; then
-        [ -z "$payload_dir" ] || fail "archive contains multiple payload directories"
-        payload_dir=$candidate
-      fi
-    done
-  fi
-  [ -n "$payload_dir" ] || fail "archive does not contain clash-flux executable"
+swap_target="$target_app"
+if [ -e "$target_app" ]; then
+  backup_directory="$prefix/.Clash-Flux.backup.$$"
+  rm -rf "$backup_directory"
+  mv "$target_app" "$backup_directory"
+fi
 
-  rm -f "$payload_dir"/*.deb "$payload_dir"/*.rpm
-  chmod +x "$payload_dir/clash-flux"
-  if [ -f "$payload_dir/clash-flux-updater" ]; then
-    chmod +x "$payload_dir/clash-flux-updater"
-  fi
-  if [ -d "$payload_dir/engines" ]; then
-    for engine in "$payload_dir/engines"/*; do
-      [ -f "$engine" ] && chmod +x "$engine" || true
-    done
-  fi
+mv "$staging_directory" "$target_app"
+staging_directory=""
+if [ -n "$backup_directory" ] && [ -d "$backup_directory" ]; then
+  rm -rf "$backup_directory"
+  backup_directory=""
+fi
+swap_target=""
 
-  parent_dir=$(dirname "$prefix")
-  mkdir -p "$parent_dir"
-  mkdir "$prefix.clash-flux-lock" 2>/dev/null ||
-    fail "another installer is modifying $prefix"
-  lock_directory="$prefix.clash-flux-lock"
-
-  staging_directory=$(mktemp -d "$parent_dir/.clash-flux-stage.XXXXXX")
-  rmdir "$staging_directory"
-  mv "$payload_dir" "$staging_directory"
-
-  swap_target="$prefix"
-  if [ -e "$prefix" ]; then
-    backup_directory="$parent_dir/.clash-flux-backup.$$"
-    rm -rf "$backup_directory"
-    mv "$prefix" "$backup_directory"
-  fi
-
-  mv "$staging_directory" "$prefix"
-  staging_directory=""
-  if [ -n "$backup_directory" ] && [ -d "$backup_directory" ]; then
-    rm -rf "$backup_directory"
-    backup_directory=""
-  fi
-  swap_target=""
-
-  bin_dir="$HOME/.local/bin"
-  mkdir -p "$bin_dir"
-  ln -sf "$prefix/clash-flux" "$bin_dir/clash-flux"
-
-  data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
-  icon_name="clash-flux"
-  if [ -f "$prefix/assets/icon.png" ]; then
-    icon_dir="$data_home/icons/hicolor/256x256/apps"
-    mkdir -p "$icon_dir"
-    cp "$prefix/assets/icon.png" "$icon_dir/clash-flux.png"
-  fi
-  desktop_dir="$data_home/applications"
-  mkdir -p "$desktop_dir"
-  cat >"$desktop_dir/clash-flux.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=Clash-Flux
-Comment=Cross-platform sing-box proxy client
-Exec="$prefix/clash-flux" %u
-Icon=$icon_name
-Categories=Network;
-Terminal=false
-MimeType=x-scheme-handler/clash;x-scheme-handler/sing-box;
-StartupWMClass=clash-flux
-EOF
-
-  log "Installed Clash-Flux to $prefix"
-  log "Launcher symlink: $bin_dir/clash-flux"
-  check_launcher_path "$bin_dir"
-  ;;
-macos)
-  prefix=$(normalize_prefix "$prefix")
-  mkdir -p "$prefix"
-  dmg_mount_point="$temporary_directory/mnt"
-  mkdir -p "$dmg_mount_point"
-  hdiutil attach -nobrowse -readonly -mountpoint "$dmg_mount_point" "$package_file" >/dev/null ||
-    fail "failed to mount $asset_name"
-
-  source_app=""
-  if [ -d "$dmg_mount_point/Clash-Flux.app" ]; then
-    source_app="$dmg_mount_point/Clash-Flux.app"
-  else
-    for candidate in "$dmg_mount_point"/*.app; do
-      if [ -d "$candidate" ]; then
-        source_app=$candidate
-        break
-      fi
-    done
-  fi
-  [ -n "$source_app" ] || fail "no .app bundle found in $asset_name"
-
-  app_name=$(basename "$source_app")
-  target_app="$prefix/$app_name"
-  staging_directory="$prefix/.Clash-Flux.staging.$$"
-  rm -rf "$staging_directory"
-  if command -v ditto >/dev/null 2>&1; then
-    ditto "$source_app" "$staging_directory"
-  else
-    cp -R "$source_app" "$staging_directory"
-  fi
-
-  hdiutil detach "$dmg_mount_point" -quiet >/dev/null 2>&1 || true
-  dmg_mount_point=""
-
-  swap_target="$target_app"
-  if [ -e "$target_app" ]; then
-    backup_directory="$prefix/.Clash-Flux.backup.$$"
-    rm -rf "$backup_directory"
-    mv "$target_app" "$backup_directory"
-  fi
-
-  mv "$staging_directory" "$target_app"
-  staging_directory=""
-  if [ -n "$backup_directory" ] && [ -d "$backup_directory" ]; then
-    rm -rf "$backup_directory"
-    backup_directory=""
-  fi
-  swap_target=""
-
-  log "Installed Clash-Flux to $target_app"
-  ;;
-esac
+log "Installed Clash-Flux to $target_app"

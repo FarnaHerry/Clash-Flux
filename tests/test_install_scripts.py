@@ -1,5 +1,4 @@
-"""Regression checks for install.sh, install.ps1, and release packaging."""
-import hashlib
+"""Regression checks for install.sh, install.ps1, Linux repo signing, and release packaging."""
 import os
 import pathlib
 import platform
@@ -7,7 +6,6 @@ import re
 import shutil
 import stat
 import subprocess
-import tarfile
 import tempfile
 
 
@@ -25,31 +23,50 @@ def run(cmd, env=None, check=True):
 def verify_static_contracts(root: pathlib.Path) -> None:
     sh_script = root / "install.sh"
     ps_script = root / "install.ps1"
+    repo_script = root / "scripts/build-linux-repo.sh"
+    pub_key = root / "platform/linux/clash-flux-repo.asc"
     workflow = (root / ".github/workflows/build.yml").read_text(encoding="utf-8")
 
     assert sh_script.is_file(), "install.sh must exist at repository root"
     assert ps_script.is_file(), "install.ps1 must exist at repository root"
+    assert repo_script.is_file(), "scripts/build-linux-repo.sh must exist"
+    assert pub_key.is_file(), "platform/linux/clash-flux-repo.asc must exist"
 
     sh_text = sh_script.read_text(encoding="utf-8")
     ps_text = ps_script.read_text(encoding="utf-8")
+    repo_text = repo_script.read_text(encoding="utf-8")
 
-    # Never disable TLS verification.
+    # Never disable TLS or package signature verification.
     assert "--insecure" not in sh_text and " -k " not in sh_text
+    assert "--allow-unsigned-rpm" not in sh_text and "trusted=yes" not in sh_text
     assert "SkipCertificateCheck" not in ps_text
 
-    # install.sh must stay sudo-free and not invoke system package managers.
-    assert not re.search(
-        r"(?:^|[;&|\s(])(sudo|doas|apt-get|dpkg|dnf|rpm)(?:\s|$)",
-        sh_text,
-        re.MULTILINE,
-    ), "install.sh must not invoke privilege escalation or system package managers"
+    # Pinned GPG fingerprint must match across install.sh and CI workflow.
+    wf_fpr = re.search(r"LINUX_GPG_FINGERPRINT:\s*'([0-9A-F]{40})'", workflow)
+    sh_fpr = re.search(r'expected_gpg_fingerprint="([0-9A-F]{40})"', sh_text)
+    assert wf_fpr and sh_fpr, "both workflow and install.sh must pin the 40-char GPG fingerprint"
+    assert wf_fpr.group(1) == sh_fpr.group(1), "workflow and install.sh GPG fingerprints must match"
 
-    # CI publishes both scripts and SHA256SUMS.txt alongside release binaries.
-    for token in ("install.sh", "install.ps1", "SHA256SUMS.txt"):
-        assert token in workflow, f"workflow must package {token}"
-    assert "--exclude='*.deb'" in workflow and "--exclude='*.rpm'" in workflow, (
-        "workflow must exclude .deb and .rpm packages from the Linux .tar.gz release archive"
-    )
+    # Enforce signed APT/RPM configuration in install.sh.
+    for token in ("Signed-By: /usr/share/keyrings/clash-flux.gpg", "gpgcheck=1", "repo_gpgcheck=1"):
+        assert token in sh_text, f"install.sh missing required signature directive: {token}"
+
+    # CI publishes install scripts, SHA256SUMS.txt, clean Linux tar.gz, and GitHub Pages APT/RPM repos.
+    for token in (
+        "install.sh",
+        "install.ps1",
+        "SHA256SUMS.txt",
+        "--exclude='*.deb'",
+        "--exclude='*.rpm'",
+        "scripts/build-linux-repo.sh",
+        "CLASHFLUX_LINUX_GPG_PRIVATE_KEY",
+        "actions/upload-pages-artifact",
+        "actions/deploy-pages",
+    ):
+        assert token in workflow, f"workflow missing expected release step/token: {token}"
+
+    for token in ("rpmsign --addsign", "createrepo_c", "dpkg-scanpackages", "apt-ftparchive", "--clearsign"):
+        assert token in repo_text, f"scripts/build-linux-repo.sh missing expected step: {token}"
 
     # Verify PowerShell installer enforces SHA-256, Zip Slip protection, and Burn flags.
     for token in (
@@ -65,6 +82,9 @@ def verify_static_contracts(root: pathlib.Path) -> None:
     if shutil.which("sh") and os.name != "nt":
         res = run(["sh", "-n", str(sh_script)])
         assert res.returncode == 0, res.stderr
+    if shutil.which("bash") and os.name != "nt":
+        res = run(["bash", "-n", str(repo_script)])
+        assert res.returncode == 0, res.stderr
 
     pwsh = shutil.which("pwsh") or shutil.which("powershell")
     if pwsh:
@@ -77,157 +97,175 @@ def verify_static_contracts(root: pathlib.Path) -> None:
         assert res.returncode == 0, res.stderr
 
 
-def build_synthetic_tar(archive_path: pathlib.Path, version_label: str, top_dir: str) -> str:
-    with tempfile.TemporaryDirectory() as tmp:
-        stage = pathlib.Path(tmp) / top_dir
-        (stage / "assets").mkdir(parents=True)
-        (stage / "engines").mkdir(parents=True)
-        binary = stage / "clash-flux"
-        binary.write_text(f"#!/bin/sh\necho 'Clash-Flux v{version_label}'\n", encoding="utf-8")
-        binary.chmod(0o755)
-        updater = stage / "clash-flux-updater"
-        updater.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        updater.chmod(0o755)
-        (stage / "engines/sing-box").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        (stage / "assets/icon.png").write_bytes(b"PNGDATA")
-        # CI staging dir includes stray .deb/.rpm artifacts that portable installs strip.
-        (stage / f"clash-flux_{version_label}_amd64.deb").write_bytes(b"deb")
-        (stage / f"clash-flux-{version_label}-1.x86_64.rpm").write_bytes(b"rpm")
+def make_stub(path: pathlib.Path, body: str) -> None:
+    path.write_text("#!/bin/sh\nset -eu\n" + body + "\n", encoding="utf-8")
+    path.chmod(0o755)
 
-        with tarfile.open(archive_path, "w:gz") as tf:
-            tf.add(stage, arcname=top_dir)
-    return hashlib.sha256(archive_path.read_bytes()).hexdigest()
+
+def populate_base_tools(tools_bin: pathlib.Path) -> None:
+    tools_bin.mkdir()
+    for tool in (
+        "sh", "uname", "id", "awk", "tr", "sha256sum", "shasum", "openssl",
+        "dirname", "basename", "mkdir", "rm", "mv", "cp", "ln", "chmod",
+        "mktemp", "readlink", "cat", "tar", "gzip", "rmdir", "gpg",
+    ):
+        resolved = shutil.which(tool)
+        if resolved:
+            (tools_bin / tool).symlink_to(resolved)
+
+    # Fake curl fetches files directly from CLASHFLUX_TEST_REPO_DIR by URL path suffix.
+    make_stub(
+        tools_bin / "curl",
+        """
+url=""
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  -o) out="$2"; shift 2 ;;
+  -w) shift 2 ;;
+  -*) shift ;;
+  *) url="$1"; shift ;;
+  esac
+done
+rel="${url##*/}"
+src="$CLASHFLUX_TEST_REPO_DIR/$rel"
+[ -f "$src" ] || { echo "mock curl 404: $url" >&2; exit 22; }
+cp "$src" "$out"
+""",
+    )
+    make_stub(
+        tools_bin / "sudo",
+        """
+if [ "${1:-}" = "-n" ] && [ "${2:-}" = "true" ]; then
+  exit 0
+fi
+exec "$@"
+""",
+    )
 
 
 def verify_unix_end_to_end(root: pathlib.Path) -> None:
     if os.name == "nt" or platform.system() != "Linux":
         return
 
-    machine = platform.machine().lower()
-    if machine in ("x86_64", "amd64"):
-        arch = "x86_64"
-    elif machine in ("aarch64", "arm64"):
-        arch = "aarch64"
-    else:
-        return
-
     sh_script = root / "install.sh"
     res = run(["sh", str(sh_script), "--help"])
-    assert res.returncode == 0
-    assert "--prefix" in res.stdout and "--uninstall" in res.stdout
+    assert res.returncode == 0 and "--uninstall" in res.stdout
     assert "--format" not in res.stdout and "--portable" not in res.stdout
+
+    pub_asc = (root / "platform/linux/clash-flux-repo.asc").read_bytes()
+    if not shutil.which("gpg"):
+        return
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = pathlib.Path(tmp)
         home = tmp_path / "home"
         home.mkdir()
-        tools_bin = tmp_path / "tools-bin"
-        tools_bin.mkdir()
-        for tool in (
-            "sh", "uname", "id", "awk", "tr", "sha256sum", "shasum", "openssl",
-            "dirname", "basename", "mkdir", "rm", "mv", "cp",
-            "ln", "chmod", "mktemp", "readlink", "cat", "tar",
-            "gzip", "rmdir", "curl",
-        ):
-            resolved = shutil.which(tool)
-            if resolved:
-                (tools_bin / tool).symlink_to(resolved)
-        fake_sys_bin = tmp_path / "sys-bin"
-        fake_sys_bin.mkdir()
-        fake_sys_clash = fake_sys_bin / "clash-flux"
-        fake_sys_clash.write_text("#!/bin/sh\necho 'Clash-Flux system'\n", encoding="utf-8")
-        fake_sys_clash.chmod(0o755)
-        base_env = dict(
-            os.environ,
-            HOME=str(home),
-            XDG_DATA_HOME=str(home / ".local/share"),
-            PATH=str(tools_bin),
+        repo_dir = tmp_path / "pages"
+        repo_dir.mkdir()
+        (repo_dir / "gpg.key").write_bytes(pub_asc)
+
+        # Dearmor public key into binary keyring matching CI output.
+        dearmor = subprocess.run(
+            ["gpg", "--dearmor"],
+            input=pub_asc,
+            capture_output=True,
+            check=True,
         )
+        (repo_dir / "clash-flux.gpg").write_bytes(dearmor.stdout)
 
-        # Reject unsafe prefixes.
-        for bad_prefix in ("/", str(home), "/tmp/../etc/clash"):
-            bad = run(["sh", str(sh_script), "--prefix", bad_prefix, "--uninstall", "--yes"], env=base_env, check=False)
-            assert bad.returncode != 0, f"expected unsafe prefix {bad_prefix} to be rejected"
+        base_tools = tmp_path / "base-tools"
+        populate_base_tools(base_tools)
 
-        archive_1 = tmp_path / f"clash-flux-0.3.139-linux-{arch}.tar.gz"
-        digest_1 = build_synthetic_tar(archive_1, "0.3.139", f"build-linux-{arch}")
-        sums_file = tmp_path / "SHA256SUMS.txt"
-        sums_file.write_text(f"{digest_1}  {archive_1.name}\n", encoding="utf-8")
+        # 1. Tampered GPG key must be rejected before writing any APT sources or keyring.
+        apt_tools = tmp_path / "apt-tools"
+        apt_tools.mkdir()
+        log_file = tmp_path / "commands.log"
+        make_stub(apt_tools / "dpkg", "exit 0")
+        make_stub(apt_tools / "apt-get", 'printf "apt-get %s\\n" "$*" >>"$CLASHFLUX_CMD_LOG"')
 
-        # Reject mismatched SHA-256 without creating prefix.
-        wrong_hash = "0" * 64
-        bad_sha = run(
-            ["sh", str(sh_script), "--archive", str(archive_1), "--sha256", wrong_hash, "--yes"],
-            env=base_env,
-            check=False,
-        )
-        assert bad_sha.returncode != 0
-        assert not (home / ".local/share/Clash-Flux").exists()
+        bad_repo = tmp_path / "bad-pages"
+        bad_repo.mkdir()
+        (bad_repo / "clash-flux.gpg").write_bytes(b"tampered-key")
+        apt_root = tmp_path / "apt-root"
+        apt_root.mkdir()
+        (apt_root / "usr/bin").mkdir(parents=True)
+        make_stub(apt_root / "usr/bin/clash-flux", 'echo "Clash-Flux apt"')
 
-        # 1. Missing from PATH -> emits clear PATH hint without failing.
-        ok_1 = run(
-            ["sh", str(sh_script), "--archive", str(archive_1), "--yes"],
-            env=base_env,
-            check=False,
-        )
-        assert ok_1.returncode == 0, ok_1.stdout + "\n" + ok_1.stderr
-        assert "is not in your PATH" in ok_1.stdout
+        bad_env = {
+            "HOME": str(home),
+            "PATH": f"{apt_tools}:{apt_root / 'usr/bin'}:{base_tools}",
+            "CLASHFLUX_REPO_URL": "https://repo.invalid",
+            "CLASHFLUX_SYSTEM_ROOT": str(apt_root),
+            "CLASHFLUX_TEST_REPO_DIR": str(bad_repo),
+            "CLASHFLUX_CMD_LOG": str(log_file),
+        }
+        bad = run(["sh", str(sh_script), "--yes"], env=bad_env, check=False)
+        assert bad.returncode != 0
+        assert not (apt_root / "etc/apt/sources.list.d/clash-flux.sources").exists()
+        assert not (apt_root / "usr/share/keyrings/clash-flux.gpg").exists()
 
-        install_dir = home / ".local/share/Clash-Flux"
-        installed_bin = install_dir / "clash-flux"
-        assert installed_bin.is_file() and (installed_bin.stat().st_mode & stat.S_IXUSR)
-        assert not list(install_dir.glob("*.deb")) and not list(install_dir.glob("*.rpm"))
-
-        symlink = home / ".local/bin/clash-flux"
-        assert symlink.is_symlink() and pathlib.Path(os.readlink(symlink)) == installed_bin
-        desktop_file = home / ".local/share/applications/clash-flux.desktop"
-        assert desktop_file.is_file() and str(installed_bin) in desktop_file.read_text(encoding="utf-8")
-        icon_file = home / ".local/share/icons/hicolor/256x256/apps/clash-flux.png"
-        assert icon_file.read_bytes() == b"PNGDATA"
-        assert run([str(symlink)], env=base_env).stdout.strip() == "Clash-Flux v0.3.139"
-
-        # Place user database sentinel and verify upgrade + uninstall never touch user data.
-        user_data_dir = home / ".local/share/clash-flux"
-        user_data_dir.mkdir(parents=True)
-        user_db = user_data_dir / "clash-flux.db"
+        # 2. Signed APT setup, install, and uninstall preserving user DB.
+        user_db = home / ".local/share/clash-flux/clash-flux.db"
+        user_db.parent.mkdir(parents=True)
         user_db.write_bytes(b"sqlite-user-profiles")
 
-        archive_2 = tmp_path / f"clash-flux-0.3.140-linux-{arch}.tar.gz"
-        digest_2 = build_synthetic_tar(archive_2, "0.3.140", f"build-linux-{arch}")
-        sums_file.write_text(f"{digest_2}  {archive_2.name}\n", encoding="utf-8")
+        apt_env = dict(bad_env, CLASHFLUX_TEST_REPO_DIR=str(repo_dir))
+        ok_apt = run(["sh", str(sh_script), "--yes"], env=apt_env, check=False)
+        assert ok_apt.returncode == 0, ok_apt.stdout + "\n" + ok_apt.stderr
+        sources_file = apt_root / "etc/apt/sources.list.d/clash-flux.sources"
+        keyring_file = apt_root / "usr/share/keyrings/clash-flux.gpg"
+        assert sources_file.is_file() and keyring_file.is_file()
+        sources_text = sources_file.read_text(encoding="utf-8")
+        assert "URIs: https://repo.invalid/apt" in sources_text
+        assert "Signed-By: /usr/share/keyrings/clash-flux.gpg" in sources_text
+        cmds = log_file.read_text(encoding="utf-8")
+        assert "apt-get update" in cmds and "apt-get install -y clash-flux" in cmds
 
-        # 2. Shadowed by an earlier system binary in PATH -> emits shadowing warning.
-        shadowed_env = dict(base_env, PATH=f"{fake_sys_bin}:{home / '.local/bin'}:{tools_bin}")
-        ok_2 = run(
-            ["sh", str(sh_script), "--archive", str(archive_2), "--yes"],
-            env=shadowed_env,
-            check=False,
-        )
-        assert ok_2.returncode == 0, ok_2.stderr
-        assert "shadowed" in ok_2.stdout and str(fake_sys_clash) in ok_2.stdout
-        assert run([str(symlink)], env=shadowed_env).stdout.strip() == "Clash-Flux v0.3.140"
+        un_apt = run(["sh", str(sh_script), "--uninstall", "--yes"], env=apt_env, check=False)
+        assert un_apt.returncode == 0, un_apt.stderr
+        assert "apt-get remove -y clash-flux" in log_file.read_text(encoding="utf-8")
+        assert not sources_file.exists() and not keyring_file.exists()
         assert user_db.read_bytes() == b"sqlite-user-profiles"
 
-        # 3. User bin precedes system bin in PATH -> no missing-PATH hint and no shadow warning.
-        clean_env = dict(base_env, PATH=f"{home / '.local/bin'}:{fake_sys_bin}:{tools_bin}")
-        ok_3 = run(
-            ["sh", str(sh_script), "--archive", str(archive_2), "--yes"],
-            env=clean_env,
-            check=False,
-        )
-        assert ok_3.returncode == 0, ok_3.stderr
-        assert "is not in your PATH" not in ok_3.stdout
-        assert "shadowed" not in ok_3.stdout
+        # 3. Signed DNF/RPM setup + leftover user-local binary shadowing detection.
+        rpm_tools = tmp_path / "rpm-tools"
+        rpm_tools.mkdir()
+        rpm_log = tmp_path / "rpm.log"
+        make_stub(rpm_tools / "rpm", 'printf "rpm %s\\n" "$*" >>"$CLASHFLUX_CMD_LOG"')
+        make_stub(rpm_tools / "dnf", 'printf "dnf %s\\n" "$*" >>"$CLASHFLUX_CMD_LOG"')
 
-        un = run(
-            ["sh", str(sh_script), "--uninstall", "--yes"],
-            env=clean_env,
-            check=False,
-        )
-        assert un.returncode == 0, un.stderr
-        assert not install_dir.exists()
-        assert not symlink.exists()
-        assert not desktop_file.exists()
+        rpm_root = tmp_path / "rpm-root"
+        (rpm_root / "usr/bin").mkdir(parents=True)
+        make_stub(rpm_root / "usr/bin/clash-flux", 'echo "Clash-Flux rpm"')
+
+        shadow_dir = home / ".local/bin"
+        shadow_dir.mkdir(parents=True)
+        shadow_bin = shadow_dir / "clash-flux"
+        make_stub(shadow_bin, 'echo "old local portable"')
+
+        rpm_env = {
+            "HOME": str(home),
+            "PATH": f"{shadow_dir}:{rpm_tools}:{rpm_root / 'usr/bin'}:{base_tools}",
+            "CLASHFLUX_REPO_URL": "https://repo.invalid",
+            "CLASHFLUX_SYSTEM_ROOT": str(rpm_root),
+            "CLASHFLUX_TEST_REPO_DIR": str(repo_dir),
+            "CLASHFLUX_CMD_LOG": str(rpm_log),
+        }
+        ok_rpm = run(["sh", str(sh_script), "--yes"], env=rpm_env, check=False)
+        assert ok_rpm.returncode == 0, ok_rpm.stdout + "\n" + ok_rpm.stderr
+        repo_file = rpm_root / "etc/yum.repos.d/clash-flux.repo"
+        assert repo_file.is_file()
+        repo_text = repo_file.read_text(encoding="utf-8")
+        assert "baseurl=https://repo.invalid/rpm/$basearch" in repo_text
+        assert "gpgcheck=1" in repo_text and "repo_gpgcheck=1" in repo_text
+        rpm_cmds = rpm_log.read_text(encoding="utf-8")
+        assert "rpm --import " in rpm_cmds and "dnf -y --refresh install clash-flux" in rpm_cmds
+        assert "shadowed" in ok_rpm.stdout and str(shadow_bin) in ok_rpm.stdout
+
+        un_rpm = run(["sh", str(sh_script), "--uninstall", "--yes"], env=rpm_env, check=False)
+        assert un_rpm.returncode == 0, un_rpm.stderr
+        assert not repo_file.exists()
         assert user_db.read_bytes() == b"sqlite-user-profiles"
 
 

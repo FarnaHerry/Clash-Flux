@@ -4,17 +4,17 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.140 发布说明](docs/releases/v0.3.140.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.141 发布说明](docs/releases/v0.3.141.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
 
 ## 快速安装
 
-- **Linux / macOS**：自动校验 `SHA-256`；Linux 全程免 `sudo` 解压 `.tar.gz` 到 `~/.local/share/Clash-Flux`、写入 `~/.local/bin/clash-flux` 与桌面入口并检查是否存在同名系统路径遮蔽（如需系统包管理器管理，可在 Releases 手动下载 `.deb` / `.rpm`）；macOS 自动安装 `.app` 到 `/Applications`：
+- **Linux / macOS**：Linux 自动导入已签名 GPG 公钥并配置 GitHub Pages [APT/RPM 软件源](https://farnaherry.github.io/Clash-Flux/)，安装至 `/opt/clash-flux`（此后可通过 `sudo apt upgrade` / `sudo dnf upgrade` 与 root 服务静默自升级同步更新；Arch 等其他发行版可从 Releases 下载 `.tar.gz` 解压至 `/opt/clash-flux`）；macOS 自动安装 `.app` 到 `/Applications`（自动校验 `SHA-256`）：
 
 ```bash
 curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh
 ```
 
-常用参数：`sh -s -- --version 0.3.140`、`sh -s -- --prefix "$HOME/.local/share/Clash-Flux"`、`sh -s -- --uninstall`。
+常用参数：`sh -s -- --version 0.3.141`、`sh -s -- --uninstall`。
 
 - **Windows (PowerShell)**：自动校验 `SHA-256` 并默认启动官方 `.exe` 安装向导（保留开始菜单、卸载项与应用内升级路径）：
 
