@@ -904,7 +904,7 @@ jobs:
             elif [[ "$name" == build-linux-* ]]; then
               arch="${name#build-linux-}"
               [[ "$arch" == "arm64" ]] && arch="aarch64"
-              tar -C dist -czf "release/clash-flux-${release_version}-linux-${arch}.tar.gz" "$name"
+              tar -C dist --exclude='*.deb' --exclude='*.rpm' -czf "release/clash-flux-${release_version}-linux-${arch}.tar.gz" "$name"
               shopt -s nullglob
               for extension in deb rpm; do
                 packages=("$artifact"/*."$extension")

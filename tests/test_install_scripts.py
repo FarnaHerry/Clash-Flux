@@ -47,6 +47,9 @@ def verify_static_contracts(root: pathlib.Path) -> None:
     # CI publishes both scripts and SHA256SUMS.txt alongside release binaries.
     for token in ("install.sh", "install.ps1", "SHA256SUMS.txt"):
         assert token in workflow, f"workflow must package {token}"
+    assert "--exclude='*.deb'" in workflow and "--exclude='*.rpm'" in workflow, (
+        "workflow must exclude .deb and .rpm packages from the Linux .tar.gz release archive"
+    )
 
     # Verify PowerShell installer enforces SHA-256, Zip Slip protection, and Burn flags.
     for token in (
