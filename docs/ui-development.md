@@ -397,7 +397,7 @@ cmake --build build --target clash-flux
 ## 启动设置快照
 
 `persistence::readStartupSettings` 同步读取必须先于设置 hydrate 确定的
-`ui.theme_mode`、`ui.theme_color`、`ui.language`、`tray.enabled` 与 `tray.start_minimized`。
+`ui.theme_mode`、`ui.theme_color`、`ui.theme_colors`、`ui.language`、`tray.enabled` 与 `tray.start_minimized`。
 它们控制首窗外观、初始语言和托盘启动策略，避免加载设置前短暂呈现错误状态。
 快照只读取一次，重组不重复磁盘 IO；SettingsModel 就绪后以模型值接管运行期行为。
 桌面始终以无初始窗口模式初始化，在 Runtime 进入 Running 后按启动快照决定是否创建主窗口。
@@ -418,9 +418,9 @@ Lib-SQLite 的同步只读 API 已合入 `FarnaHerry/Lib-SQLite` 的 `farna/main
 「模式」使用三个 48pt 高的横向矩形卡片（自动/深色/浅色），图标在左、文字在右；沿可用宽度共用一行，选中使用与订阅卡共用的选中描边和淡染容器底色。
 「主题色」使用紧凑方形色块按钮（52pt 见方，Compact 48pt；含 4pt 内边距以便外框与色块分离），多色主题以对应多色径向渐变填充、单色以深浅自适应实色填充，选中时在色块居中显示高对比度对钩并使用与订阅卡共用的选中描边；不显示颜色名称或 HEX，仅保留无障碍名称。
 添加色块复用相同方形尺寸与圆角，居中显示添加图标；Flow 自动换行，右键编辑/删除、无障碍名称和即时写透沿用原入口。几何与表面集中在 `theme_color_card.h`。
-间距、圆角、图标尺寸、选中描边与切换时长取 ThemeSpec，页面特有尺寸集中为命名常量。`ui.theme_color` 使用稳定的 gemini/blue/purple/green/orange/pink/teal ID，
-自定义颜色支持 1–4 个规范化的 `#RRGGBB` 以逗号拼接（单色 `#RRGGBB`，多色 `#RRGGBB,#RRGGBB,...`；主色非第 0 位时附加 `@<index>` 后缀，例如 `#E5A93C,#34A853,#4285F4,#EA4335@2`）作为 ID，`ui.custom_theme_colors` 按换行保存完整列表；
-输入校验、去重、多色规范化、HSB/HEX/OKLCH 转换与对比度计算集中在 `theme_colors.h`，缺省或未知值回落到 `gemini`（内置四色预设，源色与自定义多色共用 OKLCH 感知调色板与“主色锚定”中心底色算法，单色 `primary` / Switch 跟随第 2 位蓝 `#4285F4`）。所有预设与自定义单色/多色主题在深浅模式下统一使用参考图灰表面色板。
+间距、圆角、图标尺寸、选中描边与切换时长取 ThemeSpec，页面特有尺寸集中为命名常量。主题配色统一使用正整数 ID 区分：`1`–`7` 对应内置预设（`1` 为 Gemini，`2`–`7` 依次为蓝色、紫色、绿色、橙色、粉色、青色），新增配色从当前最大 ID 递增分配，允许相同色值以不同 ID 共存。
+`ui.theme_color` 保存当前选中配色的正整数 ID（默认 `1`），`ui.theme_colors` 按换行保存 `id=spec` 列表（未配置或为空时回退内置 `1`–`7`；删空后也会恢复内置 `1`–`7`）；每个颜色规格 `spec` 支持 1–4 个规范化的 `#RRGGBB` 以逗号拼接（单色 `#RRGGBB`，多色 `#RRGGBB,#RRGGBB,...`；主色非第 0 位时附加 `@<index>` 后缀，例如 `#E5A93C,#34A853,#4285F4,#EA4335@2`）。编辑任意配色时按 ID 原地更新对应条目的颜色规格，ID 与展示位置保持不变。
+输入校验、解析与序列化、多色规范化、HSB/HEX/OKLCH 转换与对比度计算集中在 `theme_colors.h`，缺省或未知 ID 回落到列表首项或 ID `1`（Gemini，内置四色预设，源色与自定义多色共用 OKLCH 感知调色板与“主色锚定”中心底色算法，单色 `primary` / Switch 跟随第 2 位蓝 `#4285F4`）。所有预设与自定义单色/多色主题在深浅模式下统一使用参考图灰表面色板。
 主题色卡片用 Flow 自动换行，添加/编辑支持 1–4 色混合，共用色点管理行、HSB（色相/饱和度/亮度）滑块、HEX 输入与实时混合预览；存在 ≥ 2 个色点时支持通过「设为主色」指定任一色点驱动 Switch 及单色控件（并在对应色块显示圆点标记，删除主色点自动回退首位，右键编辑 `gemini` 时保留主色索引）；保存后即时选中。
 颜色值使用全局 MD3 Outlined 输入框，继承统一圆角、悬浮标签、焦点与校验样式，不局部覆盖 TextFieldStyle。
 Compact 的添加及右键编辑入口通过 NavigationStack 进入二级页面，覆盖底部导航，顶部返回/系统返回/手势共用 Pop，

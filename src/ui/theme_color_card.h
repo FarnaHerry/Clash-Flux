@@ -160,13 +160,13 @@ public:
 
 // 顶部实时界面预览板：按宽屏 16:9 / 窄屏 9:16 比例微缩呈现首页布局，随下方设置同步重绘。
 inline huxerui::View ThemePreviewSurface(const huxerui::ThemeSpec& theme,
-    const std::string& accentId, bool compact = false) {
+    const std::optional<FluxAccent>& accent = std::nullopt, bool compact = false) {
     auto candidate = theme;
     const bool dark = IsDarkTheme(theme);
-    const FluxGradientStyle candidateGradient = accentId.empty()
-        ? FluxGradientStyle{} : ResolveFluxGradientStyle(accentId);
+    const FluxGradientStyle candidateGradient = accent
+        ? ResolveFluxGradientStyle(*accent) : FluxGradientStyle{};
     const bool multiColor = candidateGradient.enabled;
-    if (!accentId.empty()) candidate.colors = dark ? FluxDarkColors(accentId) : FluxLightColors(accentId);
+    if (accent) candidate.colors = dark ? FluxDarkColors(*accent) : FluxLightColors(*accent);
     const auto islands = ResolveIslandTheme(candidate);
     const std::optional<FluxMultiColorPalette> palette = multiColor
         ? std::optional{ResolveGradientPalette(candidateGradient)} : std::nullopt;
@@ -515,9 +515,9 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
     huxerui::Color fill, huxerui::Color foreground, std::optional<huxerui::ImageResource> symbol,
     bool selected, std::string label, std::function<void()> onClick,
     float edge = kThemeColorCardEdge,
-    std::string accentId = {}) {
+    std::optional<FluxAccent> accent = std::nullopt) {
     huxerui::View content;
-    if (accentId.empty()) {
+    if (!accent) {
         content = huxerui::Column {
           symbol ? huxerui::Image(*symbol).Tint(theme.colors.on_surface_variant)
               .With(huxerui::Frame{.width = kThemeModeIconSize, .height = kThemeModeIconSize})
@@ -526,7 +526,7 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
             huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
     } else {
         const bool dark = IsDarkTheme(theme);
-        const FluxGradientStyle candidateGradient = ResolveFluxGradientStyle(accentId);
+        const FluxGradientStyle candidateGradient = ResolveFluxGradientStyle(*accent);
         const bool multiColor = candidateGradient.enabled;
         huxerui::VisualFill swatchFill{fill};
         huxerui::Color checkTint = foreground;

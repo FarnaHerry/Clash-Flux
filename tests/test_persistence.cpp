@@ -802,7 +802,8 @@ Task<void> RunTest(TaskScope tasks) {
     using clashflux::ui::SavedProxyView;
     const std::filesystem::path path = TempPath();
     const auto missingSettings = persistence::readStartupSettings(path);
-    Check(missingSettings.themeMode == 1 && missingSettings.themeColor == "gemini" &&
+    Check(missingSettings.themeMode == 1 && missingSettings.themeColor == 1 &&
+              missingSettings.themeColors.empty() &&
               missingSettings.language == "system" &&
               missingSettings.trayEnabled &&
               !missingSettings.startMinimized &&
@@ -836,7 +837,8 @@ Task<void> RunTest(TaskScope tasks) {
                   "unset or unknown proxy layouts default to grouped without writing settings");
             const auto defaultStartupSettings = persistence::readStartupSettings(path);
             Check(defaultStartupSettings.themeMode == 1 &&
-                      defaultStartupSettings.themeColor == "gemini" &&
+                      defaultStartupSettings.themeColor == 1 &&
+                      defaultStartupSettings.themeColors.empty() &&
                       defaultStartupSettings.language == "system" &&
                       defaultStartupSettings.trayEnabled &&
                       !defaultStartupSettings.startMinimized &&
@@ -844,11 +846,12 @@ Task<void> RunTest(TaskScope tasks) {
                   "startup settings must apply defaults for keys absent from an existing database");
 
             store.setSetting("ui.theme_mode", "2");
-            store.setSetting("ui.theme_color", "#336699");
+            store.setSetting("ui.theme_color", "8");
             store.setSetting("ui.language", "zh");
             store.setSetting("tray.enabled", "false");
             store.setSetting("tray.start_minimized", "true");
-            store.setSetting("ui.custom_theme_colors", "#336699\n#AA44CC");
+            store.setSetting("ui.theme_colors",
+                             "1=#E5A93C,#34A853,#4285F4,#EA4335@2\n8=#336699\n9=#AA44CC");
             store.setSetting(kProxyViewSetting, SavedProxyView(false));
             store.setSetting("core.tun_enabled", "true");
             store.setSetting("app.log_level", "off");
@@ -861,12 +864,14 @@ Task<void> RunTest(TaskScope tasks) {
             Check(co_await store.flushSettings(), "flush failed");
             Check(!store.hasPendingSettings(), "flush must clear dirty keys");
             const auto startupSettings = persistence::readStartupSettings(path);
-            Check(startupSettings.themeMode == 2 && startupSettings.themeColor == "#336699" &&
+            Check(startupSettings.themeMode == 2 && startupSettings.themeColor == 8 &&
+                      startupSettings.themeColors ==
+                          "1=#E5A93C,#34A853,#4285F4,#EA4335@2\n8=#336699\n9=#AA44CC" &&
                       startupSettings.language == "zh" &&
                       !startupSettings.trayEnabled &&
                       !startupSettings.startMinimized &&
                       startupSettings.error.empty(),
-                  "startup snapshot must suppress start-minimized when tray is disabled");
+                  "startup snapshot must read numeric theme ID and theme color list");
             Check(store.setting("tray.start_minimized", "") == "true",
                   "disabling tray must preserve the saved start-minimized preference");
             store.setSetting("tray.enabled", "true");
@@ -886,7 +891,7 @@ Task<void> RunTest(TaskScope tasks) {
                 const auto savedSettings = persistence::readStartupSettings(path);
                 Check(savedSettings.error.empty() && savedSettings.themeMode == std::stoi(mode),
                       "startup theme must preserve system, dark and light modes");
-                Check(savedSettings.themeColor == "#336699", "appearance changes must retain the saved accent");
+                Check(savedSettings.themeColor == 8, "appearance changes must retain the saved accent ID");
                 Check(!savedSettings.trayEnabled, "appearance changes must retain the disabled tray setting");
             }
             store.setSetting("tray.enabled", "true");
@@ -959,13 +964,14 @@ Task<void> RunTest(TaskScope tasks) {
             Check(co_await store.open(path), "reopen failed");
             Check(store.setting("ui.theme_mode", "") == "2",
                   "setting did not persist through the ORM database");
-            Check(store.setting("ui.theme_color", "") == "#336699",
-                  "theme color must persist through reopen");
+            Check(store.setting("ui.theme_color", "") == "8",
+                  "theme color ID must persist through reopen");
             Check(store.setting(kProxyViewSetting) == SavedProxyView(false) &&
                       !ParseProxyGroupedView(store.setting(kProxyViewSetting)),
                   "swipe proxy layout must persist through reopen");
-            Check(store.setting("ui.custom_theme_colors", "") == "#336699\n#AA44CC",
-                  "all custom color cards must survive reopen");
+            Check(store.setting("ui.theme_colors", "") ==
+                      "1=#E5A93C,#34A853,#4285F4,#EA4335@2\n8=#336699\n9=#AA44CC",
+                  "all theme color entries must survive reopen");
             Check(store.setting("core.tun_enabled", "") == "true",
                   "second setting did not persist");
             Check(store.setting("app.log_level") == "off", "disabled log recording must survive reopening");
@@ -1051,7 +1057,7 @@ Task<void> RunTest(TaskScope tasks) {
                 Check(static_cast<bool>(closed), "legacy: close failed");
             }
             const auto legacySettings = persistence::readStartupSettings(legacy);
-            Check(legacySettings.themeMode == 2 && legacySettings.themeColor == "green" &&
+            Check(legacySettings.themeMode == 2 && legacySettings.themeColor == 1 &&
                       legacySettings.language == "en" &&
                       !legacySettings.trayEnabled &&
                       !legacySettings.startMinimized &&

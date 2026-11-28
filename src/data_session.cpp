@@ -120,14 +120,26 @@ StartupSettings readStartupSettings(const std::filesystem::path& file) {
     if (!hasSettings) return settings;
     auto read = sqlite::Database::QueryReadOnlySync(huxerui::File{file.string()},
         "SELECT key, value FROM settings WHERE key IN "
-        "('ui.theme_mode', 'ui.theme_color', 'ui.language', "
+        "('ui.theme_mode', 'ui.theme_color', 'ui.theme_colors', 'ui.language', "
         "'tray.enabled', 'tray.start_minimized')",
         [&settings](const sqlite::RowView& row) -> sqlite::Result<void> {
             auto key = row.Get<std::string>("key");
             if (!key) return key.Error();
             auto value = row.Get<std::string>("value");
             if (!value) return value.Error();
-            if (*key == "ui.theme_color") settings.themeColor = *value;
+            if (*key == "ui.theme_color") {
+                std::string_view sv = *value;
+                const auto start = sv.find_first_not_of(" \t\r\n");
+                if (start != std::string_view::npos) {
+                    sv = sv.substr(start, sv.find_last_not_of(" \t\r\n") - start + 1);
+                    int parsed = 0;
+                    const auto [end, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), parsed);
+                    if (ec == std::errc{} && end == sv.data() + sv.size() && parsed >= 1) {
+                        settings.themeColor = parsed;
+                    }
+                }
+            }
+            else if (*key == "ui.theme_colors") settings.themeColors = *value;
             else if (*key == "ui.language") settings.language = *value;
             else if (*key == "tray.enabled") settings.trayEnabled = *value == "true";
             else if (*key == "tray.start_minimized") settings.startMinimized = *value == "true";

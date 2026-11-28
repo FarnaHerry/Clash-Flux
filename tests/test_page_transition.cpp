@@ -2636,7 +2636,7 @@ struct LoadingSkeletonFixture {
     huxerui::State<bool> active{true};
     huxerui::State<bool> reduced{false};
     huxerui::State<bool> dark{false};
-    huxerui::State<std::string> accent{"gemini"};
+    huxerui::State<int> accent{clashflux::ui::kDefaultThemeColorId};
     huxerui::State<int> kind{0};
     int compositions = 0;
 };
@@ -2691,11 +2691,12 @@ void testSkeletonShimmer() {
         spec.colors = dark ? clashflux::ui::FluxDarkColors() : clashflux::ui::FluxLightColors();
         const auto base = clashflux::ui::ResolveIslandTheme(spec).raised;
         const auto gem = clashflux::ui::ResolveSkeletonShimmerHighlights(
-            spec, base, clashflux::ui::ResolveFluxGradientStyle("gemini"));
+            spec, base, clashflux::ui::ResolveFluxGradientStyle(1));
         const auto custom = clashflux::ui::ResolveSkeletonShimmerHighlights(
-            spec, base, clashflux::ui::ResolveFluxGradientStyle("#FF3366,#33AA55"));
+            spec, base, clashflux::ui::ResolveFluxGradientStyle(
+                            clashflux::ui::ResolveFluxAccentFromSpec("#FF3366,#33AA55", 8)));
         const auto mono = clashflux::ui::ResolveSkeletonShimmerHighlights(
-            spec, base, clashflux::ui::ResolveFluxGradientStyle("blue"));
+            spec, base, clashflux::ui::ResolveFluxGradientStyle(2));
         check(gem.size() == 4U && gem[0] != gem[1] && gem[1] != gem[2] && gem[2] != gem[3] &&
                   custom.size() == 2U && custom[0] != custom[1] &&
                   mono.size() == 1U && mono[0] != base,
@@ -7149,14 +7150,15 @@ void testFluxProgressCircleAccentColors() {
     struct Fixture {
         huxerui::State<bool> dark{false};
         huxerui::State<bool> reduced{false};
-        huxerui::State<std::string> accent{std::string{"gemini"}};
+        huxerui::State<int> accentId{clashflux::ui::kDefaultThemeColorId};
+        huxerui::State<std::string> savedColors{std::string{}};
     };
     std::shared_ptr<Fixture> fixture;
     const huxerui::Application app{[]() -> huxerui::View {
         return huxerui::Scope([] {
             const auto state = huxerui::UseService<Fixture>();
             const bool dark = state->dark.Get();
-            const auto accent = state->accent.Get();
+            const auto accent = ResolveFluxAccent(state->accentId.Get(), state->savedColors.Get());
             auto spec = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
             spec.colors = dark ? FluxDarkColors(accent) : FluxLightColors(accent);
             spec.motion.reduced_motion = state->reduced.Get();
@@ -7199,8 +7201,9 @@ void testFluxProgressCircleAccentColors() {
     ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
 
     // 1. Monochrome accents use primary color directly without radial gradient overlay.
-    for (const auto& [accent, dark] : std::vector<std::pair<std::string, bool>>{{"purple", true}, {"green", false}}) {
-        fixture->accent = accent;
+    for (const auto& [accentId, dark] : std::vector<std::pair<int, bool>>{{3, true}, {4, false}}) {
+        fixture->accentId = accentId;
+        fixture->savedColors = std::string{};
         fixture->dark = dark;
         fixture->reduced = false;
         ui.Pump();
@@ -7210,7 +7213,7 @@ void testFluxProgressCircleAccentColors() {
               std::abs(progress.bounds.width - 20.0F) < 0.5F &&
               std::abs(progress.bounds.height - 20.0F) < 0.5F,
               "monochrome FluxProgressCircle keeps exact bounds and ProgressIndicator semantics");
-        const auto specColors = dark ? FluxDarkColors(accent) : FluxLightColors(accent);
+        const auto specColors = dark ? FluxDarkColors(accentId) : FluxLightColors(accentId);
         const auto snapshot = ui.CaptureSnapshot().ToString();
         check(containsColor(snapshot, specColors.primary) &&
               countOccurrences(snapshot, R"(kind="radial")") == 0U,
@@ -7219,7 +7222,8 @@ void testFluxProgressCircleAccentColors() {
 
     // 2. Gemini 4-color preset renders all 4 stops and respects active/background/reduced motion.
     for (bool dark : {false, true}) {
-        fixture->accent = std::string{"gemini"};
+        fixture->accentId = 1;
+        fixture->savedColors = std::string{};
         fixture->dark = dark;
         fixture->reduced = false;
         ui.Pump();
@@ -7256,11 +7260,13 @@ void testFluxProgressCircleAccentColors() {
     }
 
     // 3. Custom multi-color mix renders radial gradient strokes matching its normalized stop count.
-    fixture->accent = std::string{"#FF4D4F,#22C55E,#3B82F6"};
+    fixture->savedColors = std::string{"8=#FF4D4F,#22C55E,#3B82F6"};
+    fixture->accentId = 8;
     fixture->dark = false;
     fixture->reduced = false;
     ui.Pump();
-    const auto customPalette = ResolveGradientPalette(ResolveFluxGradientStyle("#FF4D4F,#22C55E,#3B82F6"));
+    const auto customPalette = ResolveGradientPalette(
+        ResolveFluxGradientStyle(ResolveFluxAccentFromSpec("#FF4D4F,#22C55E,#3B82F6", 8)));
     check(countOccurrences(ui.CaptureSnapshot().ToString(), R"(kind="radial")") == customPalette.lightStops.size(),
           "custom multi-color accent spinner renders radial gradients for every configured stop");
 }
@@ -8235,17 +8241,22 @@ void testVpnPublication() {
     auto mode = huxerui::UseState(0);
     auto selected = huxerui::UseState(0);
     auto added = huxerui::UseState(false);
-    const std::array<const char*, 4> accentIds{"gemini", "purple", "#336699", "#FF3366,#33AA55"};
-    const auto selectedAccent = ResolveFluxAccent(accentIds[static_cast<std::size_t>(selected.Get())]);
+    const std::array<FluxAccent, 4> accents{
+        ResolveFluxAccent(1),
+        ResolveFluxAccent(3),
+        ResolveFluxAccentFromSpec("#336699", 8),
+        ResolveFluxAccentFromSpec("#FF3366,#33AA55", 9),
+    };
+    const auto& selectedAccent = accents[static_cast<std::size_t>(selected.Get())];
     std::vector<huxerui::View> cards;
     for (int index = 0; index < 4; ++index) {
-        const auto accent = ResolveFluxAccent(accentIds[static_cast<std::size_t>(index)]);
+        const auto& accent = accents[static_cast<std::size_t>(index)];
         const bool active = selected.Get() == index;
         cards.push_back(ThemeColorCardSurface(theme,
             IsDarkTheme(theme) ? accent.dark : accent.light,
             IsDarkTheme(theme) ? accent.onDark : accent.onLight,
             active ? std::optional<huxerui::ImageResource>{{"app", "images/check"}} : std::nullopt,
-            active, accent.name, [selected, index] { selected = index; }, edge, accent.id)
+            active, accent.name, [selected, index] { selected = index; }, edge, accent)
             .Key("test-color-" + std::to_string(index)));
     }
     cards.push_back(ThemeColorCardSurface(theme, theme.colors.surface_container, theme.colors.on_surface,
@@ -8259,7 +8270,7 @@ void testVpnPublication() {
         modes.push_back(ThemeModeCardSurface(theme, icons[index], mode.Get() == index,
             labels[index], [mode, index] { mode = index; }, modeWidth).Key("test-mode-" + std::to_string(index)));
     huxerui::View content = huxerui::Column {
-      ThemePreviewSurface(theme, selectedAccent.id, compact),
+      ThemePreviewSurface(theme, selectedAccent, compact),
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing)),
       huxerui::Flow(std::move(cards)).With(huxerui::Spacing(clashflux::ui::kSectionCardSpacing)),
       huxerui::Text(added.Get() ? "color-added" : "color-idle"),
@@ -8495,16 +8506,17 @@ void testCustomThemeColors() {
     check(NormalizeThemeColor("  aA44cC ") == "#AA44CC", "normalize custom color input");
     for (const auto invalid : {"", "#123", "#12345678", "#GG1234", "#12 3456"})
         check(!NormalizeThemeColor(invalid), "reject incomplete or invalid custom colors");
-    const auto saved = ReadCustomThemeColors("#336699\ninvalid\n336699\n#aa44cc");
-    check(saved == std::vector<std::string>{"#336699", "#AA44CC"}, "custom colors normalize and deduplicate");
-    check(ReadCustomThemeColors(SaveCustomThemeColors(saved)) == saved, "custom colors round trip");
-    check(ReplaceCustomThemeColor(saved, "#336699", "#AA44CC") ==
-              std::vector<std::string>{"#AA44CC"},
-          "editing a custom color replaces its entry and deduplicates collisions");
-    const auto savedMix = ReadCustomThemeColors(
-        "#ff3366,#33aa55\n#112233,#445566,#778899,#aabbcc\ninvalid,#112233\n#11,#22,#33,#44,#55");
-    check(savedMix == std::vector<std::string>{"#FF3366,#33AA55", "#112233,#445566,#778899,#AABBCC"},
-          "multi-color theme specs normalize up to 4 stops and reject invalid or oversized lists");
+    check(ParseThemeColorId("  8 ") == 8 && ParseThemeColorId("0") == kDefaultThemeColorId &&
+              ParseThemeColorId("-2") == kDefaultThemeColorId &&
+              ParseThemeColorId("gemini") == kDefaultThemeColorId,
+          "theme color ID parsing accepts strictly positive decimal integers and falls back to 1");
+    const auto defaults = DefaultThemeColorEntries();
+    check(defaults.size() == 7U && defaults.front().id == 1 &&
+              defaults.front().spec == "#E5A93C,#34A853,#4285F4,#EA4335@2" &&
+              defaults.back().id == 7 &&
+              ReadThemeColors("") == defaults &&
+              ReadThemeColors("invalid\n0=#112233\nabc=#445566") == defaults,
+          "default theme entries start at ID 1 for Gemini through 7 and fall back on empty/invalid saved data");
     check(NormalizeThemeColorSpec("#112233,#445566,#778899,#aabbcc,#ddeeff") == std::nullopt &&
               ParseThemeColorStops("#112233,").empty() &&
               !ParseThemeColorSpec("#112233@1") &&
@@ -8517,21 +8529,11 @@ void testCustomThemeColors() {
                   "#E5A93C,#34A853,#4285F4,#EA4335@2",
           "theme spec validates stop counts, primary indices, and normalizes optional @index suffixes");
     {
-        const auto savedPrimary = ReadCustomThemeColors(
-            "#ff3366,#33aa55@1\n#ff3366,#33aa55@0\n#112233@1");
-        check(savedPrimary == std::vector<std::string>{"#FF3366,#33AA55@1", "#FF3366,#33AA55"},
-              "custom theme persistence retains valid non-zero primary stop suffixes and strips @0");
-        check(ReadCustomThemeColors(SaveCustomThemeColors(savedPrimary)) == savedPrimary,
-              "multi-color primary specs round trip cleanly");
-        check(ReplaceCustomThemeColor(savedPrimary, "#FF3366,#33AA55@1", "#E5A93C,#34A853,#4285F4@2") ==
-                  std::vector<std::string>{"#E5A93C,#34A853,#4285F4@2", "#FF3366,#33AA55"},
-              "replacing a custom multi-color theme preserves updated @index suffix");
-    }
-    {
-        const auto gemini = ResolveFluxAccent("gemini");
-        const auto customGemini = ResolveFluxAccent("#E5A93C,#34A853,#4285F4,#EA4335@2");
-        const auto customFirstPrimary = ResolveFluxAccent("#E5A93C,#34A853,#4285F4,#EA4335@0");
-        check(gemini.primaryIndex == 2U && customGemini.primaryIndex == 2U &&
+        const auto gemini = ResolveFluxAccent(1);
+        const auto customGemini = ResolveFluxAccentFromSpec("#E5A93C,#34A853,#4285F4,#EA4335@2", 8);
+        const auto customFirstPrimary = ResolveFluxAccentFromSpec("#E5A93C,#34A853,#4285F4,#EA4335@0", 9);
+        check(gemini.id == 1 && gemini.localizedName && gemini.primaryIndex == 2U &&
+                  customGemini.id == 8 && !customGemini.localizedName && customGemini.primaryIndex == 2U &&
                   gemini.light == customGemini.light && gemini.dark == customGemini.dark &&
                   gemini.onLight == customGemini.onLight && gemini.onDark == customGemini.onDark &&
                   gemini.lightContainer == customGemini.lightContainer &&
@@ -8548,7 +8550,7 @@ void testCustomThemeColors() {
                                 "#E5A93C,#34A853,#4285F4,#EA4335@2",
                                 "#000000,#FFFFFF,#FFFF00@1",
                                 "#FF3366,#33AA55@1"}) {
-            const auto accent = ResolveFluxAccent(spec);
+            const auto accent = ResolveFluxAccentFromSpec(spec, 8);
             const auto& pal = *accent.multiColor;
             for (const auto& [fg, bg] : std::vector<std::pair<huxerui::Color, huxerui::Color>>{
                      {accent.onLight, accent.light},
@@ -8571,20 +8573,49 @@ void testCustomThemeColors() {
                   removedPrimary.primaryIndex == 0U,
               "removing the active primary stop resets primaryIndex to the first stop");
     }
-    check(ReplaceCustomThemeColor(savedMix, "#FF3366,#33AA55", "#3366FF,#34A853,#EA4335") ==
-              std::vector<std::string>{"#3366FF,#34A853,#EA4335", "#112233,#445566,#778899,#AABBCC"},
-          "editing a multi-color theme replaces its entry while preserving order");
-    check(RemoveCustomThemeColor(savedMix, "#FF3366,#33AA55") ==
-              std::vector<std::string>{"#112233,#445566,#778899,#AABBCC"},
-          "deleting a multi-color theme removes only the requested swatch");
-    const auto hiddenPresets = ReadHiddenThemeColors("blue\nunknown\nblue\norange");
-    check(hiddenPresets == std::vector<std::string>{"blue", "orange"},
-          "hidden preset colors accept only known IDs and deduplicate them");
-    check(HidePresetThemeColor(hiddenPresets, "teal") ==
-              std::vector<std::string>{"blue", "orange", "teal"},
-          "hiding a preset preserves existing hidden colors and appends its ID");
-    check(SaveHiddenThemeColors(hiddenPresets) == "blue\norange",
-          "hidden preset colors round trip using newline-separated stable IDs");
+    {
+        // Adding assigns incrementing numeric IDs and allows identical color specs under distinct IDs.
+        auto [afterAdd1, id1] = AddThemeColorEntry(defaults, "#336699");
+        auto [afterAdd2, id2] = AddThemeColorEntry(afterAdd1, "#336699");
+        auto [afterAdd3, id3] = AddThemeColorEntry(afterAdd2, "#ff3366,#33aa55@1");
+        check(id1 == 8 && id2 == 9 && id3 == 10 && afterAdd3.size() == 10U &&
+                  afterAdd3[7].spec == "#336699" && afterAdd3[8].spec == "#336699" &&
+                  afterAdd3[9].spec == "#FF3366,#33AA55@1",
+              "adding custom theme colors increments IDs from 8 without deduplicating identical colors");
+
+        // Editing ID 1 (Gemini) or ID 3 (purple) updates in-place without changing ID or slot position.
+        auto edited = UpdateThemeColorEntry(afterAdd3, 1, "#e5a93c,#34a853,#4285f4,#ea4335@0");
+        edited = UpdateThemeColorEntry(std::move(edited), 3, "#123456");
+        edited = UpdateThemeColorEntry(std::move(edited), 3, "#654321,#33aa55@1");
+        const std::string savedText = SaveThemeColors(edited);
+        const auto reloaded = ReadThemeColors(savedText);
+        check(reloaded == edited &&
+                  reloaded[0] == ThemeColorEntry{1, "#E5A93C,#34A853,#4285F4,#EA4335"} &&
+                  reloaded[2] == ThemeColorEntry{3, "#654321,#33AA55@1"} &&
+                  reloaded[1] == ThemeColorEntry{2, "#245CB0"},
+              "editing a preset or custom color preserves its ID and exact slot position across save/reload");
+
+        const auto editedGeminiAccent = ResolveFluxAccent(1, savedText);
+        const auto untouchedBlueAccent = ResolveFluxAccent(2, savedText);
+        const auto editedPurpleAccent = ResolveFluxAccent(3, savedText);
+        check(editedGeminiAccent.id == 1 && !editedGeminiAccent.localizedName &&
+                  editedGeminiAccent.primaryIndex == 0U &&
+                  untouchedBlueAccent.id == 2 && untouchedBlueAccent.localizedName &&
+                  untouchedBlueAccent.name == "蓝色" &&
+                  editedPurpleAccent.id == 3 && !editedPurpleAccent.localizedName &&
+                  editedPurpleAccent.spec == "#654321,#33AA55@1",
+              "modified preset IDs derive custom tokens while unmodified preset IDs keep their built-in identity");
+
+        // Deleting removes only the target ID; removing every entry restores defaults 1..7.
+        const auto afterDelete = RemoveThemeColorEntry(reloaded, 9);
+        check(afterDelete.size() == 9U && NextThemeColorId(afterDelete) == 11 &&
+                  afterDelete[7].id == 8 && afterDelete[8].id == 10,
+              "deleting an intermediate ID removes only that ID without renumbering remaining entries");
+
+        std::vector<ThemeColorEntry> oneLeft{{10, "#112233"}};
+        check(RemoveThemeColorEntry(oneLeft, 10) == defaults,
+              "deleting the last remaining color restores the default ID 1..7 entries");
+    }
     check(ThemeColorFromHex("#336699") == huxerui::Color::Rgb(51, 102, 153), "hex channels decode correctly");
     const auto red = ThemeColorToHsb(huxerui::Color::Rgb(255, 0, 0));
     const auto green = ThemeColorToHsb(huxerui::Color::Rgb(0, 255, 0));
@@ -8655,7 +8686,7 @@ void testCustomThemeColors() {
               gradientSlider.focus_ring->color == sliderTarget &&
               std::abs(gradientSlider.disabled_thumb.alpha - 0.38F) < 0.001F,
           "HSB slider keeps the selected-color thumb and themed geometry");
-    check(ResolveFluxAccent("invalid").id == "gemini", "invalid saved color uses default");
+    check(ResolveFluxAccent(999).id == 1, "unknown saved color ID falls back to default ID 1");
     {
         struct PrimaryEditorFixture {
             huxerui::State<std::vector<std::string>> stops{
@@ -8740,31 +8771,38 @@ void testCustomThemeColors() {
                   !ui.Find(UiSelector::Key("theme-mix-set-primary")).One().enabled,
               "clicking the first stop and setting it as primary succeeds cleanly");
     }
-    check(ResolveFluxAccent("gemini").name == "Gemini", "default preset displays the Gemini label");
-    check(ResolveFluxAccent("blue").id == "blue" && ResolveFluxAccent("blue").name == "蓝色" &&
-              !ResolveFluxAccent("blue").multiColor.has_value(),
-          "blue preset is restored as a standalone monochrome swatch");
-    check(UsesFourColorAccent("gemini") && UsesFourColorAccent("invalid") &&
-              UsesMultiColorAccent("#FF3366,#33AA55") &&
-              !UsesFourColorAccent("blue") && !UsesFourColorAccent("purple") && !UsesFourColorAccent("#245CB0"),
+    check(ResolveFluxAccent(1).name == "Gemini", "default preset ID 1 displays the Gemini label");
+    check(ResolveFluxAccent(2).id == 2 && ResolveFluxAccent(2).name == "蓝色" &&
+              !ResolveFluxAccent(2).multiColor.has_value(),
+          "blue preset is restored at ID 2 as a standalone monochrome swatch");
+    check(UsesFourColorAccent(1) && UsesFourColorAccent(999) &&
+              UsesMultiColorAccent(ResolveFluxAccentFromSpec("#FF3366,#33AA55", 8)) &&
+              !UsesFourColorAccent(2) && !UsesFourColorAccent(3) &&
+              !UsesFourColorAccent(ResolveFluxAccentFromSpec("#245CB0", 8)),
           "default and multi-color specs enable gradient accents while single-color presets stay monochrome");
-    for (const auto spec : {"gemini", "blue", "purple", "#336699", "#FF3366,#33AA55", "#E5A93C,#34A853,#4285F4"}) {
+    for (const auto accent : {ResolveFluxAccent(1), ResolveFluxAccent(2), ResolveFluxAccent(3),
+                              ResolveFluxAccentFromSpec("#336699", 8),
+                              ResolveFluxAccentFromSpec("#FF3366,#33AA55", 9),
+                              ResolveFluxAccentFromSpec("#E5A93C,#34A853,#4285F4", 10)}) {
         for (bool dark : {false, true}) {
             auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
-            theme.colors = dark ? FluxDarkColors(spec) : FluxLightColors(spec);
+            theme.colors = dark ? FluxDarkColors(accent) : FluxLightColors(accent);
             const auto expectedBase = dark ? huxerui::Color::Rgb(19, 19, 21) : huxerui::Color::Rgb(239, 237, 240);
             const auto expectedCard = dark ? huxerui::Color::Rgb(37, 38, 40) : huxerui::Color::Rgb(252, 248, 249);
             check(theme.colors.surface_container_low == expectedBase && theme.colors.surface_container == expectedCard,
                   "all theme presets and custom mixes share the reference grey surfaces");
         }
     }
-    for (const auto mixSpec : {"gemini", "#FF3366,#33AA55", "#E5A93C,#34A853,#4285F4", "#112233,#445566,#778899,#AABBCC"}) {
-        const auto style = ResolveFluxGradientStyle(mixSpec);
+    for (const auto accent : {ResolveFluxAccent(1),
+                              ResolveFluxAccentFromSpec("#FF3366,#33AA55", 8),
+                              ResolveFluxAccentFromSpec("#E5A93C,#34A853,#4285F4", 9),
+                              ResolveFluxAccentFromSpec("#112233,#445566,#778899,#AABBCC", 10)}) {
+        const auto style = ResolveFluxGradientStyle(accent);
         check(style.enabled && style.palette.has_value(), "multi-color spec produces a resolved gradient palette");
         const auto palette = ResolveGradientPalette(style);
         for (bool dark : {false, true}) {
             auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
-            theme.colors = dark ? FluxDarkColors(mixSpec) : FluxLightColors(mixSpec);
+            theme.colors = dark ? FluxDarkColors(accent) : FluxLightColors(accent);
             const auto primary = ResolveFluxButtonStyle(theme, true, style);
             const auto* image = std::get_if<huxerui::ImageFill>(&primary.background.Get());
             const auto* gradient = image ? std::get_if<huxerui::VectorAsset>(&image->source) : nullptr;
@@ -8811,9 +8849,9 @@ void testCustomThemeColors() {
         auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
         theme.colors = dark ? FluxDarkColors() : FluxLightColors();
         const auto geminiPalette = ResolveFourColorForegroundPalette(theme.brightness);
-        const auto gemStyle = ResolveFluxGradientStyle("gemini");
-        const auto customStyle = ResolveFluxGradientStyle("#FF3366,#33AA55");
-        const auto monoStyle = ResolveFluxGradientStyle("blue");
+        const auto gemStyle = ResolveFluxGradientStyle(1);
+        const auto customStyle = ResolveFluxGradientStyle(ResolveFluxAccentFromSpec("#FF3366,#33AA55", 8));
+        const auto monoStyle = ResolveFluxGradientStyle(2);
         const auto runningGem = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Running, gemStyle);
         const auto runningCustom = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Running, customStyle);
         const auto runningMono = ResolveCoreStatusDotFill(theme, FluxCoreStatusKind::Running, monoStyle);
@@ -8882,12 +8920,12 @@ void testCustomThemeColors() {
               "four-color indeterminate bar animates continuously unless reduced motion is enabled");
     }
     for (const auto hex : {"#000000", "#FFFFFF", "#FFFF00", "#0000FF", "#FF00FF", "#336699"}) {
-        const auto accent = ResolveFluxAccent(hex);
-        check(accent.id == hex, "custom color retains its stable identity");
+        const auto accent = ResolveFluxAccentFromSpec(hex, 8);
+        check(accent.id == 8 && accent.spec == hex, "custom color retains its stable ID and normalized spec");
         for (bool dark : {false, true}) {
             auto theme = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
             const auto traffic = ResolveTrafficColors(theme);
-            theme.colors = dark ? FluxDarkColors(hex) : FluxLightColors(hex);
+            theme.colors = dark ? FluxDarkColors(accent) : FluxLightColors(accent);
             const auto& colors = theme.colors;
             const float a = ThemeColorLuminance(colors.primary), b = ThemeColorLuminance(colors.on_primary);
             check((std::max(a, b) + 0.05F) / (std::min(a, b) + 0.05F) >= 4.5F,
@@ -10295,7 +10333,7 @@ struct ModeChoiceFixture {
 };
 std::shared_ptr<ModeChoiceFixture> modeChoiceFixture;
 bool modeChoiceDark = false;
-std::string modeChoiceAccent = "gemini";
+int modeChoiceAccent = 1;
 bool modeThemeMatches = false;
 huxerui::View ModeChoiceRoot() {
     using namespace clashflux::ui;
@@ -10514,7 +10552,7 @@ void testSettingsRowFeedback() {
 
 void testModeChoiceFeedback() {
     using namespace clashflux::ui;
-    for (bool dark : {false, true}) for (const char* accent : {"gemini", "blue", "green"}) {
+    for (bool dark : {false, true}) for (int accent : {1, 2, 4}) {
         modeChoiceDark = dark; modeChoiceAccent = accent;
         for (auto device : {huxerui::PointerDeviceKind::Mouse, huxerui::PointerDeviceKind::Touch}) {
             huxerui::testing::UiTest ui(kModeChoiceApplication, {.viewport = {320.0F, 300.0F}});

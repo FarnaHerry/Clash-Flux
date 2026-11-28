@@ -137,7 +137,7 @@ huxerui::Task<bool> RunPendingCliCommand(huxerui::ApplicationHandle application)
 #endif
 
 // 页面、卡片、导航与浮层使用中性灰阶，通过稳定的明度差区分层级。
-huxerui::ThemeSpec FluxDarkThemeSpec(std::string_view accent) {
+huxerui::ThemeSpec FluxDarkThemeSpec(const FluxAccent& accent) {
     huxerui::ThemeSpec spec = huxerui::MaterialDarkThemeSpec();
     spec.typography = huxerui::TypographyScheme{
         .body_large = 16.0F,
@@ -157,7 +157,7 @@ huxerui::ThemeSpec FluxDarkThemeSpec(std::string_view accent) {
 
 // 浅色模式用干净的中性白灰做底，主色容器只保留浅水蓝色调；正文和边界使用
 // 石墨灰，保证内容层级清晰，品牌色不会扩散到大面积背景。
-huxerui::ThemeSpec FluxLightThemeSpec(std::string_view accent) {
+huxerui::ThemeSpec FluxLightThemeSpec(const FluxAccent& accent) {
     huxerui::ThemeSpec spec = huxerui::MaterialLightThemeSpec();
     spec.typography = huxerui::TypographyScheme{
         .body_large = 16.0F,
@@ -171,7 +171,7 @@ huxerui::ThemeSpec FluxLightThemeSpec(std::string_view accent) {
                                         10000.0F};
     spec.colors = FluxLightColors(accent);
     ApplyFluxInteractionTheme(spec);
-    const auto focus = UsesMultiColorAccent(accent) ? spec.colors.primary : ResolveFluxAccent(accent).dark;
+    const auto focus = UsesMultiColorAccent(accent) ? spec.colors.primary : accent.dark;
     spec.interactions.focus_ring = huxerui::FocusRing{focus, 2.0F, 2.0F};
     return spec;
 }
@@ -1004,7 +1004,7 @@ huxerui::PageTransition SecondaryPageTransition(
 }
 
 [[huxerui::composable]] huxerui::View ThemeColorEditorRoutePage(
-    std::string initialHex, std::optional<std::string> editingId) {
+    std::string initialHex, std::optional<int> editingId) {
     const auto navigation = huxerui::UseNavigation();
     return ThemeColorEditorPage(initialHex, editingId, [navigation] { static_cast<void>(navigation.Pop()); })
         .With(SecondaryPageTransition(huxerui::UseTheme().motion));
@@ -1364,6 +1364,7 @@ void StartDesktopRuntime() {
         return clashflux::data::StartupSettings{
             .themeMode = runtimeServices->startupThemeMode,
             .themeColor = runtimeServices->startupThemeColor,
+            .themeColors = runtimeServices->startupThemeColors,
             .language = runtimeServices->startupLanguage,
             .trayEnabled = runtimeServices->startupTrayEnabled,
             .startMinimized = runtimeServices->startupStartMinimized,
@@ -1589,8 +1590,10 @@ void StartDesktopRuntime() {
     const bool dark = ResolveThemeBrightness(themeMode.Get(), huxerui::UseSystemThemeBrightness()) ==
                       huxerui::ThemeBrightness::Dark;
     const SettingsView settings = settingsModel->view.Get();
-    const std::string& accent = settings.ready ? settings.themeColor : startupSettings.themeColor;
-    const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec(accent) : FluxLightThemeSpec(accent);
+    const int accentId = settings.ready ? settings.themeColorId : startupSettings.themeColor;
+    const std::string& themeColors = settings.ready ? settings.themeColors : startupSettings.themeColors;
+    const FluxAccent activeAccent = ResolveFluxAccent(accentId, themeColors);
+    const huxerui::ThemeSpec rootSpec = dark ? FluxDarkThemeSpec(activeAccent) : FluxLightThemeSpec(activeAccent);
     const IslandTheme rootIslands = ResolveIslandTheme(rootSpec);
     const std::string& language = settings.ready ? settings.language : startupSettings.language;
     const huxerui::Locale locale =
@@ -1607,7 +1610,7 @@ void StartDesktopRuntime() {
 
     return huxerui::ProvideEnvironment(locale, FluxThemed(
         rootSpec,
-        ResolveFluxGradientStyle(accent),
+        ResolveFluxGradientStyle(activeAccent),
         WithUnifiedFieldStyle(
             huxerui::Column {
                 AppNoticeEffects(profilesModel, navPage, pagerPage),

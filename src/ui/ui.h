@@ -512,9 +512,9 @@ void ShowNetworkSettingsDialog(huxerui::DialogHandle dialog, bool tun);
 huxerui::View HomeProxySettingsAction(HomeProxySettingsKind kind);
 huxerui::View HomeProxySettingsPage(HomeProxySettingsKind kind, std::function<void()> onBack);
 huxerui::View HomeProxySettingsRoutePage(HomeProxySettingsKind kind);
-huxerui::View ThemeColorEditorPage(std::string initialHex, std::optional<std::string> editingId,
+huxerui::View ThemeColorEditorPage(std::string initialHex, std::optional<int> editingId,
     std::function<void()> onBack);
-huxerui::View ThemeColorEditorRoutePage(std::string initialHex, std::optional<std::string> editingId);
+huxerui::View ThemeColorEditorRoutePage(std::string initialHex, std::optional<int> editingId);
 huxerui::View SecondaryPageScaffold(huxerui::View title,
                                     huxerui::View actions, huxerui::View content,
                                     std::function<void()> onBack,

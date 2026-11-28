@@ -1356,9 +1356,8 @@ void SettingsModel::PublishCached() {
     next.ready = clashflux::data::session().ready();
     const std::string themeMode = core.setting("ui.theme_mode", "1");
     next.themeMode = themeMode == "0" ? 0 : themeMode == "2" ? 2 : 1;
-    next.themeColor = core.setting("ui.theme_color", "gemini");
-    next.customThemeColors = core.setting("ui.custom_theme_colors", "");
-    next.hiddenThemeColors = core.setting("ui.hidden_theme_colors", "");
+    next.themeColorId = ParseThemeColorId(core.setting("ui.theme_color", "1"));
+    next.themeColors = core.setting("ui.theme_colors", "");
     next.proxyGroupedView = ParseProxyGroupedView(core.setting(kProxyViewSetting));
     next.autoStart = core.setting("app.autostart", "false") == "true";
     next.autoRun = core.setting("app.auto_run", "false") == "true";

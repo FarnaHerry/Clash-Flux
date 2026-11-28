@@ -14,7 +14,30 @@ start/stop animations without affecting the main app's proxy. Use `-BuildOnly` w
 the PowerShell script to only compile; the Windows build runs natively and does not
 require WSL.
 
-See the [v0.3.134 release notes](docs/releases/v0.3.134.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+See the [v0.3.139 release notes](docs/releases/v0.3.139.md). A `v*` tag triggers CI; after the release gates pass and packages are collected, it publishes the Release using `docs/releases/<tag>.md` when available.
+
+## Quick Install
+
+- **Linux / macOS**: verifies `SHA-256`; Linux prefers `.deb` / `.rpm` system packages (falling back to portable `.tar.gz` under `~/.local/share/Clash-Flux` on other distros or without privilege escalation), and macOS installs `Clash-Flux.app` to `/Applications`:
+
+```bash
+curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh
+```
+
+Common options: `sh -s -- --portable`, `sh -s -- --version 0.3.139`, `sh -s -- --uninstall`.
+
+- **Windows (PowerShell)**: verifies `SHA-256` and launches the official `.exe` installer by default (preserving Start Menu entries, uninstall registration, and in-app updates):
+
+```powershell
+irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1 | iex
+```
+
+Unattended progress UI or portable `.zip` installation:
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1))) -Passive
+& ([scriptblock]::Create((irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1))) -Portable
+```
 
 [简体中文](README.md) | English
 

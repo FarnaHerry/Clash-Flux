@@ -3,6 +3,7 @@
 #include <huxerui/huxerui.h>
 #include <array>
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <mutex>
@@ -70,9 +71,19 @@ struct FluxMultiColorPalette {
     bool operator==(const FluxMultiColorPalette&) const = default;
 };
 
+inline constexpr int kDefaultThemeColorId = 1;
+
+struct ThemeColorEntry {
+    int id = 0;
+    std::string spec;
+    bool operator==(const ThemeColorEntry&) const = default;
+};
+
 struct FluxAccent {
-    std::string id;
+    int id = kDefaultThemeColorId;
     std::string name;
+    std::string spec;
+    bool localizedName = false;
     huxerui::Color light, dark, onLight, onDark, lightContainer, onLightContainer;
     std::vector<std::string> mixHexes{};
     std::optional<FluxMultiColorPalette> multiColor = std::nullopt;
@@ -220,7 +231,8 @@ inline FluxMultiColorPalette BuildCustomMultiColorPalette(
 }
 
 inline FluxAccent BuildAccentFromPrimary(
-    std::string id, std::string name, huxerui::Color primaryRaw,
+    int id, std::string name, std::string spec, bool localizedName,
+    huxerui::Color primaryRaw,
     std::vector<std::string> mixHexes = {},
     std::optional<FluxMultiColorPalette> multiColor = std::nullopt,
     std::size_t primaryIndex = 0U) {
@@ -231,7 +243,8 @@ inline FluxAccent BuildAccentFromPrimary(
         ? huxerui::Color::Black() : huxerui::Color::White();
     const auto lightContainer = ThemeColorFromOklch({0.94F, std::min(ok.c, 0.025F), ok.h});
     const auto onLightContainer = ThemeColorFromOklch({0.35F, std::min(ok.c, 0.12F), ok.h});
-    return {std::move(id), std::move(name), light, dark, onLight, FluxPalette::abyss(),
+    return {id, std::move(name), std::move(spec), localizedName,
+            light, dark, onLight, FluxPalette::abyss(),
             lightContainer, onLightContainer, std::move(mixHexes), std::move(multiColor), primaryIndex};
 }
 
@@ -257,29 +270,30 @@ inline std::vector<huxerui::Point> MultiColorFieldCenters(std::size_t count) {
 
 inline FluxAccent MakeGeminiFluxAccent() {
     return BuildAccentFromPrimary(
-        "gemini", "Gemini", ThemeColorFromHex("#4285F4"),
+        kDefaultThemeColorId, "Gemini", "#E5A93C,#34A853,#4285F4,#EA4335@2", true,
+        ThemeColorFromHex("#4285F4"),
         {"#E5A93C", "#34A853", "#4285F4", "#EA4335"},
         DefaultMultiColorPalette(), kGeminiPrimaryIndex);
 }
 
 inline const std::array<FluxAccent, 7> kFluxAccents{{
     MakeGeminiFluxAccent(),
-    {"blue", "蓝色", huxerui::Color::Rgb(36, 92, 176), huxerui::Color::Rgb(138, 182, 255),
+    {2, "蓝色", "#245CB0", true, huxerui::Color::Rgb(36, 92, 176), huxerui::Color::Rgb(138, 182, 255),
      huxerui::Color::White(), FluxPalette::abyss(),
      huxerui::Color::Rgb(220, 238, 255), huxerui::Color::Rgb(16, 73, 103)},
-    {"purple", "紫色", huxerui::Color::Rgb(108, 69, 189), huxerui::Color::Rgb(192, 165, 255),
+    {3, "紫色", "#6C45BD", true, huxerui::Color::Rgb(108, 69, 189), huxerui::Color::Rgb(192, 165, 255),
      huxerui::Color::White(), huxerui::Color::Rgb(33, 17, 57),
      huxerui::Color::Rgb(237, 224, 255), huxerui::Color::Rgb(60, 27, 107)},
-    {"green", "绿色", huxerui::Color::Rgb(38, 117, 70), huxerui::Color::Rgb(130, 220, 166),
+    {4, "绿色", "#267546", true, huxerui::Color::Rgb(38, 117, 70), huxerui::Color::Rgb(130, 220, 166),
      huxerui::Color::White(), huxerui::Color::Rgb(9, 38, 22),
      huxerui::Color::Rgb(207, 242, 218), huxerui::Color::Rgb(18, 65, 35)},
-    {"orange", "橙色", huxerui::Color::Rgb(162, 78, 8), huxerui::Color::Rgb(255, 184, 119),
+    {5, "橙色", "#A24E08", true, huxerui::Color::Rgb(162, 78, 8), huxerui::Color::Rgb(255, 184, 119),
      huxerui::Color::White(), huxerui::Color::Rgb(48, 24, 4),
      huxerui::Color::Rgb(255, 227, 201), huxerui::Color::Rgb(100, 46, 5)},
-    {"pink", "粉色", huxerui::Color::Rgb(178, 50, 121), huxerui::Color::Rgb(251, 166, 209),
+    {6, "粉色", "#B23279", true, huxerui::Color::Rgb(178, 50, 121), huxerui::Color::Rgb(251, 166, 209),
      huxerui::Color::White(), huxerui::Color::Rgb(48, 13, 33),
      huxerui::Color::Rgb(255, 222, 238), huxerui::Color::Rgb(105, 23, 67)},
-    {"teal", "青色", huxerui::Color::Rgb(0, 117, 117), huxerui::Color::Rgb(108, 214, 210),
+    {7, "青色", "#007575", true, huxerui::Color::Rgb(0, 117, 117), huxerui::Color::Rgb(108, 214, 210),
      huxerui::Color::White(), huxerui::Color::Rgb(0, 36, 35),
      huxerui::Color::Rgb(196, 242, 237), huxerui::Color::Rgb(0, 69, 67)},
 }};
@@ -456,80 +470,95 @@ inline std::optional<std::string> NormalizeThemeColorSpec(std::string_view value
     return FormatThemeColorSpec(spec->stops, spec->primaryIndex);
 }
 
-inline std::vector<std::string> ReadCustomThemeColors(std::string_view saved) {
-    std::vector<std::string> colors;
+inline int ParseThemeColorId(std::string_view value, int fallback = kDefaultThemeColorId) noexcept {
+    const auto start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos) return fallback;
+    value = value.substr(start, value.find_last_not_of(" \t\r\n") - start + 1);
+    int parsed = 0;
+    const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (ec != std::errc{} || end != value.data() + value.size() || parsed < 1) return fallback;
+    return parsed;
+}
+
+inline std::vector<ThemeColorEntry> DefaultThemeColorEntries() {
+    std::vector<ThemeColorEntry> entries;
+    entries.reserve(kFluxAccents.size());
+    for (const auto& accent : kFluxAccents) {
+        entries.push_back({accent.id, accent.spec});
+    }
+    return entries;
+}
+
+inline std::vector<ThemeColorEntry> ReadThemeColors(std::string_view saved) {
+    std::vector<ThemeColorEntry> entries;
     while (!saved.empty()) {
         const auto end = saved.find('\n');
-        const auto color = NormalizeThemeColorSpec(saved.substr(0, end));
-        if (color && std::find(colors.begin(), colors.end(), *color) == colors.end()) colors.push_back(*color);
+        const auto line = saved.substr(0, end);
+        if (const auto eq = line.find('='); eq != std::string_view::npos) {
+            const int id = ParseThemeColorId(line.substr(0, eq), 0);
+            const auto spec = NormalizeThemeColorSpec(line.substr(eq + 1));
+            if (id >= 1 && spec &&
+                std::none_of(entries.begin(), entries.end(),
+                             [id](const ThemeColorEntry& existing) { return existing.id == id; })) {
+                entries.push_back({id, *spec});
+            }
+        }
         if (end == std::string_view::npos) break;
         saved.remove_prefix(end + 1);
     }
-    return colors;
+    if (entries.empty()) return DefaultThemeColorEntries();
+    return entries;
 }
 
-inline std::string SaveCustomThemeColors(const std::vector<std::string>& colors) {
+inline std::string SaveThemeColors(const std::vector<ThemeColorEntry>& entries) {
     std::string saved;
-    for (const auto& color : colors) { if (!saved.empty()) saved += '\n'; saved += color; }
-    return saved;
-}
-
-inline bool IsPresetThemeColor(std::string_view id) {
-    return std::any_of(kFluxAccents.begin(), kFluxAccents.end(),
-        [id](const FluxAccent& accent) { return accent.id == id; });
-}
-
-inline std::vector<std::string> ReadHiddenThemeColors(std::string_view saved) {
-    std::vector<std::string> colors;
-    while (!saved.empty()) {
-        const auto end = saved.find('\n');
-        const auto id = saved.substr(0, end);
-        if (IsPresetThemeColor(id) && std::find(colors.begin(), colors.end(), id) == colors.end())
-            colors.emplace_back(id);
-        if (end == std::string_view::npos) break;
-        saved.remove_prefix(end + 1);
+    for (const auto& entry : entries) {
+        if (entry.id < 1) continue;
+        const auto spec = NormalizeThemeColorSpec(entry.spec);
+        if (!spec) continue;
+        if (!saved.empty()) saved += '\n';
+        saved += std::to_string(entry.id);
+        saved += '=';
+        saved += *spec;
     }
-    return colors;
-}
-
-inline std::string SaveHiddenThemeColors(const std::vector<std::string>& colors) {
-    std::string saved;
-    for (const auto& color : colors) { if (!saved.empty()) saved += '\n'; saved += color; }
     return saved;
 }
 
-inline std::vector<std::string> HidePresetThemeColor(
-    std::vector<std::string> hidden, std::string_view id) {
-    if (IsPresetThemeColor(id) &&
-        std::find(hidden.begin(), hidden.end(), id) == hidden.end())
-        hidden.emplace_back(id);
-    return hidden;
+inline int NextThemeColorId(const std::vector<ThemeColorEntry>& entries) noexcept {
+    int maxId = 0;
+    for (const auto& entry : entries) {
+        maxId = std::max(maxId, entry.id);
+    }
+    return maxId + 1;
 }
 
-inline std::vector<std::string> ReplaceCustomThemeColor(
-    std::vector<std::string> colors, std::string_view existing, std::string_view replacement) {
-    const auto normalized = NormalizeThemeColorSpec(replacement);
-    if (!normalized) return colors;
-    bool replaced = false;
-    for (auto& color : colors) {
-        if (color == existing) {
-            color = *normalized;
-            replaced = true;
+inline std::vector<ThemeColorEntry> UpdateThemeColorEntry(
+    std::vector<ThemeColorEntry> entries, int id, std::string_view spec) {
+    const auto normalized = NormalizeThemeColorSpec(spec);
+    if (!normalized || id < 1) return entries;
+    for (auto& entry : entries) {
+        if (entry.id == id) {
+            entry.spec = *normalized;
+            break;
         }
     }
-    if (!replaced) colors.push_back(*normalized);
-    std::vector<std::string> unique;
-    for (auto& color : colors) {
-        if (std::find(unique.begin(), unique.end(), color) == unique.end())
-            unique.push_back(std::move(color));
-    }
-    return unique;
+    return entries;
 }
 
-inline std::vector<std::string> RemoveCustomThemeColor(
-    std::vector<std::string> colors, std::string_view removed) {
-    std::erase_if(colors, [removed](const std::string& color) { return color == removed; });
-    return colors;
+inline std::pair<std::vector<ThemeColorEntry>, int> AddThemeColorEntry(
+    std::vector<ThemeColorEntry> entries, std::string_view spec) {
+    const auto normalized = NormalizeThemeColorSpec(spec);
+    if (!normalized) return {std::move(entries), 0};
+    const int nextId = NextThemeColorId(entries);
+    entries.push_back({nextId, *normalized});
+    return {std::move(entries), nextId};
+}
+
+inline std::vector<ThemeColorEntry> RemoveThemeColorEntry(
+    std::vector<ThemeColorEntry> entries, int id) {
+    std::erase_if(entries, [id](const ThemeColorEntry& entry) { return entry.id == id; });
+    if (entries.empty()) return DefaultThemeColorEntries();
+    return entries;
 }
 
 inline huxerui::Color AverageThemeColors(const std::vector<huxerui::Color>& colors) {
@@ -544,43 +573,83 @@ inline huxerui::Color AverageThemeColors(const std::vector<huxerui::Color>& colo
     return {r * inv, g * inv, b * inv, 1.0F};
 }
 
-inline FluxAccent ResolveFluxAccent(std::string_view id) {
-    for (const auto& accent : kFluxAccents) if (accent.id == id) return accent;
-    if (const auto parsed = ParseThemeColorSpec(id)) {
+inline FluxAccent ResolveThemeColorEntry(const ThemeColorEntry& entry) {
+    const auto normalized = NormalizeThemeColorSpec(entry.spec);
+    if (!normalized || entry.id < 1) return kFluxAccents.front();
+    for (const auto& preset : kFluxAccents) {
+        if (preset.id == entry.id && preset.spec == *normalized) return preset;
+    }
+    if (const auto parsed = ParseThemeColorSpec(*normalized)) {
         std::vector<huxerui::Color> rawColors;
         rawColors.reserve(parsed->stops.size());
         for (const auto& stop : parsed->stops) rawColors.push_back(ThemeColorFromHex(stop));
-        const std::string spec = FormatThemeColorSpec(parsed->stops, parsed->primaryIndex);
         std::optional<FluxMultiColorPalette> multiColor;
         if (rawColors.size() >= 2U) {
             multiColor = BuildCustomMultiColorPalette(rawColors, parsed->primaryIndex);
         }
         return BuildAccentFromPrimary(
-            spec, spec, rawColors[parsed->primaryIndex],
+            entry.id, *normalized, *normalized, false, rawColors[parsed->primaryIndex],
             parsed->stops, std::move(multiColor), parsed->primaryIndex);
     }
     return kFluxAccents.front();
 }
 
-inline std::optional<FluxMultiColorPalette> ResolveMultiColorPalette(std::string_view id) {
-    return ResolveFluxAccent(id).multiColor;
+inline FluxAccent ResolveFluxAccentFromSpec(std::string_view spec, int id = kDefaultThemeColorId) {
+    return ResolveThemeColorEntry({id, std::string(spec)});
 }
 
-inline bool UsesMultiColorAccent(std::string_view id) {
-    return ResolveFluxAccent(id).multiColor.has_value();
+inline FluxAccent ResolveFluxAccent(int id, const std::vector<ThemeColorEntry>& entries) {
+    for (const auto& entry : entries) {
+        if (entry.id == id) return ResolveThemeColorEntry(entry);
+    }
+    return entries.empty() ? kFluxAccents.front() : ResolveThemeColorEntry(entries.front());
 }
 
-inline bool UsesFourColorAccent(std::string_view id) {
-    return UsesMultiColorAccent(id);
+inline FluxAccent ResolveFluxAccent(int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    if (savedColors.empty()) {
+        for (const auto& preset : kFluxAccents) {
+            if (preset.id == id) return preset;
+        }
+        return kFluxAccents.front();
+    }
+    return ResolveFluxAccent(id, ReadThemeColors(savedColors));
 }
 
-inline FluxGradientStyle ResolveFluxGradientStyle(std::string_view id) {
-    const auto palette = ResolveMultiColorPalette(id);
-    return {palette.has_value(), palette};
+inline std::optional<FluxMultiColorPalette> ResolveMultiColorPalette(const FluxAccent& accent) {
+    return accent.multiColor;
 }
 
-inline void ApplyFluxAccent(huxerui::ColorScheme& colors, bool dark, std::string_view id) {
-    const auto accent = ResolveFluxAccent(id);
+inline std::optional<FluxMultiColorPalette> ResolveMultiColorPalette(
+    int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    return ResolveFluxAccent(id, savedColors).multiColor;
+}
+
+inline bool UsesMultiColorAccent(const FluxAccent& accent) {
+    return accent.multiColor.has_value();
+}
+
+inline bool UsesMultiColorAccent(int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    return ResolveFluxAccent(id, savedColors).multiColor.has_value();
+}
+
+inline bool UsesFourColorAccent(const FluxAccent& accent) {
+    return UsesMultiColorAccent(accent);
+}
+
+inline bool UsesFourColorAccent(int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    return UsesMultiColorAccent(id, savedColors);
+}
+
+inline FluxGradientStyle ResolveFluxGradientStyle(const FluxAccent& accent) {
+    return {accent.multiColor.has_value(), accent.multiColor};
+}
+
+inline FluxGradientStyle ResolveFluxGradientStyle(
+    int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    return ResolveFluxGradientStyle(ResolveFluxAccent(id, savedColors));
+}
+
+inline void ApplyFluxAccent(huxerui::ColorScheme& colors, bool dark, const FluxAccent& accent) {
     colors.primary = dark ? accent.dark : accent.light;
     colors.on_primary = dark ? accent.onDark : accent.onLight;
     if (dark) {
@@ -595,7 +664,12 @@ inline void ApplyFluxAccent(huxerui::ColorScheme& colors, bool dark, std::string
     }
 }
 
-inline huxerui::ColorScheme FluxDarkColors(std::string_view accent = "gemini") {
+inline void ApplyFluxAccent(
+    huxerui::ColorScheme& colors, bool dark, int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    ApplyFluxAccent(colors, dark, ResolveFluxAccent(id, savedColors));
+}
+
+inline huxerui::ColorScheme FluxDarkColors(const FluxAccent& accent) {
     auto colors = huxerui::MaterialDarkThemeSpec().colors;
     colors.primary = FluxPalette::water();
     colors.on_primary = FluxPalette::abyss();
@@ -625,7 +699,12 @@ inline huxerui::ColorScheme FluxDarkColors(std::string_view accent = "gemini") {
     return colors;
 }
 
-inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "gemini") {
+inline huxerui::ColorScheme FluxDarkColors(
+    int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    return FluxDarkColors(ResolveFluxAccent(id, savedColors));
+}
+
+inline huxerui::ColorScheme FluxLightColors(const FluxAccent& accent) {
     auto colors = huxerui::MaterialLightThemeSpec().colors;
     colors.primary = FluxPalette::water_deep();
     colors.on_primary = FluxPalette::abyss();
@@ -653,6 +732,11 @@ inline huxerui::ColorScheme FluxLightColors(std::string_view accent = "gemini") 
     colors.error = huxerui::Color::Rgb(180, 35, 50);
     ApplyFluxAccent(colors, false, accent);
     return colors;
+}
+
+inline huxerui::ColorScheme FluxLightColors(
+    int id = kDefaultThemeColorId, std::string_view savedColors = {}) {
+    return FluxLightColors(ResolveFluxAccent(id, savedColors));
 }
 
 inline huxerui::ThemeBrightness ResolveThemeBrightness(int mode, huxerui::ThemeBrightness system) noexcept {

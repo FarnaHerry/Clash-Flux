@@ -523,6 +523,7 @@ void InstallDesktopTrayRuntime(huxerui::ApplicationContext& context) {
     runtimeServices->startupSettingsLoaded = true;
     runtimeServices->startupThemeMode = startupSettings.themeMode;
     runtimeServices->startupThemeColor = startupSettings.themeColor;
+    runtimeServices->startupThemeColors = startupSettings.themeColors;
     runtimeServices->startupLanguage = startupSettings.language;
     runtimeServices->startupTrayEnabled = startupSettings.trayEnabled;
     runtimeServices->startupStartMinimized = startupSettings.startMinimized;

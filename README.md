@@ -4,7 +4,30 @@
 
 项目 Logo 采用出箱 demo 的完整造型；母版、旧版备份及图标再生成流程见 [Logo 资源说明](docs/branding/README.md)。
 
-版本更新见 [v0.3.134 发布说明](docs/releases/v0.3.134.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+版本更新见 [v0.3.139 发布说明](docs/releases/v0.3.139.md)。推送 `v*` 标签后，CI 在发布门禁通过并收集安装包后创建 Release；优先使用 `docs/releases/<标签>.md` 作为说明。
+
+## 快速安装
+
+- **Linux / macOS**：自动校验 `SHA-256`，Linux 优先安装 `.deb` / `.rpm` 系统包（无包管理器或无提权工具时回退便携版 `.tar.gz` 到 `~/.local/share/Clash-Flux`），macOS 自动安装 `.app` 到 `/Applications`：
+
+```bash
+curl -fsSL https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.sh | sh
+```
+
+常用参数：`sh -s -- --portable`（Linux 便携安装）、`sh -s -- --version 0.3.139`、`sh -s -- --uninstall`。
+
+- **Windows (PowerShell)**：自动校验 `SHA-256` 并默认启动官方 `.exe` 安装向导（保留开始菜单、卸载项与应用内升级路径）：
+
+```powershell
+irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1 | iex
+```
+
+无交互进度安装或便携版：
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1))) -Passive
+& ([scriptblock]::Create((irm https://github.com/FarnaHerry/Clash-Flux/releases/latest/download/install.ps1))) -Portable
+```
 
 简体中文 | [English](README.en.md)
 

@@ -936,6 +936,12 @@ jobs:
             test -s "release/clash-flux-${release_version}-linux-${arch}.deb"
             test -s "release/clash-flux-${release_version}-linux-${arch}.rpm"
           done
+          cp install.sh install.ps1 release/
+          chmod +x release/install.sh
+          (cd release && sha256sum clash-flux-* > SHA256SUMS.txt)
+          test -s release/SHA256SUMS.txt
+          test -s release/install.sh
+          test -s release/install.ps1
           ls -lh release
 
       - name: Publish GitHub Release

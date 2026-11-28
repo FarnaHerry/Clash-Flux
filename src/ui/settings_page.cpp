@@ -122,49 +122,36 @@ constexpr bool kUpdateUsesSystemInstaller = false;
            huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));
 }
 
-void SelectThemeColor(const std::shared_ptr<SettingsModel>& model, const std::string& id) {
-    if (model->view.Get().themeColor == id) return;
-    store::coreStore().setSetting("ui.theme_color", id);
-    model->Update([id](SettingsView& settings) { settings.themeColor = id; });
+void SelectThemeColor(const std::shared_ptr<SettingsModel>& model, int id) {
+    if (model->view.Get().themeColorId == id) return;
+    store::coreStore().setSetting("ui.theme_color", std::to_string(id));
+    model->Update([id](SettingsView& settings) { settings.themeColorId = id; });
 }
 
-void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::string& id) {
+void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, int id) {
     const SettingsView current = model->view.Get();
-    const auto colors = ReadCustomThemeColors(current.customThemeColors);
-    const auto hidden = ReadHiddenThemeColors(current.hiddenThemeColors);
-    const bool preset = IsPresetThemeColor(id);
-    const auto remaining = preset ? colors : RemoveCustomThemeColor(colors, id);
-    const auto remainingHidden = preset ? HidePresetThemeColor(hidden, id) : hidden;
-    const bool removeColor = remaining != colors;
-    const bool hideColor = remainingHidden != hidden;
-    const bool resetSelection = current.themeColor == id;
-    if (!removeColor && !hideColor && !resetSelection) return;
-
-    const std::string saved = removeColor ? SaveCustomThemeColors(remaining) : current.customThemeColors;
-    const std::string savedHidden = hideColor ? SaveHiddenThemeColors(remainingHidden) : current.hiddenThemeColors;
-    std::string selectedColor = current.themeColor;
+    const auto entries = ReadThemeColors(current.themeColors);
+    const auto remaining = RemoveThemeColorEntry(entries, id);
+    const std::string savedColors = SaveThemeColors(remaining);
+    const bool updateColors = savedColors != current.themeColors;
+    const bool resetSelection = current.themeColorId == id;
+    int selectedId = current.themeColorId;
     if (resetSelection) {
-        const auto firstVisiblePreset = std::find_if(kFluxAccents.begin(), kFluxAccents.end(),
-            [&remainingHidden](const FluxAccent& accent) {
-                return std::find(remainingHidden.begin(), remainingHidden.end(), accent.id) == remainingHidden.end();
-            });
-        if (firstVisiblePreset != kFluxAccents.end()) selectedColor = firstVisiblePreset->id;
-        else if (!remaining.empty()) selectedColor = remaining.front();
-        else selectedColor = std::string(kFluxAccents.front().id);
+        selectedId = !remaining.empty() ? remaining.front().id : kDefaultThemeColorId;
     }
-    if (removeColor) store::coreStore().setSetting("ui.custom_theme_colors", saved);
-    if (hideColor) store::coreStore().setSetting("ui.hidden_theme_colors", savedHidden);
-    if (resetSelection) store::coreStore().setSetting("ui.theme_color", selectedColor);
-    model->Update([saved, savedHidden, selectedColor, removeColor, hideColor, resetSelection](SettingsView& settings) {
-        if (removeColor) settings.customThemeColors = saved;
-        if (hideColor) settings.hiddenThemeColors = savedHidden;
-        if (resetSelection) settings.themeColor = selectedColor;
+    const bool updateSelection = resetSelection && selectedId != current.themeColorId;
+    if (!updateColors && !updateSelection) return;
+    if (updateColors) store::coreStore().setSetting("ui.theme_colors", savedColors);
+    if (updateSelection) store::coreStore().setSetting("ui.theme_color", std::to_string(selectedId));
+    model->Update([savedColors, selectedId, updateColors, updateSelection](SettingsView& settings) {
+        if (updateColors) settings.themeColors = savedColors;
+        if (updateSelection) settings.themeColorId = selectedId;
     });
 }
 
 [[huxerui::composable]] huxerui::View ThemeColorEditor(
     std::shared_ptr<SettingsModel> model, std::function<void()> onClose,
-    std::string initialHex, std::optional<std::string> editingId, bool fullPage) {
+    std::string initialHex, std::optional<int> editingId, bool fullPage) {
     const auto& theme = huxerui::UseTheme();
     const bool editing = editingId.has_value();
     const auto initialParsed = ParseThemeColorSpec(initialHex);
@@ -293,30 +280,38 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const auto currentSpec = hex
         ? NormalizeThemeColorSpec(FormatThemeColorSpec(effectiveStops, resolvedPrimary))
         : std::nullopt;
-    const auto save = [model, currentSpec, onClose, editingId] {
+    const auto save = [model, currentSpec, initialSpec, onClose, editingId] {
         if (!currentSpec || !model->view.Get().ready) return;
-        const SettingsView current = model->view.Get();
-        auto colors = ReadCustomThemeColors(current.customThemeColors);
-        auto hiddenColors = ReadHiddenThemeColors(current.hiddenThemeColors);
-        if (editingId) {
-            colors = ReplaceCustomThemeColor(std::move(colors), *editingId, *currentSpec);
-            hiddenColors = HidePresetThemeColor(std::move(hiddenColors), *editingId);
-        } else if (std::find(colors.begin(), colors.end(), *currentSpec) == colors.end()) {
-            colors.push_back(*currentSpec);
+        if (editingId && *currentSpec == initialSpec) {
+            onClose();
+            return;
         }
-        const std::string saved = SaveCustomThemeColors(colors);
-        const std::string savedHidden = SaveHiddenThemeColors(hiddenColors);
-        store::coreStore().setSetting("ui.custom_theme_colors", saved);
-        if (savedHidden != current.hiddenThemeColors)
-            store::coreStore().setSetting("ui.hidden_theme_colors", savedHidden);
-        const std::string selectedColor =
-            !editingId || current.themeColor == *editingId ? *currentSpec : current.themeColor;
-        if (current.themeColor != selectedColor)
-            store::coreStore().setSetting("ui.theme_color", selectedColor);
-        model->Update([saved, savedHidden, selectedColor](SettingsView& settings) {
-            settings.customThemeColors = saved;
-            settings.hiddenThemeColors = savedHidden;
-            settings.themeColor = selectedColor;
+        const SettingsView current = model->view.Get();
+        auto entries = ReadThemeColors(current.themeColors);
+        int selectedId = current.themeColorId;
+        if (editingId) {
+            const bool exists = std::any_of(entries.begin(), entries.end(),
+                [id = *editingId](const ThemeColorEntry& entry) { return entry.id == id; });
+            if (exists) {
+                entries = UpdateThemeColorEntry(std::move(entries), *editingId, *currentSpec);
+            } else {
+                auto [added, newId] = AddThemeColorEntry(std::move(entries), *currentSpec);
+                entries = std::move(added);
+                if (current.themeColorId == *editingId && newId >= 1) selectedId = newId;
+            }
+        } else {
+            auto [added, newId] = AddThemeColorEntry(std::move(entries), *currentSpec);
+            entries = std::move(added);
+            if (newId >= 1) selectedId = newId;
+        }
+        const std::string savedColors = SaveThemeColors(entries);
+        if (savedColors != current.themeColors)
+            store::coreStore().setSetting("ui.theme_colors", savedColors);
+        if (current.themeColorId != selectedId)
+            store::coreStore().setSetting("ui.theme_color", std::to_string(selectedId));
+        model->Update([savedColors, selectedId](SettingsView& settings) {
+            settings.themeColors = savedColors;
+            settings.themeColorId = selectedId;
         });
         onClose();
     };
@@ -365,12 +360,12 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
 
 [[huxerui::composable]] huxerui::View ThemeColorDialog(
     std::shared_ptr<SettingsModel> model, huxerui::DialogContext context,
-    std::string initialHex, std::optional<std::string> editingId) {
+    std::string initialHex, std::optional<int> editingId) {
     return ThemeColorEditor(model, [context] { context.Dismiss(); }, initialHex, editingId, false);
 }
 
 [[huxerui::composable]] huxerui::View ThemeColorEditorPage(
-    std::string initialHex, std::optional<std::string> editingId, std::function<void()> onBack) {
+    std::string initialHex, std::optional<int> editingId, std::function<void()> onBack) {
     return ThemeColorEditor(huxerui::UseService<SettingsModel>(), onBack, initialHex, editingId, true);
 }
 
@@ -384,18 +379,17 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const auto fill = IsDarkTheme(theme) ? accent.dark : accent.light;
     const auto foreground = IsDarkTheme(theme) ? accent.onDark : accent.onLight;
-    const huxerui::StringVariant label = accent.id.starts_with('#') ? huxerui::StringVariant{accent.name} : Localized(accent.name);
+    const huxerui::StringVariant label = accent.localizedName
+        ? Localized(accent.name) : huxerui::StringVariant{accent.name};
+    const int id = accent.id;
+    const std::string initialHex = accent.spec;
     huxerui::View card = ThemeColorCardSurface(theme, fill, foreground,
         selected ? std::optional<huxerui::ImageResource>{app::images::check} : std::nullopt,
-        selected, huxerui::UseString(label), [model, id = accent.id] { SelectThemeColor(model, id); }, edge, accent.id)
-        .Key("theme-color-" + accent.id);
-    const std::string id = accent.id;
-    const std::string initialHex = !accent.mixHexes.empty()
-        ? FormatThemeColorSpec(accent.mixHexes, accent.primaryIndex)
-        : (id.starts_with('#') ? id : ThemeColorToHex(accent.light));
+        selected, huxerui::UseString(label), [model, id] { SelectThemeColor(model, id); }, edge, accent)
+        .Key("theme-color-" + std::to_string(id));
     const auto edit = [dialog, navigation, compact, model, id, initialHex] {
         if (compact) {
-            navigation.Push(ThemeColorEditorRoutePage, initialHex, std::optional<std::string>{id});
+            navigation.Push(ThemeColorEditorRoutePage, initialHex, std::optional<int>{id});
             return;
         }
         ShowEditorDialog(dialog, [model, id, initialHex](huxerui::DialogContext context) {
@@ -458,20 +452,14 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const bool compact = huxerui::UseViewportClass() == huxerui::ViewportClass::Compact;
     const SettingsView settings = settingsModel->view.Get();
     const float cardEdge = compact ? kThemeColorCompactCardEdge : kThemeColorCardEdge;
-    const auto selectedAccent = ResolveFluxAccent(settings.themeColor);
+    const auto entries = ReadThemeColors(settings.themeColors);
+    const auto selectedAccent = ResolveFluxAccent(settings.themeColorId, entries);
     std::vector<huxerui::View> colors;
-    const auto hiddenColors = ReadHiddenThemeColors(settings.hiddenThemeColors);
-    for (const auto& accent : kFluxAccents)
-        if (std::find(hiddenColors.begin(), hiddenColors.end(), accent.id) == hiddenColors.end())
-            colors.push_back(ThemeColorCard(
-                accent, accent.id == selectedAccent.id, settingsModel, cardEdge, dialog));
-    auto customColors = ReadCustomThemeColors(settings.customThemeColors);
-    if (selectedAccent.id.starts_with('#') &&
-        std::find(customColors.begin(), customColors.end(), selectedAccent.id) == customColors.end())
-        customColors.push_back(selectedAccent.id);
-    for (const auto& id : customColors)
+    for (const auto& entry : entries) {
+        const auto accent = ResolveThemeColorEntry(entry);
         colors.push_back(ThemeColorCard(
-            ResolveFluxAccent(id), id == selectedAccent.id, settingsModel, cardEdge, dialog));
+            accent, accent.id == selectedAccent.id, settingsModel, cardEdge, dialog));
+    }
     const std::array<huxerui::ImageResource, 3> modeIcons{
         app::images::sun_moon, app::images::moon, app::images::sun};
     std::vector<huxerui::View> modes;
@@ -488,7 +476,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
         huxerui::UseString(Localized("添加颜色")), [dialog, navigation, compact, settingsModel] {
             if (compact) {
                 navigation.Push(ThemeColorEditorRoutePage, ThemeColorToHex(FluxPalette::water()),
-                    std::optional<std::string>{});
+                    std::optional<int>{});
                 return;
             }
             ShowEditorDialog(dialog, [settingsModel](huxerui::DialogContext context) {
@@ -499,7 +487,7 @@ void DeleteThemeColor(const std::shared_ptr<SettingsModel>& model, const std::st
     const IslandTheme islands = ResolveIslandTheme(theme);
     const auto scroll = huxerui::UseState(std::make_shared<PageScrollOffset>()).Get();
     huxerui::View body = huxerui::Column {
-      ThemePreviewSurface(theme, selectedAccent.id, compact),
+      ThemePreviewSurface(theme, selectedAccent, compact),
       SectionTitle(Localized("模式")),
       huxerui::Row(std::move(modes)).With(huxerui::Spacing(kSectionCardSpacing),
           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
