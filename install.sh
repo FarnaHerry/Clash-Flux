@@ -448,7 +448,7 @@ baseurl=$repo_url/rpm/\$basearch
 enabled=1
 autorefresh=1
 gpgcheck=1
-repo_gpgcheck=1
+repo_gpgcheck=0
 gpgkey=$repo_url/gpg.key
 EOF
     else
@@ -459,7 +459,7 @@ name=Clash-Flux
 baseurl=$repo_url/rpm/\$basearch
 enabled=1
 gpgcheck=1
-repo_gpgcheck=1
+repo_gpgcheck=0
 gpgkey=$repo_url/gpg.key
 EOF
     fi

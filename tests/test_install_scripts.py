@@ -48,7 +48,7 @@ def verify_static_contracts(root: pathlib.Path) -> None:
     assert wf_fpr.group(1) == sh_fpr.group(1), "workflow and install.sh GPG fingerprints must match"
 
     # Enforce signed APT/RPM configuration in install.sh.
-    for token in ("Signed-By: /usr/share/keyrings/clash-flux.gpg", "gpgcheck=1", "repo_gpgcheck=1"):
+    for token in ("Signed-By: /usr/share/keyrings/clash-flux.gpg", "gpgcheck=1", "repo_gpgcheck=0"):
         assert token in sh_text, f"install.sh missing required signature directive: {token}"
 
     # CI publishes install scripts, SHA256SUMS.txt, clean Linux tar.gz, and GitHub Pages APT/RPM repos.
@@ -65,7 +65,17 @@ def verify_static_contracts(root: pathlib.Path) -> None:
     ):
         assert token in workflow, f"workflow missing expected release step/token: {token}"
 
-    for token in ("rpmsign --addsign", "createrepo_c", "dpkg-scanpackages", "apt-ftparchive", "--clearsign"):
+    for token in (
+        "rpmsign --addsign",
+        "createrepo_c",
+        "dpkg-scanpackages",
+        "apt-ftparchive",
+        "--clearsign",
+        "clash-flux_${version}_${deb_arch}.deb",
+        "^Package: clash-flux$",
+        '<meta name="color-scheme" content="light dark">',
+        'fetchpriority="high"',
+    ):
         assert token in repo_text, f"scripts/build-linux-repo.sh missing expected step: {token}"
 
     # Verify PowerShell installer enforces SHA-256, Zip Slip protection, and Burn flags.
@@ -258,7 +268,7 @@ def verify_unix_end_to_end(root: pathlib.Path) -> None:
         assert repo_file.is_file()
         repo_text = repo_file.read_text(encoding="utf-8")
         assert "baseurl=https://repo.invalid/rpm/$basearch" in repo_text
-        assert "gpgcheck=1" in repo_text and "repo_gpgcheck=1" in repo_text
+        assert "gpgcheck=1" in repo_text and "repo_gpgcheck=0" in repo_text
         rpm_cmds = rpm_log.read_text(encoding="utf-8")
         assert "rpm --import " in rpm_cmds and "dnf -y --refresh install clash-flux" in rpm_cmds
         assert "shadowed" in ok_rpm.stdout and str(shadow_bin) in ok_rpm.stdout
