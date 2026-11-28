@@ -466,7 +466,7 @@ huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     co_return updated;
 }
 
-#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+#if !defined(__ANDROID__)
 huxerui::Task<int> DesktopRefreshProfilesDueOnce(
     std::shared_ptr<ProfilesModel> profilesModel) {
     const std::vector<model::Profile> due = co_await RunOnTaskThread(

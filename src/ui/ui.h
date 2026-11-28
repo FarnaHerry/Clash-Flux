@@ -19,6 +19,7 @@
 #include "../runtime_health.h"
 #include "app_http_client.h"
 #include "theme_colors.h"
+#include "flux_progress_circle.h"
 #include "placeholder_value.h"
 #include "toast_stack.h"
 
@@ -459,7 +460,7 @@ inline huxerui::View FormHeaderAction(huxerui::ImageResource icon,
     bool enabled = true, bool busy = false) {
     if (busy) {
         return huxerui::Column {
-          huxerui::ProgressCircle().With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+          FluxProgressCircle(20.0F, 2.0F),
         }.With(huxerui::Frame{.width = kFormHeaderActionSize, .height = kFormHeaderActionSize},
                huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
@@ -682,12 +683,12 @@ huxerui::Task<DesktopServiceInstallResult> InstallDesktopServiceAsync();
 #endif
 
 // Android 订阅自动更新：任务线程列出到期订阅，应用共享 HTTP 客户端在 UI
-// 协程中抓取并由 store 收尾。桌面刷新由 DesktopRefreshProfilesDueOnce 走 curl_multi 协程。
+// 协程中抓取并由 store 收尾。其余平台共用 DesktopRefreshProfilesDueOnce（桌面走 curl_multi 协程，iOS 走平台桥接任务线程）。
 struct ProfilesModel;
 huxerui::Task<int> AndroidRefreshProfilesDueOnce(
     std::shared_ptr<AppHttpClient> http,
     std::shared_ptr<ProfilesModel> profilesModel);
-#if !defined(__ANDROID__) && !defined(CLASHFLUX_IOS)
+#if !defined(__ANDROID__)
 huxerui::Task<int> DesktopRefreshProfilesDueOnce(
     std::shared_ptr<ProfilesModel> profilesModel);
 #endif

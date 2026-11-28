@@ -390,7 +390,7 @@ std::vector<NetworkApplication> ReadNetworkApplications() {
         SettingsActionRow(huxerui::Text(Localized("选择可见应用")), load,
             {.role = huxerui::SemanticRole::Button, .label = Localized("选择可见应用")})
             .With(huxerui::Enabled(!loading.Get())),
-        loading.Get() ? SettingsContentRow(huxerui::ProgressCircle()) : huxerui::View{},
+        loading.Get() ? SettingsContentRow(FluxProgressCircle()) : huxerui::View{},
         apps.Get().empty() ? huxerui::View{} : SettingsContentRow(list),
       }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch))) : huxerui::View{},
     }.With(huxerui::Spacing(0.0F), huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch));

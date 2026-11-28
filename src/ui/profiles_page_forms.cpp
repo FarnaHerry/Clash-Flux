@@ -356,7 +356,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                                   std::function<void()> onImport) {
     if (importing) {
         return huxerui::Row{
-            huxerui::ProgressCircle().With(huxerui::Frame{.width = 20.0F, .height = 20.0F}),
+            FluxProgressCircle(20.0F, 2.0F),
         }.With(huxerui::Frame{.width = 40.0F, .height = 40.0F},
                huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
                huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center))
@@ -512,7 +512,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
         const auto create = DialogAction(Localized("创建"), importProfile, true, !importing.Get())
             .With(huxerui::Semantics{.busy = importing.Get()}).Key("profile-create-submit");
         const auto progress = importing.Get()
-            ? huxerui::View{huxerui::ProgressCircle().With(huxerui::Frame{.width = 20.0F, .height = 20.0F})}
+            ? FluxProgressCircle(20.0F, 2.0F)
             : huxerui::View{};
         return DialogScaffold(DialogHeader(Localized("新建订阅")).Key("profile-create-title"), body,
             DialogActions({progress, DialogAction(Localized("取消"), cancel, false), create}), DialogSize::Form, true);
@@ -744,7 +744,7 @@ huxerui::View ProfileImportAction(bool importing, huxerui::StringVariant label,
                       .mirror = huxerui::camera::MirrorMode::Off});
     } else {
         preview = huxerui::Column {
-            control->scanning.Get() ? huxerui::View{huxerui::ProgressCircle()}
+            control->scanning.Get() ? FluxProgressCircle()
                            : huxerui::View{huxerui::Image(app::images::qr_scan)
                                                .Tint(theme.colors.on_surface_variant)
                                                .With(huxerui::Frame{.width = 36.0F,

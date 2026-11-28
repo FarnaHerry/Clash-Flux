@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 #include <huxerui/huxerui.h>
 
 #include "card_hover_outline.h"
@@ -356,10 +358,11 @@ inline huxerui::View ThemePreviewSurface(const huxerui::ThemeSpec& theme,
                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)));
         const auto togglePill = [&](bool active) {
             return huxerui::Row {
-                dot(active ? buttonForeground : candidate.colors.on_surface_variant, 8.0F),
+                dot(active ? candidate.colors.on_primary : candidate.colors.on_surface_variant, 8.0F),
             }.With(huxerui::Frame{.width = 24.0F, .height = 12.0F},
                 huxerui::Padding(huxerui::EdgeInsets::Symmetric(2.0F, 0.0F)),
-                huxerui::Background(active ? buttonFill : huxerui::VisualFill{candidate.colors.secondary_container}),
+                huxerui::Background(active ? huxerui::VisualFill{candidate.colors.primary}
+                                           : huxerui::VisualFill{candidate.colors.secondary_container}),
                 huxerui::CornerRadius(6.0F),
                 huxerui::MainAlign(active ? huxerui::MainAxisAlignment::End : huxerui::MainAxisAlignment::Start),
                 huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
@@ -554,6 +557,89 @@ inline huxerui::View ThemeColorCardSurface(const huxerui::ThemeSpec& theme,
         huxerui::Semantics{.role = huxerui::SemanticRole::Button, .label = std::move(label), .selected = selected}
     );
     return WithThemeCardOutline(std::move(card), theme, selected, std::move(onClick));
+}
+
+struct RemovedThemeColorMixStop {
+    std::vector<std::string> stops;
+    std::size_t selectedIndex = 0U;
+    std::size_t primaryIndex = 0U;
+};
+
+inline RemovedThemeColorMixStop RemoveThemeColorMixStop(
+    std::vector<std::string> stops, std::size_t removeIndex, std::size_t primaryIndex) {
+    if (stops.empty()) return {};
+    if (stops.size() <= 1U || removeIndex >= stops.size()) {
+        return {std::move(stops), 0U, 0U};
+    }
+    stops.erase(stops.begin() + static_cast<std::ptrdiff_t>(removeIndex));
+    const std::size_t nextSelected = removeIndex >= stops.size() ? stops.size() - 1U : removeIndex;
+    const std::size_t nextPrimary = removeIndex == primaryIndex
+        ? 0U
+        : (removeIndex < primaryIndex ? primaryIndex - 1U : primaryIndex);
+    return {std::move(stops), nextSelected, std::min(nextPrimary, stops.size() - 1U)};
+}
+
+inline void ApplyThemeColorMixStopSelection(
+    huxerui::State<std::vector<std::string>> stops,
+    huxerui::State<std::size_t> activeIndex,
+    huxerui::State<huxerui::TextEditingValue> input,
+    huxerui::State<HsbColor> hsb,
+    std::size_t nextIndex,
+    std::vector<std::string> nextStops) {
+    if (nextStops.empty()) return;
+    nextIndex = std::min(nextIndex, nextStops.size() - 1U);
+    const std::string nextHex = nextStops[nextIndex];
+    stops = std::move(nextStops);
+    activeIndex = nextIndex;
+    input = huxerui::TextEditingValue{nextHex};
+    hsb = ThemeColorToHsb(ThemeColorFromHex(nextHex));
+}
+
+inline huxerui::View ThemeColorMixSwatch(
+    const huxerui::ThemeSpec& theme, std::size_t index, huxerui::Color swatchColor,
+    bool current, bool showPrimaryDot, std::function<void()> onClick) {
+    const auto dotColor = ThemeColorLuminance(swatchColor) > kThemeColorBlackWhiteSplit
+        ? huxerui::Color::Black() : huxerui::Color::White();
+    return huxerui::Row {
+        showPrimaryDot ? huxerui::View{huxerui::Row {}
+            .With(huxerui::Frame{.width = 8.0F, .height = 8.0F},
+                  huxerui::Background(dotColor),
+                  huxerui::CornerRadius(4.0F))
+            .Key("theme-mix-primary-dot")} : huxerui::View{},
+    }
+        .With(huxerui::Frame{.width = 32.0F, .height = 28.0F},
+              huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center),
+              huxerui::Background(swatchColor),
+              huxerui::CornerRadius(theme.shapes.small),
+              huxerui::Border(current ? theme.colors.on_surface : theme.colors.outline,
+                              current ? 2.0F : 1.0F),
+              huxerui::Focusable(true),
+              huxerui::Semantics{.role = huxerui::SemanticRole::Button,
+                                 .label = LocalizedFormat("混合色 {}", index + 1U),
+                                 .selected = current})
+        .OnClick(std::move(onClick))
+        .Key("theme-mix-stop-" + std::to_string(index));
+}
+
+inline huxerui::View ThemeColorPrimarySelectorRow(
+    const huxerui::ThemeSpec& theme, huxerui::Color primaryColor,
+    bool selectedIsPrimary, std::function<void()> onSetPrimary) {
+    return huxerui::Row {
+        huxerui::Row {}.With(
+            huxerui::Frame{.width = 12.0F, .height = 12.0F},
+            huxerui::Background(primaryColor),
+            huxerui::CornerRadius(6.0F),
+            huxerui::Border(theme.colors.outline, 1.0F)),
+        huxerui::Text(Localized("主色（开关与单色控件）"))
+            .Style({huxerui::Font::System(font_size::kCaption), theme.colors.on_surface_variant})
+            .With(huxerui::Grow(1.0F)),
+        huxerui::Button(Localized(selectedIsPrimary ? "当前主色" : "设为主色"))
+            .With(huxerui::Enabled(!selectedIsPrimary))
+            .OnClick(std::move(onSetPrimary))
+            .Key("theme-mix-set-primary"),
+    }.With(huxerui::Spacing(theme.spacing.small),
+           huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center));
 }
 
 } // namespace clashflux::ui

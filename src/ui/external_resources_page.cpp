@@ -145,8 +145,7 @@ huxerui::StringVariant ExternalResourceKindName(std::string_view kind) {
                 }.With(huxerui::Spacing(8.0F))},
             }.With(huxerui::Grow(1.0F), huxerui::Spacing(2.0F),
                    huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch)),
-            busy ? huxerui::View{huxerui::ProgressCircle().With(
-                huxerui::Frame{.width = 20.0F, .height = 20.0F}, huxerui::Padding(10.0F))} :
+            busy ? FluxProgressCircle(20.0F, 2.0F).With(huxerui::Padding(10.0F)) :
             huxerui::View{huxerui::IconButton(app::images::refresh, Localized("刷新资源"))
                 .With(huxerui::Tooltip(resource.cacheKey.empty() ? Localized("此资源暂不支持单项刷新") : Localized("刷新资源")),
                       huxerui::Enabled(!busy && !resource.cacheKey.empty()))

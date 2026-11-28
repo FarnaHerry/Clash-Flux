@@ -788,8 +788,7 @@ std::function<void()> UseRuleSetClose(huxerui::State<RuleSetDraft> draft,
       }.With(huxerui::Spacing(4.0F), huxerui::Grow(1.0F),
              huxerui::CrossAlign(huxerui::CrossAxisAlignment::Stretch), detailsIndication).OnClick(openDetails),
       resource->type != "remote" ? huxerui::View{} : refreshing
-          ? huxerui::View{huxerui::ProgressCircle().With(
-              huxerui::Frame{.width = 20.0F, .height = 20.0F}, huxerui::Padding(10.0F))}
+          ? FluxProgressCircle(20.0F, 2.0F).With(huxerui::Padding(10.0F))
           : huxerui::View{huxerui::IconButton(app::images::refresh, Localized("刷新资源"))
               .With(huxerui::Enabled(!busy && core::SupportsRuleSetTools()),
                     huxerui::Tooltip(core::SupportsRuleSetTools() ? Localized("重新下载（重启内核）") :

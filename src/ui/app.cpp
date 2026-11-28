@@ -275,6 +275,7 @@ huxerui::View FluxThemed(const huxerui::ThemeSpec& spec, const FluxGradientStyle
     definition.Set(menus);
 
     definition.Set(ResolveFluxProgressBarStyle(spec));
+    definition.Set(ResolveFluxProgressCircleStyle(spec));
 
     // 桌面侧栏沿用 NavigationPane 的布局和交互样式。
     huxerui::NavigationBarStyle navigationBar =

@@ -7143,6 +7143,128 @@ void testProxySpeedLoading() {
     check(second.Find(UiSelector::Key("speed-test-action")).One().enabled, "the second group becomes retryable");
 }
 
+void testFluxProgressCircleAccentColors() {
+    using namespace std::chrono_literals;
+    using namespace clashflux::ui;
+    struct Fixture {
+        huxerui::State<bool> dark{false};
+        huxerui::State<bool> reduced{false};
+        huxerui::State<std::string> accent{std::string{"gemini"}};
+    };
+    std::shared_ptr<Fixture> fixture;
+    const huxerui::Application app{[]() -> huxerui::View {
+        return huxerui::Scope([] {
+            const auto state = huxerui::UseService<Fixture>();
+            const bool dark = state->dark.Get();
+            const auto accent = state->accent.Get();
+            auto spec = dark ? huxerui::MaterialDarkThemeSpec() : huxerui::MaterialLightThemeSpec();
+            spec.colors = dark ? FluxDarkColors(accent) : FluxLightColors(accent);
+            spec.motion.reduced_motion = state->reduced.Get();
+            auto def = huxerui::MaterialThemeDefinition(spec);
+            def.Set(ResolveFluxGradientStyle(accent));
+            def.Set(ResolveFluxProgressCircleStyle(spec));
+            return huxerui::View{huxerui::Theme(std::move(def),
+                huxerui::Column{FluxProgressCircle(20.0F, 2.0F).Key("accent-spinner")}
+                    .With(huxerui::MainAlign(huxerui::MainAxisAlignment::Center),
+                          huxerui::CrossAlign(huxerui::CrossAxisAlignment::Center)))};
+        });
+    }, {.show_debug_overlay = false, .application_hooks = {
+        [&fixture](huxerui::ApplicationContext& context) {
+            fixture = std::make_shared<Fixture>();
+            context.Provide(fixture);
+        },
+    }}};
+
+    const auto containsColor = [](const std::string& snapshot, huxerui::Color color) {
+        const std::regex pattern{R"(red=([\d.-]+)\s+green=([\d.-]+)\s+blue=([\d.-]+)\s+alpha=([\d.-]+))"};
+        for (std::sregex_iterator it(snapshot.begin(), snapshot.end(), pattern), end; it != end; ++it) {
+            const huxerui::Color candidate{
+                std::stof((*it)[1].str()), std::stof((*it)[2].str()),
+                std::stof((*it)[3].str()), std::stof((*it)[4].str())};
+            if (colorDistance(candidate, color) < 0.01F) return true;
+        }
+        return false;
+    };
+    const auto countOccurrences = [](const std::string& haystack, std::string_view needle) {
+        std::size_t count = 0;
+        std::size_t pos = 0;
+        while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+            ++count;
+            pos += needle.size();
+        }
+        return count;
+    };
+
+    huxerui::testing::UiTest ui(app, {.viewport = {80.0F, 80.0F}, .resource_provider = AppResources()});
+    ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+
+    // 1. Monochrome accents use primary color directly without radial gradient overlay.
+    for (const auto& [accent, dark] : std::vector<std::pair<std::string, bool>>{{"purple", true}, {"green", false}}) {
+        fixture->accent = accent;
+        fixture->dark = dark;
+        fixture->reduced = false;
+        ui.Pump();
+        const auto progress = ui.FindSemantics(huxerui::testing::UiSemanticSelector::Role(
+            huxerui::SemanticRole::ProgressIndicator)).One();
+        check(progress.busy == true &&
+              std::abs(progress.bounds.width - 20.0F) < 0.5F &&
+              std::abs(progress.bounds.height - 20.0F) < 0.5F,
+              "monochrome FluxProgressCircle keeps exact bounds and ProgressIndicator semantics");
+        const auto specColors = dark ? FluxDarkColors(accent) : FluxLightColors(accent);
+        const auto snapshot = ui.CaptureSnapshot().ToString();
+        check(containsColor(snapshot, specColors.primary) &&
+              countOccurrences(snapshot, R"(kind="radial")") == 0U,
+              "monochrome accent spinner paints active primary color without gradient stops");
+    }
+
+    // 2. Gemini 4-color preset renders all 4 stops and respects active/background/reduced motion.
+    for (bool dark : {false, true}) {
+        fixture->accent = std::string{"gemini"};
+        fixture->dark = dark;
+        fixture->reduced = false;
+        ui.Pump();
+        const auto palette = DefaultMultiColorPalette();
+        const auto& stops = dark ? palette.darkStops : palette.lightStops;
+        const auto first = ui.CaptureSnapshot();
+        const auto text = first.ToString();
+        check(countOccurrences(text, R"(kind="radial")") == stops.size(),
+              "Gemini spinner paints four radial gradient color fields");
+        for (const auto& stop : stops) {
+            check(containsColor(text, stop), "Gemini spinner snapshot includes all four palette stops");
+        }
+        ui.Pump(240ms);
+        check(first != ui.CaptureSnapshot(), "Gemini spinner animates in active foreground");
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Background);
+        ui.Pump();
+        const auto background = ui.CaptureSnapshot();
+        ui.Pump(240ms);
+        check(background == ui.CaptureSnapshot(), "Gemini spinner pauses in background window");
+        ui.UpdateWindowLifecycleState(huxerui::WindowLifecycleState::Active);
+        ui.Pump();
+        const auto foreground = ui.CaptureSnapshot();
+        ui.Pump(240ms);
+        check(foreground != ui.CaptureSnapshot(), "Gemini spinner resumes animation in foreground");
+
+        fixture->reduced = true;
+        ui.Pump();
+        const auto reduced = ui.CaptureSnapshot();
+        ui.Pump(240ms);
+        const auto reducedText = reduced.ToString();
+        check(reduced == ui.CaptureSnapshot() &&
+              countOccurrences(reducedText, R"(kind="radial")") == stops.size(),
+              "reduced motion freezes Gemini spinner while preserving 4-color arc");
+    }
+
+    // 3. Custom multi-color mix renders radial gradient strokes matching its normalized stop count.
+    fixture->accent = std::string{"#FF4D4F,#22C55E,#3B82F6"};
+    fixture->dark = false;
+    fixture->reduced = false;
+    ui.Pump();
+    const auto customPalette = ResolveGradientPalette(ResolveFluxGradientStyle("#FF4D4F,#22C55E,#3B82F6"));
+    check(countOccurrences(ui.CaptureSnapshot().ToString(), R"(kind="radial")") == customPalette.lightStops.size(),
+          "custom multi-color accent spinner renders radial gradients for every configured stop");
+}
+
 void testNativeSingleProxyProbeCard() {
     huxerui::testing::UiTest ui(kSingleProbeFixtureApplication, {.viewport = {390.0F, 700.0F},
         .resource_provider = AppResources()});
@@ -8384,8 +8506,71 @@ void testCustomThemeColors() {
     check(savedMix == std::vector<std::string>{"#FF3366,#33AA55", "#112233,#445566,#778899,#AABBCC"},
           "multi-color theme specs normalize up to 4 stops and reject invalid or oversized lists");
     check(NormalizeThemeColorSpec("#112233,#445566,#778899,#aabbcc,#ddeeff") == std::nullopt &&
-              ParseThemeColorStops("#112233,").empty(),
-          "theme spec rejects more than four stops and trailing commas");
+              ParseThemeColorStops("#112233,").empty() &&
+              !ParseThemeColorSpec("#112233@1") &&
+              !ParseThemeColorSpec("#112233,#445566@2") &&
+              !ParseThemeColorSpec("#112233,#445566@abc") &&
+              !ParseThemeColorSpec("#112233,#445566@") &&
+              NormalizeThemeColorSpec("#112233@0") == "#112233" &&
+              NormalizeThemeColorSpec("#112233,#445566@0") == "#112233,#445566" &&
+              NormalizeThemeColorSpec(" #e5a93c,#34a853,#4285f4,#ea4335@2 ") ==
+                  "#E5A93C,#34A853,#4285F4,#EA4335@2",
+          "theme spec validates stop counts, primary indices, and normalizes optional @index suffixes");
+    {
+        const auto savedPrimary = ReadCustomThemeColors(
+            "#ff3366,#33aa55@1\n#ff3366,#33aa55@0\n#112233@1");
+        check(savedPrimary == std::vector<std::string>{"#FF3366,#33AA55@1", "#FF3366,#33AA55"},
+              "custom theme persistence retains valid non-zero primary stop suffixes and strips @0");
+        check(ReadCustomThemeColors(SaveCustomThemeColors(savedPrimary)) == savedPrimary,
+              "multi-color primary specs round trip cleanly");
+        check(ReplaceCustomThemeColor(savedPrimary, "#FF3366,#33AA55@1", "#E5A93C,#34A853,#4285F4@2") ==
+                  std::vector<std::string>{"#E5A93C,#34A853,#4285F4@2", "#FF3366,#33AA55"},
+              "replacing a custom multi-color theme preserves updated @index suffix");
+    }
+    {
+        const auto gemini = ResolveFluxAccent("gemini");
+        const auto customGemini = ResolveFluxAccent("#E5A93C,#34A853,#4285F4,#EA4335@2");
+        const auto customFirstPrimary = ResolveFluxAccent("#E5A93C,#34A853,#4285F4,#EA4335@0");
+        check(gemini.primaryIndex == 2U && customGemini.primaryIndex == 2U &&
+                  gemini.light == customGemini.light && gemini.dark == customGemini.dark &&
+                  gemini.onLight == customGemini.onLight && gemini.onDark == customGemini.onDark &&
+                  gemini.lightContainer == customGemini.lightContainer &&
+                  gemini.onLightContainer == customGemini.onLightContainer &&
+                  gemini.multiColor == customGemini.multiColor,
+              "Gemini preset shares the exact unified OKLCH and primary-anchored derivation with custom specs");
+        check(customFirstPrimary.light != customGemini.light &&
+                  customFirstPrimary.dark != customGemini.dark &&
+                  customFirstPrimary.multiColor->lightBase != customGemini.multiColor->lightBase &&
+                  customFirstPrimary.multiColor->darkBase != customGemini.multiColor->darkBase &&
+                  customFirstPrimary.multiColor->primaryBase != customGemini.multiColor->primaryBase,
+              "switching the primary stop changes both solid accent roles and gradient center bases");
+        for (const auto spec : {"#E5A93C,#34A853,#4285F4,#EA4335@0",
+                                "#E5A93C,#34A853,#4285F4,#EA4335@2",
+                                "#000000,#FFFFFF,#FFFF00@1",
+                                "#FF3366,#33AA55@1"}) {
+            const auto accent = ResolveFluxAccent(spec);
+            const auto& pal = *accent.multiColor;
+            for (const auto& [fg, bg] : std::vector<std::pair<huxerui::Color, huxerui::Color>>{
+                     {accent.onLight, accent.light},
+                     {accent.onDark, accent.dark},
+                     {pal.primaryForeground, pal.primaryBase}}) {
+                const float a = ThemeColorLuminance(fg);
+                const float b = ThemeColorLuminance(bg);
+                check((std::max(a, b) + 0.05F) / (std::min(a, b) + 0.05F) >= 4.5F,
+                      "OKLCH primary and center-base colors maintain >= 4.5 contrast across all stops");
+            }
+        }
+        const auto removedMid = RemoveThemeColorMixStop(
+            {"#E5A93C", "#34A853", "#4285F4", "#EA4335"}, 0U, 2U);
+        check(removedMid.stops == std::vector<std::string>{"#34A853", "#4285F4", "#EA4335"} &&
+                  removedMid.primaryIndex == 1U,
+              "removing a stop before the primary stop shifts primaryIndex cleanly");
+        const auto removedPrimary = RemoveThemeColorMixStop(
+            {"#E5A93C", "#34A853", "#4285F4", "#EA4335"}, 2U, 2U);
+        check(removedPrimary.stops == std::vector<std::string>{"#E5A93C", "#34A853", "#EA4335"} &&
+                  removedPrimary.primaryIndex == 0U,
+              "removing the active primary stop resets primaryIndex to the first stop");
+    }
     check(ReplaceCustomThemeColor(savedMix, "#FF3366,#33AA55", "#3366FF,#34A853,#EA4335") ==
               std::vector<std::string>{"#3366FF,#34A853,#EA4335", "#112233,#445566,#778899,#AABBCC"},
           "editing a multi-color theme replaces its entry while preserving order");
@@ -8471,6 +8656,90 @@ void testCustomThemeColors() {
               std::abs(gradientSlider.disabled_thumb.alpha - 0.38F) < 0.001F,
           "HSB slider keeps the selected-color thumb and themed geometry");
     check(ResolveFluxAccent("invalid").id == "gemini", "invalid saved color uses default");
+    {
+        struct PrimaryEditorFixture {
+            huxerui::State<std::vector<std::string>> stops{
+                std::vector<std::string>{"#E5A93C"}};
+            huxerui::State<std::size_t> selected{0U};
+            huxerui::State<std::size_t> primary{0U};
+            huxerui::State<huxerui::TextEditingValue> input{huxerui::TextEditingValue{"#E5A93C"}};
+            huxerui::State<HsbColor> hsb{ThemeColorToHsb(ThemeColorFromHex("#E5A93C"))};
+        };
+        std::shared_ptr<PrimaryEditorFixture> fixture;
+        const huxerui::Application app{[]() -> huxerui::View {
+            return huxerui::Scope([] {
+                const auto state = huxerui::UseService<PrimaryEditorFixture>();
+                const auto& theme = huxerui::UseTheme();
+                const auto curStops = state->stops.Get();
+                const std::size_t sel = std::min(state->selected.Get(), curStops.size() - 1U);
+                const std::size_t pri = std::min(state->primary.Get(), curStops.size() - 1U);
+                std::vector<huxerui::View> swatches;
+                for (std::size_t i = 0; i < curStops.size(); ++i) {
+                    swatches.push_back(ThemeColorMixSwatch(
+                        theme, i, ThemeColorFromHex(curStops[i]), i == sel,
+                        curStops.size() >= 2U && i == pri,
+                        [state, i, curStops] {
+                            ApplyThemeColorMixStopSelection(
+                                state->stops, state->selected, state->input, state->hsb, i, curStops);
+                        }));
+                }
+                return huxerui::Column {
+                    huxerui::Row(std::move(swatches)).With(huxerui::Spacing(8.0F)),
+                    curStops.size() >= 2U
+                        ? ThemeColorPrimarySelectorRow(
+                              theme, ThemeColorFromHex(curStops[pri]), sel == pri,
+                              [state, sel] { state->primary = sel; })
+                        : huxerui::View{},
+                    huxerui::TextField(state->input.Get()).Label("HEX").Key("theme-mix-hex-input"),
+                };
+            });
+        }, {.show_debug_overlay = false, .application_hooks = {
+            [&fixture](huxerui::ApplicationContext& context) {
+                fixture = std::make_shared<PrimaryEditorFixture>();
+                context.Provide(fixture);
+            },
+        }}};
+        huxerui::testing::UiTest ui(app, {.viewport = {360.0F, 260.0F}, .resource_provider = AppResources()});
+        ui.Pump();
+        check(!ui.Find(UiSelector::Key("theme-mix-set-primary")).Exists() &&
+                  !ui.Find(UiSelector::Key("theme-mix-primary-dot")).Exists(),
+              "single-color editor hides primary-stop selector and indicator dot");
+
+        fixture->stops = std::vector<std::string>{"#E5A93C", "#34A853", "#4285F4", "#EA4335"};
+        fixture->selected = 0U;
+        fixture->primary = 2U;
+        fixture->input = huxerui::TextEditingValue{"#E5A93C"};
+        ui.Pump();
+        check(ui.Find(UiSelector::Key("theme-mix-stop-2")).Find(UiSelector::Key("theme-mix-primary-dot")).Exists() &&
+                  ui.Find(UiSelector::Key("theme-mix-set-primary")).One().enabled,
+              "multi-color editor renders primary dot on stop 2 and enables set-primary button for stop 0");
+
+        // Clicking an existing stop (nextStops == stops.Get()) must update input safely and enable set-primary.
+        ui.Find(UiSelector::Key("theme-mix-stop-1")).Tap();
+        ui.Pump();
+        check(fixture->selected.Get() == 1U &&
+                  fixture->input.Get().text == "#34A853" &&
+                  ui.Find(UiSelector::Key("theme-mix-set-primary")).One().enabled,
+              "clicking an existing mix stop updates HEX input safely without invalidating TextField");
+
+        ui.Find(UiSelector::Key("theme-mix-set-primary")).Tap();
+        ui.Pump();
+        check(fixture->primary.Get() == 1U &&
+                  ui.Find(UiSelector::Key("theme-mix-stop-1")).Find(UiSelector::Key("theme-mix-primary-dot")).Exists() &&
+                  !ui.Find(UiSelector::Key("theme-mix-stop-2")).Find(UiSelector::Key("theme-mix-primary-dot")).Exists() &&
+                  !ui.Find(UiSelector::Key("theme-mix-set-primary")).One().enabled,
+              "tapping set-primary moves primary dot to the clicked stop and disables the button");
+
+        ui.Find(UiSelector::Key("theme-mix-stop-0")).Tap();
+        ui.Pump();
+        ui.Find(UiSelector::Key("theme-mix-set-primary")).Tap();
+        ui.Pump();
+        check(fixture->primary.Get() == 0U &&
+                  fixture->input.Get().text == "#E5A93C" &&
+                  ui.Find(UiSelector::Key("theme-mix-stop-0")).Find(UiSelector::Key("theme-mix-primary-dot")).Exists() &&
+                  !ui.Find(UiSelector::Key("theme-mix-set-primary")).One().enabled,
+              "clicking the first stop and setting it as primary succeeds cleanly");
+    }
     check(ResolveFluxAccent("gemini").name == "Gemini", "default preset displays the Gemini label");
     check(ResolveFluxAccent("blue").id == "blue" && ResolveFluxAccent("blue").name == "蓝色" &&
               !ResolveFluxAccent("blue").multiColor.has_value(),
@@ -11442,7 +11711,9 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-speed-loading") {
-        testProxySpeedLoading(); return failures == 0 ? 0 : 1;
+        testProxySpeedLoading();
+        testFluxProgressCircleAccentColors();
+        return failures == 0 ? 0 : 1;
     }
     if (argc == 2 && std::string_view(argv[1]) == "--proxy-group-panel") {
         try { testProxyGroupPanelLayout(); testStickyProxyGroupHeader(); }
@@ -11826,7 +12097,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: proxy probe lifetime: %s\n", error.what());
         ++failures;
     }
-    try { testProxySpeedLoading(); testProxyGroupPanelLayout(); testStickyProxyGroupHeader(); }
+    try { testProxySpeedLoading(); testFluxProgressCircleAccentColors(); testProxyGroupPanelLayout(); testStickyProxyGroupHeader(); }
     catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: proxy speed loading: %s\n", error.what());
         ++failures;

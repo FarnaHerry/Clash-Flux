@@ -457,8 +457,7 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     if (!nativeVpn && !compact) {
         huxerui::View refreshGlyph;
         if (refreshBusy) {
-            refreshGlyph = huxerui::View{huxerui::ProgressCircle()}.With(
-                huxerui::Frame{.width = 20.0F, .height = 20.0F});
+            refreshGlyph = FluxProgressCircle(20.0F, 2.0F);
         } else {
             refreshGlyph =
                 huxerui::View{huxerui::Image(app::images::refresh)
@@ -568,11 +567,11 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
         const auto actionLabel = loading ? Localized("加载中…")
                                         : connected ? Localized("关闭") : Localized("打开");
         huxerui::View actionGlyph = loading
-            ? huxerui::View{huxerui::ProgressCircle()}
+            ? FluxProgressCircle(20.0F, 2.0F)
             : huxerui::View{huxerui::Image(connected ? app::images::pause : app::images::play)
                                .Fit(huxerui::ImageFit::Contain)
-                               .Tint(muted)};
-        actionGlyph = std::move(actionGlyph).With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
+                               .Tint(muted)}
+                  .With(huxerui::Frame{.width = 20.0F, .height = 20.0F});
         const auto connectionLabel = connectionPending
             ? PptpConnectionProgress(openingConnection) : pptpStateText(pptpState);
         const huxerui::TextStyle connectionStyle{huxerui::Font::System(font_size::kCaption),
@@ -609,10 +608,9 @@ huxerui::StringVariant ProfileExpiryLabel(std::int64_t expiry, bool compact) {
     huxerui::View cardContent;
     if (compact) {
         huxerui::View busy;
-        if (refreshBusy || preparing) busy = huxerui::View{huxerui::ProgressCircle()}.With(
-            huxerui::Frame{.width = 12.0F, .height = 12.0F},
-            huxerui::Tooltip(preparing ? Localized("资源准备中") : Localized("更新订阅")),
-            huxerui::Semantics{.busy = true}).Key("profile-refresh-busy");
+        if (refreshBusy || preparing) busy = FluxProgressCircle(
+            12.0F, 1.75F, huxerui::Semantics{.busy = true}).With(
+            huxerui::Tooltip(preparing ? Localized("资源准备中") : Localized("更新订阅"))).Key("profile-refresh-busy");
         cardContent = CompactProfileCardContent(profile.name,
             nativeVpn ? "" : huxerui::UseString(CompactProfileStatus(profile, preparationActive)),
             tile, dragHandle, moreButton, trafficSection, nativeVpn, busy, updatedLabel);

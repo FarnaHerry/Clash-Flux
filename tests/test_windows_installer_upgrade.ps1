@@ -71,7 +71,7 @@ $rollbackMsi = Join-Path $scratch 'Rollback.msi'
 $sequence = @'
     <CustomAction Id="FailInstallerValidation" Error="Intentional Clash-Flux rollback test failure" />
     <InstallExecuteSequence>
-      <Custom Action="FailInstallerValidation" After="InstallFiles" Condition="WIX_UPGRADE_DETECTED" />
+      <Custom Action="FailInstallerValidation" After="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
 '@
 $source = Get-Content -LiteralPath $PackageSource -Raw
 if (-not $source.Contains('<InstallExecuteSequence>')) { throw 'Could not instrument the MSI transaction.' }

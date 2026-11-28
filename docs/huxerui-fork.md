@@ -410,7 +410,7 @@ Clash-Flux 必须重新运行 `cmake --build build --target clash-flux`、`./run
 
 ### Windows legacy bundle migration
 
-Windows 安装器从旧 `dev.farna.clashflux.bundle` 转到 `dev.farna.clashflux.bundle.v2` 的确定性 Burn UpgradeCode，避免新安装器调用旧缓存中无法静默执行的 bootstrapper。MSI UpgradeCode 保持不变，旧产品仍由 `MajorUpgrade` 在 MSI 事务内移除，失败时保留回滚能力。新框架修复在独立维护仓库中验证后才更新应用固定提交；未提交的框架修改不能成为 CI pin。
+Windows 安装器从旧 `dev.farna.clashflux.bundle` 转到 `dev.farna.clashflux.bundle.v2` 的确定性 Burn UpgradeCode，避免新安装器调用旧缓存中无法静默执行的 bootstrapper。MSI UpgradeCode 保持不变，旧产品仍由 `MajorUpgrade`（`Schedule="afterInstallExecute"`，仍在 `InstallFinalize` 之前的事务内，配合 [app.rc.in](../platform/windows/app.rc.in) 的递增 `VS_VERSION_INFO`）在先完成新版文件落盘与外层 Restart Manager 校验后再移除旧产品，保持共享组件引用计数 >= 1，避免 `RemoveExistingProducts` 在嵌套服务端卸载阶段退回到按文件名匹配的旧版 `Info 1603`（`FilesInUse`）扫描而误报共享 DLL（`huxerui.dll`、`msvcp140.dll` 等）或在升级期移除 `ClashFluxService`，失败时仍保留完整回滚能力。新框架修复在独立维护仓库中验证后才更新应用固定提交；未提交的框架修改不能成为 CI pin。
 
 MSI 内嵌静态 CRT 的原生清理 DLL，在安装/修复成功提交时以系统权限执行；卸载和回滚路径不清理。它只接受 HKLM 64 位卸载项中名称、发布者、旧 UpgradeCode、GUID ProviderKey 和 0.3.0–0.3.68 版本均匹配的 Burn Bundle。新升级标识的 Bundle、MSI 产品、其它软件、用户数据库和订阅均不匹配。
 
